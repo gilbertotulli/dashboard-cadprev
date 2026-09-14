@@ -90,12 +90,13 @@
     }));
   }
 
-  function tabela(colunas, linhas) {
+  function tabela(colunas, linhas, larga) {
     var thead = h("thead", {}, [h("tr", {}, colunas.map(function (c) {
       return h("th", { class: c.n ? "n" : "", texto: c.t });
     }))]);
     var tbody = h("tbody", {}, linhas);
-    return h("div", { class: "rolar" }, [h("table", { class: "dados" }, [thead, tbody])]);
+    return h("div", { class: "rolar" },
+      [h("table", { class: "dados" + (larga ? " larga" : "") }, [thead, tbody])]);
   }
 
   function vazio(titulo, texto, extra) {
@@ -459,7 +460,7 @@
       if (!c.disponivel) return [cabecalhoEnte(e), semDado("carteira", "DAIR_CARTEIRA")];
 
       var alocacao = c.segmentos.filter(function (s) { return s.alocacao; });
-      var alvo = grafico(Math.max(150, alocacao.length * 42));
+      var alvo = grafico(Math.max(160, alocacao.length * 46 + 22));
 
       return [
         h("h2", { class: "secao", texto: "Carteira de investimentos" }),
@@ -497,10 +498,10 @@
                   texto: pct(p.perc_pl_fundo)
                 })
               ]);
-            })))
+            }), true))
       ].concat(depoisDeMontar(function () {
         Charts.desenhar(alvo, "comLimite", {
-          linhas: alocacao, altura: Math.max(150, alocacao.length * 42),
+          linhas: alocacao, altura: Math.max(160, alocacao.length * 46 + 22),
           descricao: "Alocação por segmento contra o limite da Resolução CMN 3.922/10"
         });
       }) || []);

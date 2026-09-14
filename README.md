@@ -126,6 +126,21 @@ parcelamento de débitos e o enquadramento de fundos existem como planilha em da
 abertos, não como endpoint. A marcação de capitais também não vem da API: depende de
 [`data/capitais.csv`](data/capitais.csv), mantido aqui.
 
+## O que ainda falta
+
+Registrado aqui para não virar ausência silenciosa:
+
+- **Decomposição do DIPR por origem e destino.** O anteprojeto prevê as tabelas
+  "de onde vem o dinheiro" e "para onde vai", que abrem os blocos 10 e 11 do DIPR.
+  Elas não entraram porque isso exigiria mapear dezenas de campos (`ing_*`, `desp_*`)
+  cujos nomes reais não estão confirmados — seriam dezenas de palpites de uma vez. A
+  aba Caixa mostra hoje os totais e o resultado, que vêm de campos únicos. Assim que o
+  `inspect` rodar contra a API, essas tabelas são a primeira ampliação natural.
+- **Endpoints sem mapa de campos.** Onze dos 22 têm mapa; `python -m cadprev endpoints`
+  marca quais.
+- **Histórico.** A ingestão é por competência; comparar exercícios ainda depende de
+  ingerir cada um e de telas que ainda não existem.
+
 ## Testes
 
 ```bash

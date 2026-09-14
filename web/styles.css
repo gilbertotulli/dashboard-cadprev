@@ -160,6 +160,9 @@ p.intro{margin:0 0 20px;color:var(--ink-2);font-size:.92rem;max-width:74ch}
 /* ---------- tabelas ---------- */
 .rolar{overflow-x:auto}
 table.dados{width:100%;border-collapse:collapse;font-size:.85rem}
+/* Tabela de muitas colunas rola no próprio contêiner; sem isso ela
+   comprime e os valores quebram em três linhas no telefone. */
+table.dados.larga{min-width:560px}
 table.dados th{
   text-align:left;font-family:"IBM Plex Mono",monospace;font-weight:500;
   font-size:.64rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);

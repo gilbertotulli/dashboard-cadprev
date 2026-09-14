@@ -269,8 +269,13 @@
 
   /** Barras horizontais com a marca do limite legal no mesmo eixo. */
   function comLimite(svg, W, H, cfg) {
-    var padL = Math.min(112, W * 0.3), padR = 58, padB = 22;
-    var linhasCfg = cfg.linhas, alturaLinha = (H - padB) / linhasCfg.length, bh = 16;
+    // Em tela estreita o nome do segmento não cabe ao lado da barra e invade a
+    // área do gráfico. Abaixo de 420px o rótulo sobe para cima da barra, que é
+    // onde há largura sobrando.
+    var acima = W < 420;
+    var padL = acima ? 0 : Math.min(112, W * 0.3), padR = acima ? 46 : 58, padB = 22;
+    var linhasCfg = cfg.linhas, alturaLinha = (H - padB) / linhasCfg.length;
+    var bh = acima ? 13 : 16;
     var pw = W - padL - padR;
     var X = function (p) { return padL + p / 100 * pw; };
 
@@ -283,9 +288,12 @@
     });
 
     linhasCfg.forEach(function (l, i) {
-      var y = i * alturaLinha + (alturaLinha - bh) / 2;
-      svg.appendChild(txt(0, y + bh / 2, l.rotulo,
-        { fill: "var(--ink-2)", size: 11.5, baseline: "middle" }));
+      var topo = i * alturaLinha;
+      var y = acima ? topo + 18 : topo + (alturaLinha - bh) / 2;
+      svg.appendChild(acima
+        ? txt(0, topo + 11, l.rotulo, { fill: "var(--ink-2)", size: 11 })
+        : txt(0, y + bh / 2, l.rotulo,
+          { fill: "var(--ink-2)", size: 11.5, baseline: "middle" }));
       var cor = l.excede ? "var(--crit)" : "var(--s1)";
       var barra = S("path", { d: rrect(padL, y, X(l.perc) - padL, bh, 0, 4), fill: cor });
       ligar(barra, function (ev) {
@@ -308,8 +316,13 @@
           x1: lx, x2: lx, y1: y - 5, y2: y + bh + 5, stroke: "var(--ink-2)",
           "stroke-width": 2, "stroke-linecap": "round"
         }));
-        svg.appendChild(txt(lx, y - 9, "lim " + num(l.limite, 0) + "%",
-          { anchor: l.limite > 92 ? "end" : "middle", size: 9.5, fill: "var(--muted)" }));
+        // Em tela estreita o rótulo do limite disputa espaço com o nome do
+        // segmento, que importa mais. A marca permanece — é ela que carrega a
+        // posição do teto — e o número fica na dica.
+        if (!acima && pw >= 260) {
+          svg.appendChild(txt(lx, y - 9, "lim " + num(l.limite, 0) + "%",
+            { anchor: l.limite > 92 ? "end" : "middle", size: 9.5, fill: "var(--muted)" }));
+        }
       }
     });
   }
