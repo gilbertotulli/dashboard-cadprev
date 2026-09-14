@@ -1,0 +1,13 @@
+# Banco local — reconstruível com `python -m cadprev ingest`
+cadprev.sqlite3
+cadprev.sqlite3-*
+
+# Correções locais de nomes de campo. Cada ambiente resolve o seu; quando a
+# correção valer para todos, ela sobe para cadprev/fieldmap.py.
+fieldmap.local.json
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store

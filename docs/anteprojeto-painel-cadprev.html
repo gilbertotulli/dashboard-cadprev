@@ -498,6 +498,11 @@ td.go{text-align:right;white-space:nowrap;color:var(--accent-ink);font-size:.78r
 .help-card li::marker{color:var(--accent)}
 .help-card.thanks{border-left:3px solid var(--accent);background:var(--accent-soft)}
 .help-card.liab{border-left:3px solid var(--warn)}
+.contato{list-style:none;margin:12px 0 0;padding:0;display:grid;gap:9px}
+.contato li{display:flex;flex-direction:column;gap:1px}
+.contato .ck{font-family:"IBM Plex Mono",monospace;font-size:.64rem;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted)}
+.contato a{font-size:.84rem;word-break:break-word}
 .ph{font-family:"IBM Plex Mono",monospace;font-size:.78rem;background:var(--surface-2);
   border:1px dashed var(--rule-strong);border-radius:4px;padding:1px 6px;color:var(--ink-2)}
 </style>
@@ -1154,8 +1159,12 @@ td.go{text-align:right;white-space:nowrap;color:var(--accent-ink);font-size:.78r
             <h5>Contato e colaboração</h5>
             <p>O projeto é aberto e as contribuições são bem-vindas &mdash; correções de
             interpretação dos dados, novos recortes, relatos de divergência com a fonte.</p>
-            <p>Canal principal: as <em>issues</em> do repositório público no GitHub. Para contato
-            direto, <span class="ph">definir e-mail do projeto</span>.</p>
+            <ul class="contato">
+              <li><span class="ck">Código e issues</span>
+                <a href="https://github.com/gilbertotulli/dashboard-cadprev">github.com/gilbertotulli/dashboard-cadprev</a></li>
+              <li><span class="ck">Contato direto</span>
+                <a href="mailto:gilberto.tulli@ipajm.es.gov.br">gilberto.tulli@ipajm.es.gov.br</a></li>
+            </ul>
           </div>
 
           <div class="help-card thanks">
