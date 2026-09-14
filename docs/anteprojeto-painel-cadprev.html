@@ -312,7 +312,7 @@ footer p + p{margin-top:10px}
   <span class="eyebrow">Anteprojeto · Setembro de 2026</span>
   <h1>Anteprojeto do Painel CADPREV</h1>
   <p class="lede">O que a API pública do CADPREV entrega hoje &mdash; 22 endpoints abertos sobre
-  os Regimes Próprios de Previdência Social &mdash; e como transformar isso em cinco telas
+  os Regimes Próprios de Previdência Social &mdash; e como transformar isso em seis telas
   que respondem às perguntas que um gestor, um conselho fiscal ou um cidadão realmente fazem.</p>
   <div class="meta-row">
     <span class="chip"><span class="dot"></span><b>22</b> endpoints</span>
@@ -466,16 +466,51 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
 
 <style>
 .painel.has-spec{border-radius:10px 10px 0 0;border-bottom:none}
+.sub-h{font-family:"IBM Plex Sans",sans-serif;font-size:.78rem;font-weight:600;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--muted);margin:30px 0 12px}
+.cov{border:1px solid var(--rule-strong);border-radius:10px;padding:20px;background:var(--surface);margin-top:22px}
+.cov h4{margin:0 0 12px;font-family:"IBM Plex Sans",sans-serif;font-size:.95rem;font-weight:600;color:var(--ink)}
+.cov p{font-size:.9rem;color:var(--ink-2);max-width:74ch}
+.cov p + p{margin-top:10px}
+.cov .cov-tail{margin-top:14px;padding-top:14px;border-top:1px solid var(--rule);font-size:.86rem}
+.tiers{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+@media (max-width:700px){.tiers{grid-template-columns:1fr}}
+.tier{border:1px solid var(--rule);border-radius:8px;padding:14px 16px;background:var(--paper)}
+.tier .tg{font-family:"IBM Plex Mono",monospace;font-size:.68rem;letter-spacing:.07em;
+  text-transform:uppercase;margin-bottom:7px}
+.tier.a{border-left:3px solid var(--muted)}
+.tier.a .tg{color:var(--muted)}
+.tier.b{border-left:3px solid var(--accent)}
+.tier.b .tg{color:var(--accent-ink)}
+.tier p{font-size:.85rem;line-height:1.5}
+td.go{text-align:right;white-space:nowrap;color:var(--accent-ink);font-size:.78rem}
+.mini tbody tr:hover td{background:var(--surface-2)}
+.warnline{display:flex;gap:9px;margin-top:14px;padding-top:12px;border-top:1px solid var(--rule);
+  font-size:.79rem;color:var(--ink-2);line-height:1.5}
+.warnline .ico{color:var(--warn);flex:none;font-size:.95rem;line-height:1.35}
+.help-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px}
+.help-card{border:1px solid var(--rule);border-radius:8px;padding:16px 18px;background:var(--surface)}
+.help-card h5{margin:0 0 9px;font-family:"IBM Plex Sans",sans-serif;font-size:.9rem;font-weight:600;color:var(--ink)}
+.help-card p, .help-card li{font-size:.85rem;color:var(--ink-2);line-height:1.55}
+.help-card p + p{margin-top:9px}
+.help-card ul{margin:0;padding-left:1.05em}
+.help-card li{margin-bottom:6px}
+.help-card li::marker{color:var(--accent)}
+.help-card.thanks{border-left:3px solid var(--accent);background:var(--accent-soft)}
+.help-card.liab{border-left:3px solid var(--warn)}
+.ph{font-family:"IBM Plex Mono",monospace;font-size:.78rem;background:var(--surface-2);
+  border:1px dashed var(--rule-strong);border-radius:4px;padding:1px 6px;color:var(--ink-2)}
 </style>
 
 <section id="telas">
   <div class="sec-head">
     <span class="eyebrow">Camada 3</span>
-    <h2>O painel: cinco telas</h2>
+    <h2>O painel: seis telas</h2>
   </div>
   <p class="prose">A ordem das abas vai do agregado ao específico: começa no país inteiro, afunila
   para um RPPS, e dentro dele percorre caixa, investimentos e atuária &mdash; que é exatamente a
-  sequência em que as três perguntas de risco aparecem. Cada tela abaixo é um mockup em escala.
+  sequência em que as três perguntas de risco aparecem. A última aba é a de ajuda, que declara
+  escopo, limites e responsabilidade. Cada tela abaixo é um mockup em escala.
   <strong>Os números são ilustrativos</strong>, com ordem de grandeza plausível; a estrutura,
   as fontes e os campos são os reais.</p>
 
@@ -492,7 +527,7 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
     <div class="painel has-spec">
       <div class="painel-bar">
         <span class="tab on">Panorama</span><span class="tab">Ficha do RPPS</span>
-        <span class="tab">Caixa</span><span class="tab">Carteira</span><span class="tab">Atuária</span>
+        <span class="tab">Caixa</span><span class="tab">Carteira</span><span class="tab">Atuária</span><span class="tab">Ajuda</span>
       </div>
       <div class="painel-body">
         <div class="filters">
@@ -576,7 +611,7 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
     <div class="painel has-spec">
       <div class="painel-bar">
         <span class="tab">Panorama</span><span class="tab on">Ficha do RPPS</span>
-        <span class="tab">Caixa</span><span class="tab">Carteira</span><span class="tab">Atuária</span>
+        <span class="tab">Caixa</span><span class="tab">Carteira</span><span class="tab">Atuária</span><span class="tab">Ajuda</span>
       </div>
       <div class="painel-body">
         <div class="filters">
@@ -656,7 +691,7 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
     <div class="painel has-spec">
       <div class="painel-bar">
         <span class="tab">Panorama</span><span class="tab">Ficha do RPPS</span>
-        <span class="tab on">Caixa</span><span class="tab">Carteira</span><span class="tab">Atuária</span>
+        <span class="tab on">Caixa</span><span class="tab">Carteira</span><span class="tab">Atuária</span><span class="tab">Ajuda</span>
       </div>
       <div class="painel-body">
         <div class="filters">
@@ -745,15 +780,151 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
       <span class="tab-n">Aba 4</span>
       <h3>Carteira de investimentos</h3>
     </div>
-    <p class="prose">O <code>DAIR_CARTEIRA</code> traz o limite da Resolução CMN 3.922/10 no próprio
-    registro do ativo, então o painel não precisa manter uma tabela de regras à parte: o teto é dado
-    e pode ser desenhado junto com a barra. É o que faz a leitura de enquadramento ser imediata
-    &mdash; a marca é o limite, a barra é a posição.</p>
+    <p class="prose">A aba abre no agregado do país e afunila para um RPPS quando um ente é
+    escolhido &mdash; a mesma aba, dois estados. O <code>DAIR_CARTEIRA</code> traz o limite da
+    Resolução CMN 3.922/10 no próprio registro do ativo, então o painel não precisa manter uma
+    tabela de regras à parte: o teto é dado e pode ser desenhado junto com a barra.</p>
+
+    <div class="cov">
+      <h4>Antes: o que a API confirma sobre a separação por fundo</h4>
+      <p>A dimensão de plano existe e é nomeada <code>FINANCEIRO</code> (repartição simples) e
+      <code>PREVIDENCIÁRIO</code> (capitalização). Ela está <strong>confirmada</strong> em
+      <code>DIPR.plano_segreg</code>, em <code>RPPS_ALIQUOTA.plano_segregacao</code> e em
+      <code>DRAA_SEGREGACAO_MASSA</code> &mdash; ou seja, caixa e atuária já se separam entre
+      capitalizado e não capitalizado hoje.</p>
+      <p>Na carteira, <strong>não</strong>. O arquivo de dados abertos do DAIR tem 15 colunas e
+      nenhuma identifica plano ou fundo. Os DAIR em PDF gerados pelo próprio CADPREV mostram os
+      recursos vinculados aos planos e à taxa de administração, e a Portaria MTP nº 1.467/2022 exige
+      que os recursos da taxa de administração sejam mantidos segregados &mdash; a informação existe
+      na origem. Se o endpoint a expõe, só o Swagger diz.</p>
+      <div class="tiers">
+        <div class="tier a">
+          <div class="tg">Nível A &mdash; se o endpoint expuser o plano do ativo</div>
+          <p>Decomposição de três vias do patrimônio: capitalizado, repartição simples e taxa de
+          administração. É o que os mockups abaixo desenham.</p>
+        </div>
+        <div class="tier b">
+          <div class="tg">Nível B &mdash; garantido hoje</div>
+          <p>Classifica o <strong>RPPS</strong>, não o ativo: sem segregação de massa, a carteira
+          inteira é capitalizada; com segregação, fica marcada como <em>não decomposta</em>. O
+          agregado ainda responde quanto do patrimônio está em regimes integralmente capitalizados.</p>
+        </div>
+      </div>
+      <p class="cov-tail">A tela precisa dizer em qual nível está operando. Um rateio da carteira
+      entre planos, no Nível B, seria invenção &mdash; e é exatamente o tipo de número que alguém
+      copiaria para um ofício.</p>
+    </div>
+
+    <h4 class="sub-h">Estado 1 &mdash; nenhum ente selecionado: o agregado do país</h4>
 
     <div class="painel has-spec">
       <div class="painel-bar">
         <span class="tab">Panorama</span><span class="tab">Ficha do RPPS</span>
-        <span class="tab">Caixa</span><span class="tab on">Carteira</span><span class="tab">Atuária</span>
+        <span class="tab">Caixa</span><span class="tab on">Carteira</span><span class="tab">Atuária</span><span class="tab">Ajuda</span>
+      </div>
+      <div class="painel-body">
+        <div class="filters">
+          <span class="ctrl">Ente <b>Todos os RPPS</b></span>
+          <span class="ctrl">Competência <b>ago/2026</b></span>
+          <span class="ctrl plain">Nível <b style="color:var(--accent-ink)">A</b></span>
+          <span class="sample">dados ilustrativos</span>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi">
+            <div class="lbl">Patrimônio investido &mdash; todos os RPPS</div>
+            <div class="val">R$ 1,42<small> tri</small></div>
+            <div class="sub">1.987 RPPS enviaram DAIR na competência</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">Em regimes integralmente capitalizados</div>
+            <div class="val">78,1<small>%</small></div>
+            <div class="sub">R$ 1,11 tri</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">Sem DAIR nesta competência</div>
+            <div class="val" style="color:var(--warn)">185</div>
+            <div class="sub">fora de todos os totais desta tela</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">Patrimônio mediano por RPPS</div>
+            <div class="val">R$ 87,3<small> mi</small></div>
+            <div class="sub">média puxada pelos estaduais: R$ 714,6 mi</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-h"><h4>Distribuição por fundo</h4><span class="src">DAIR_CARTEIRA · plano</span></div>
+          <div class="card-sub">Patrimônio investido por natureza do fundo &mdash; R$ 1,42 tri</div>
+          <figure><div data-chart="fundo" data-h="86"></div></figure>
+          <div class="legend">
+            <span><i class="swatch" style="background:var(--s1)"></i>Capitalizado <span class="mono" style="font-size:.72rem;color:var(--muted)">previdenciário</span></span>
+            <span><i class="swatch" style="background:var(--s2)"></i>Repartição simples <span class="mono" style="font-size:.72rem;color:var(--muted)">financeiro</span></span>
+            <span><i class="swatch" style="background:var(--s3)"></i>Taxa de administração</span>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-bottom:16px">
+          <div class="card">
+            <div class="card-h"><h4>Por segmento de alocação</h4><span class="src">DAIR_CARTEIRA</span></div>
+            <div class="card-sub">Todos os RPPS · % do patrimônio</div>
+            <figure><div data-chart="segnac" data-h="208"></div></figure>
+          </div>
+          <div class="card">
+            <div class="card-h"><h4>Por esfera e por região</h4><span class="src">DAIR_CARTEIRA · sg_uf · no_ente</span></div>
+            <div class="card-sub">Dois cortes independentes, cada um somando 100%</div>
+            <figure><div data-chart="grupos" data-h="248"></div></figure>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="card">
+            <div class="card-h"><h4>Cinco maiores patrimônios</h4><span class="src">DAIR_CARTEIRA</span></div>
+            <div class="card-sub">Clique na linha para abrir a carteira do RPPS</div>
+            <table class="mini">
+              <thead><tr><th>RPPS</th><th style="text-align:right">R$ bi</th><th></th></tr></thead>
+              <tbody>
+                <tr><td>Governo do Estado exemplo I <span class="mono" style="color:var(--muted)">SP</span></td><td class="n">128,4</td><td class="go">abrir →</td></tr>
+                <tr><td>Governo do Estado exemplo II <span class="mono" style="color:var(--muted)">RJ</span></td><td class="n">71,9</td><td class="go">abrir →</td></tr>
+                <tr><td>Governo do Estado exemplo III <span class="mono" style="color:var(--muted)">MG</span></td><td class="n">54,2</td><td class="go">abrir →</td></tr>
+                <tr><td>Capital exemplo IV <span class="mono" style="color:var(--muted)">SP</span></td><td class="n">39,8</td><td class="go">abrir →</td></tr>
+                <tr><td>Governo do Estado exemplo V <span class="mono" style="color:var(--muted)">RS</span></td><td class="n">31,6</td><td class="go">abrir →</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card-h"><h4>Cinco menores patrimônios</h4><span class="src">DAIR_CARTEIRA</span></div>
+            <div class="card-sub">Entre os que enviaram DAIR e têm total maior que zero</div>
+            <table class="mini">
+              <thead><tr><th>RPPS</th><th style="text-align:right">R$ mil</th><th></th></tr></thead>
+              <tbody>
+                <tr><td>Município exemplo VI <span class="mono" style="color:var(--muted)">MG</span></td><td class="n">184,2</td><td class="go">abrir →</td></tr>
+                <tr><td>Município exemplo VII <span class="mono" style="color:var(--muted)">RS</span></td><td class="n">211,7</td><td class="go">abrir →</td></tr>
+                <tr><td>Município exemplo VIII <span class="mono" style="color:var(--muted)">SP</span></td><td class="n">263,9</td><td class="go">abrir →</td></tr>
+                <tr><td>Município exemplo IX <span class="mono" style="color:var(--muted)">PR</span></td><td class="n">298,4</td><td class="go">abrir →</td></tr>
+                <tr><td>Município exemplo X <span class="mono" style="color:var(--muted)">BA</span></td><td class="n">341,0</td><td class="go">abrir →</td></tr>
+              </tbody>
+            </table>
+            <p class="warnline"><span class="ico">⚠</span> A lista dos menores é a mais fácil de
+            errar: quem não enviou o DAIR não tem linha, e quem enviou zerado lideraria o ranking.
+            A regra de corte fica escrita na própria tela.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="spec">
+      <div><div class="k">Responde</div><div class="v">Quanto o conjunto dos RPPS tem investido, em que tipo de fundo, em que segmento, e quem são os extremos</div></div>
+      <div><div class="k">Endpoints</div><div class="v"><code>DAIR_CARTEIRA</code> sem filtro de CNPJ · <code>DRAA_SEGREGACAO_MASSA</code> para o Nível B</div></div>
+      <div><div class="k">Custo da consulta</div><div class="v">~100 a 170 mil linhas por competência &mdash; 20 a 35 páginas de 5.000. Agregar na ingestão, nunca no clique</div></div>
+      <div><div class="k">Grupos</div><div class="v">Região vem de <code>sg_uf</code> · estaduais saem de <code>no_ente</code> (<code>Governo do Estado do …</code>) · <strong>capitais exigem tabela auxiliar no repositório</strong></div></div>
+    </div>
+
+    <h4 class="sub-h">Estado 2 &mdash; um ente selecionado: a carteira do RPPS</h4>
+
+    <div class="painel has-spec">
+      <div class="painel-bar">
+        <span class="tab">Panorama</span><span class="tab">Ficha do RPPS</span>
+        <span class="tab">Caixa</span><span class="tab on">Carteira</span><span class="tab">Atuária</span><span class="tab">Ajuda</span>
       </div>
       <div class="painel-body">
         <div class="filters">
@@ -832,7 +1003,7 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
     <div class="painel has-spec">
       <div class="painel-bar">
         <span class="tab">Panorama</span><span class="tab">Ficha do RPPS</span>
-        <span class="tab">Caixa</span><span class="tab">Carteira</span><span class="tab on">Atuária</span>
+        <span class="tab">Caixa</span><span class="tab">Carteira</span><span class="tab on">Atuária</span><span class="tab">Ajuda</span>
       </div>
       <div class="painel-body">
         <div class="filters">
@@ -910,6 +1081,93 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
       <div><div class="k">Endpoints</div><div class="v"><code>DRAA_FLUXO_ATUARIAL</code> <code>DRAA_VALORES_COMPROMISSOS</code> <code>DRAA_PLANO_CUSTEIO</code> <code>DRAA_PLANO_AMORTIZACAO</code> <code>DRAA_HIPOTESE_ATUARIAL</code> <code>DRAA_HIPOTESE_BIOMETRICA</code></div></div>
       <div><div class="k">Campos-chave</div><div class="v">projeção anual de receitas e despesas · compromissos em geração atual e futura · custo normal e suplementar · taxa de juros · tábuas</div></div>
       <div><div class="k">Forma</div><div class="v">Duas linhas com o cruzamento anotado · hipóteses como pares rótulo/valor ao lado, nunca escondidas em nota de rodapé</div></div>
+    </div>
+  </div>
+
+  <!-- ================= TELA 6 ================= -->
+  <div class="screen">
+    <div class="screen-title">
+      <span class="tab-n">Aba 6</span>
+      <h3>Ajuda</h3>
+    </div>
+    <p class="prose">Um painel que publica números sobre previdência de municípios reais precisa
+    dizer, na própria interface, de onde os dados vêm, o que eles não cobrem e quem responde pelo
+    quê. Esta aba não é rodapé: é parte do produto, e é a primeira coisa que um conselheiro fiscal
+    desconfiado vai procurar.</p>
+
+    <div class="painel">
+      <div class="painel-bar">
+        <span class="tab">Panorama</span><span class="tab">Ficha do RPPS</span>
+        <span class="tab">Caixa</span><span class="tab">Carteira</span><span class="tab">Atuária</span><span class="tab on">Ajuda</span>
+      </div>
+      <div class="painel-body">
+        <div class="help-grid">
+
+          <div class="help-card">
+            <h5>O que é este painel</h5>
+            <p>Uma leitura visual dos dados públicos do CADPREV sobre os Regimes Próprios de
+            Previdência Social. Consome a API aberta da Subsecretaria dos Regimes Próprios de
+            Previdência Social e reorganiza o que já é público em telas que respondem a perguntas
+            diretas: o regime está regular, arrecada mais do que paga, onde investe e se as
+            promessas fecham no longo prazo.</p>
+          </div>
+
+          <div class="help-card">
+            <h5>Pontos relevantes</h5>
+            <ul>
+              <li>Nenhum dado é produzido aqui. Tudo vem da API do CADPREV, sem ajuste editorial.</li>
+              <li>Cada número mostra o endpoint e o campo de origem &mdash; dá para conferir na fonte.</li>
+              <li>A competência exibida é sempre declarada: o painel nunca mistura períodos.</li>
+              <li>Séries na mesma unidade dividem a mesma escala. Não há eixo duplo em lugar nenhum.</li>
+              <li>Quando um recorte não pode ser derivado da API, a tela diz isso em vez de estimar.</li>
+            </ul>
+          </div>
+
+          <div class="help-card">
+            <h5>Limitações</h5>
+            <ul>
+              <li>Os dados dependem do que cada RPPS declarou. Declaração ausente, atrasada ou
+              incorreta aparece aqui como ausência ou erro &mdash; não há como distinguir.</li>
+              <li>Quem não enviou o demonstrativo na competência fica fora dos totais. O painel
+              informa quantos ficaram.</li>
+              <li>ISP, MSC, parcelamentos e enquadramento de fundos não têm endpoint na API e, se
+              entrarem, virão de planilhas com atualização própria.</li>
+              <li>A separação da carteira por fundo depende de um campo ainda não confirmado; o
+              nível de decomposição em vigor fica visível na tela.</li>
+              <li>A marcação de capitais depende de uma tabela auxiliar mantida no repositório,
+              não da API.</li>
+              <li>Há defasagem entre o fato e a publicação. O painel não é fonte para prazo legal.</li>
+            </ul>
+          </div>
+
+          <div class="help-card liab">
+            <h5>Responsabilidade</h5>
+            <p>Este é um projeto independente, sem vínculo com o Ministério da Previdência Social,
+            com a Subsecretaria dos Regimes Próprios de Previdência Social ou com qualquer RPPS.</p>
+            <p>Os dados são reapresentados no estado em que foram obtidos. O desenvolvedor não
+            garante exatidão, completude ou atualidade, e <strong>não se responsabiliza por decisões
+            tomadas com base nestas telas</strong>. Para qualquer uso oficial, fiscal ou jurídico,
+            a fonte é o CADPREV.</p>
+          </div>
+
+          <div class="help-card">
+            <h5>Contato e colaboração</h5>
+            <p>O projeto é aberto e as contribuições são bem-vindas &mdash; correções de
+            interpretação dos dados, novos recortes, relatos de divergência com a fonte.</p>
+            <p>Canal principal: as <em>issues</em> do repositório público no GitHub. Para contato
+            direto, <span class="ph">definir e-mail do projeto</span>.</p>
+          </div>
+
+          <div class="help-card thanks">
+            <h5>Agradecimento</h5>
+            <p>À <strong>Subsecretaria dos Regimes Próprios de Previdência Social</strong> pela
+            disponibilização dos dados do CADPREV em formato aberto e sem exigência de credencial.
+            É essa decisão que torna possível qualquer leitura independente como esta &mdash;
+            inclusive a que aponta problemas.</p>
+          </div>
+
+        </div>
+      </div>
     </div>
   </div>
 </section>
@@ -1236,7 +1494,115 @@ GET /DIPR?<span class="k">nr_cnpj_entidade</span>=39560008000148&amp;<span class
     box.appendChild(svg);
   }
 
-  var DRAW = {crp:drawCRP, dipr:drawDIPR, dair:drawDAIR, fluxo:drawFluxo};
+  /* ---------- 6. Distribuição nacional por fundo ---------- */
+  var FUNDO = [
+    {n:"Capitalizado",       c:"var(--s1)", p:78.1, v:"R$ 1,11 tri"},
+    {n:"Repartição simples", c:"var(--s2)", p:18.4, v:"R$ 261,3 bi"},
+    {n:"Taxa de administração", c:"var(--s3)", p:3.5, v:"R$ 49,7 bi"}
+  ];
+  function drawFundo(box, W, H){
+    var svg = S("svg", {class:"chart", width:W, height:H, viewBox:"0 0 "+W+" "+H});
+    var bh = 36, acc = 0;
+    FUNDO.forEach(function(d, i){
+      var w = d.p/100*W;
+      var seg = S("path", {d: rrect(acc, 0, w-2, bh, i===0?4:0, i===FUNDO.length-1?4:0), fill:d.c});
+      seg.addEventListener("mousemove", function(ev){
+        showTip('<span class="tt">Distribuição por fundo</span>' +
+          row(d.c, d.n, fmt(d.p,1) + "% · " + d.v), ev);
+      });
+      seg.addEventListener("mouseleave", hideTip);
+      svg.appendChild(seg);
+
+      var wide = w >= 96, last = i === FUNDO.length-1;
+      if (wide || last){
+        var lx = wide ? acc : W, an = wide ? "start" : "end";
+        var t = txt(lx, bh+19, "", {fill:"var(--ink)", size:12.5, weight:500, anchor:an, tabular:true});
+        var a = S("tspan", {}); a.textContent = fmt(d.p,1) + "%";
+        var b = S("tspan", {fill:"var(--muted)", "font-weight":400}); b.textContent = "  " + d.v;
+        t.appendChild(a); t.appendChild(b);
+        svg.appendChild(t);
+      }
+      acc += w;
+    });
+    box.appendChild(svg);
+  }
+
+  /* ---------- 7. Barras horizontais compactas ---------- */
+  function drawRanked(box, W, H, cfg){
+    var svg = S("svg", {class:"chart", width:W, height:H, viewBox:"0 0 "+W+" "+H});
+    var rows = cfg.rows, heads = rows.filter(function(r){ return r.h; }).length;
+    var bars = rows.length - heads;
+    var above = cfg.labelAbove;
+    var padL = above ? 0 : Math.min(118, W*0.36);
+    var padR = 46;
+    var rowH = (H - heads*20) / bars;
+    var max = 0;
+    rows.forEach(function(r){ if (!r.h) max = Math.max(max, r.v); });
+    var plotW = W - padL - padR;
+    var bh = above ? 12 : Math.min(16, rowH-9);
+    var y = 0;
+
+    rows.forEach(function(r){
+      if (r.h){
+        var ht = txt(0, y+13, r.h, {size:9.5, fill:"var(--muted)", weight:500});
+        ht.setAttribute("style", "letter-spacing:.11em;text-transform:uppercase");
+        svg.appendChild(ht);
+        y += 20;
+        return;
+      }
+      var by = above ? y + 16 : y + (rowH-bh)/2;
+      if (above) svg.appendChild(txt(0, y+9, r.label, {fill:"var(--ink-2)", size:11}));
+      else svg.appendChild(txt(0, by+bh/2, r.label,
+        {fill:"var(--ink-2)", size:11, baseline:"middle"}));
+
+      var w = r.v/max*plotW;
+      var bar = S("path", {d: rrect(padL, by, w, bh, 0, 4), fill:"var(--s1)"});
+      bar.addEventListener("mousemove", function(ev){
+        showTip('<span class="tt">' + (cfg.tip || "") + '</span>' +
+          row("var(--s1)", r.label, fmt(r.v,1) + "%" + (r.note ? " · " + r.note : "")), ev);
+      });
+      bar.addEventListener("mouseleave", hideTip);
+      svg.appendChild(bar);
+      svg.appendChild(txt(padL + w + 7, by+bh/2, fmt(r.v,1) + "%",
+        {fill:"var(--ink)", size:11, weight:500, baseline:"middle", tabular:true}));
+      y += rowH;
+    });
+    box.appendChild(svg);
+  }
+
+  function drawSegNac(box, W, H){
+    drawRanked(box, W, H, {
+      labelAbove: true, tip: "Segmento · todos os RPPS",
+      rows: [
+        {label:"Renda fixa",                 v:82.4, note:"R$ 1,17 tri"},
+        {label:"Renda variável",             v:9.1,  note:"R$ 129,2 bi"},
+        {label:"Estruturados",               v:3.6,  note:"R$ 51,1 bi"},
+        {label:"Disponibilidades financeiras", v:2.4, note:"R$ 34,1 bi"},
+        {label:"Investimentos no exterior",  v:1.8,  note:"R$ 25,6 bi"},
+        {label:"Imobiliário",                v:0.7,  note:"R$ 9,9 bi"}
+      ]
+    });
+  }
+  function drawGrupos(box, W, H){
+    drawRanked(box, W, H, {
+      tip: "Grupo · % do patrimônio nacional",
+      rows: [
+        {h:"Por esfera"},
+        {label:"Estaduais",         v:61.2, note:"27 RPPS"},
+        {label:"Capitais",          v:14.7, note:"26 RPPS"},
+        {label:"Demais municípios", v:24.1, note:"1.934 RPPS"},
+        {h:"Por região"},
+        {label:"Sudeste",      v:48.3},
+        {label:"Nordeste",     v:17.9},
+        {label:"Sul",          v:15.2},
+        {label:"Centro-Oeste", v:10.4},
+        {label:"Norte",        v:8.2}
+      ]
+    });
+  }
+
+  var DRAW = {crp:drawCRP, dipr:drawDIPR, dair:drawDAIR, fluxo:drawFluxo,
+              fundo:drawFundo, segnac:drawSegNac, grupos:drawGrupos};
 
   function render(box){
     var W = Math.max(260, Math.round(box.clientWidth));
