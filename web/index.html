@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel CADPREV</title>
+<meta name="description" content="Leitura visual dos dados públicos do CADPREV sobre os Regimes Próprios de Previdência Social.">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%230f5c63%27/%3E%3Crect x=%277%27 y=%2716%27 width=%274%27 height=%279%27 fill=%27white%27/%3E%3Crect x=%2714%27 y=%2711%27 width=%274%27 height=%2714%27 fill=%27white%27/%3E%3Crect x=%2721%27 y=%277%27 width=%274%27 height=%2718%27 fill=%27white%27/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="banner" id="banner" hidden>
+  <div class="wrap">
+    <b>Dados de demonstração.</b>
+    <span>Os números desta tela são sintéticos, gerados para desenvolvimento. Não são dados reais de nenhum RPPS.</span>
+  </div>
+</div>
+
+<header class="topo">
+  <div class="wrap">
+    <div class="marca">
+      <span class="n">Painel CADPREV</span>
+      <span class="s">Regimes Próprios de Previdência Social · dados públicos da SRPPS</span>
+    </div>
+    <div class="busca">
+      <label for="busca" class="sr-only" hidden>Buscar RPPS</label>
+      <input id="busca" type="search" autocomplete="off" placeholder="Buscar RPPS por nome ou CNPJ…">
+      <div class="sugestoes" id="sugestoes" hidden></div>
+    </div>
+    <button class="btn-tema" id="btn-tema" type="button" aria-label="Alternar tema">Tema</button>
+  </div>
+</header>
+
+<nav class="abas" aria-label="Seções do painel">
+  <div class="wrap">
+    <a href="#/panorama" data-aba="panorama">Panorama</a>
+    <a href="#/ficha" data-aba="ficha">Ficha do RPPS</a>
+    <a href="#/caixa" data-aba="caixa">Caixa</a>
+    <a href="#/carteira" data-aba="carteira">Carteira</a>
+    <a href="#/atuaria" data-aba="atuaria">Atuária</a>
+    <a href="#/ajuda" data-aba="ajuda">Ajuda</a>
+  </div>
+</nav>
+
+<main>
+  <div class="wrap" id="conteudo">
+    <p class="carregando">Carregando dados…</p>
+  </div>
+</main>
+
+<footer class="rodape">
+  <div class="wrap">
+    <p>Projeto independente, sem vínculo com o Ministério da Previdência Social, com a
+    Subsecretaria dos Regimes Próprios de Previdência Social ou com qualquer RPPS.
+    Os dados são reapresentados no estado em que foram obtidos da API pública do CADPREV.
+    Para uso oficial, fiscal ou jurídico, a fonte é o CADPREV.</p>
+    <p id="rodape-origem"></p>
+  </div>
+</footer>
+
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

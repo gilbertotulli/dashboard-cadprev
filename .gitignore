@@ -11,3 +11,7 @@ __pycache__/
 .venv/
 venv/
 .DS_Store
+
+# Gerados por `python -m cadprev demo` / `build` — reproduzíveis, não versionados.
+web/data/
+fixtures/demo/

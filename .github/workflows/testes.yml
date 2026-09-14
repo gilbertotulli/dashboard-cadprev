@@ -1,0 +1,31 @@
+name: testes
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # Sem passo de instalação: o pacote usa só a biblioteca padrão.
+      - name: Testes
+        run: python -m unittest discover -s tests -v
+
+      - name: O painel continua de pé
+        run: |
+          python -m cadprev demo
+          test -s web/data/meta.json
+          test -s web/data/carteira-nacional.json
+          test -s web/data/panorama.json
