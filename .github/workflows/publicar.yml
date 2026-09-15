@@ -64,7 +64,13 @@ jobs:
       # O banco sobrevive entre execuções. Um push de código não precisa varrer a
       # API de novo: republica com os dados que já estão lá, e o dado se renova
       # no agendamento semanal ou quando alguém dispara a mão.
-      - uses: actions/cache@v4
+      #
+      # Restaurar e gravar são passos separados de propósito. O actions/cache
+      # inteiro só grava quando o job termina bem, e foi assim que uma carga de
+      # setenta minutos foi para o lixo porque a publicação tropeçou depois. O
+      # dado custou caro e não depende do Pages: grava assim que a varredura
+      # fecha.
+      - uses: actions/cache/restore@v4
         with:
           path: cadprev.sqlite3
           key: cadprev-banco-${{ github.run_id }}
@@ -88,6 +94,7 @@ jobs:
         run: python -m cadprev demo
 
       - name: Ingerir dados reais
+        id: ingestao
         if: ${{ !inputs.usar_demonstracao }}
         env:
           UF: ${{ inputs.uf }}
@@ -96,6 +103,7 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "push" ] && [ -s cadprev.sqlite3 ]; then
             echo "Push de código com banco em cache: republicando sem reingerir."
+            echo "varreu=nao" >> "$GITHUB_OUTPUT"
             python -m cadprev status
             exit 0
           fi
@@ -146,7 +154,24 @@ jobs:
               sys.exit(1)
           PY
 
+          # Depois da guarda, e só depois: varreu de verdade e os essenciais
+          # estão lá. É esta marca que autoriza a gravação no cache.
+          echo "varreu=sim" >> "$GITHUB_OUTPUT"
+
+      # Só o que a varredura confirmou entra no cache. Uma ingestão que falhou
+      # deixa o banco consistente — a gravação é transacional —, mas pode estar
+      # sem um endpoint essencial, e um push futuro republicaria esse buraco
+      # sem nem perceber. Republicar sem varrer também não grava: seria reenviar
+      # ao cache exatamente o banco que veio dele.
+      - name: Guardar o banco
+        if: always() && steps.ingestao.outputs.varreu == 'sim'
+        uses: actions/cache/save@v4
+        with:
+          path: cadprev.sqlite3
+          key: cadprev-banco-${{ github.run_id }}
+
       - name: Construir o painel
+        id: construcao
         run: |
           if [ "${{ inputs.usar_demonstracao }}" = "true" ]; then
             echo "painel já construído com o conjunto de demonstração"
@@ -195,3 +220,25 @@ jobs:
 
       - id: deploy
         uses: actions/deploy-pages@v4
+
+      # O GITHUB_TOKEN consegue publicar no Pages, mas não consegue criá-lo: a
+      # API de criação responde "Resource not accessible by integration" por
+      # mais permissão que o workflow declare. O enablement acima resolve quando
+      # o site já existe; da primeira vez alguém precisa ligar o Pages à mão.
+      # Sem esta explicação, o erro no log não diz o que fazer.
+      - name: Explicar a falha da publicação
+        if: failure() && steps.construcao.outcome == 'success'
+        run: |
+          {
+            echo
+            echo "## A publicação não saiu"
+            echo
+            echo "Se o log acima traz **Create Pages site failed — Resource not"
+            echo "accessible by integration**, o Pages ainda não está ligado neste"
+            echo "repositório, e o token do workflow não tem alçada para ligá-lo."
+            echo
+            echo "Ligue uma vez em **Settings → Pages → Build and deployment →"
+            echo "Source: GitHub Actions**. Depois é só reexecutar esta execução:"
+            echo "o banco fica em cache, então ela republica em cerca de um minuto,"
+            echo "sem varrer a API outra vez."
+          } >> "$GITHUB_STEP_SUMMARY"
