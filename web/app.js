@@ -10,7 +10,8 @@
   "use strict";
 
   var D = "data/";
-  var estado = { meta: null, entes: [], cnpj: null, aba: "panorama", cache: {} };
+  var estado = { meta: null, entes: [], cnpj: null, aba: "panorama", cache: {},
+                 referencia: "brasil", referenciaCnpj: null };
   var conteudo = document.getElementById("conteudo");
 
   // ------------------------------------------------------------ utilidades
@@ -92,7 +93,8 @@
 
   function tabela(colunas, linhas, larga) {
     var thead = h("thead", {}, [h("tr", {}, colunas.map(function (c) {
-      return h("th", { class: c.n ? "n" : "", texto: c.t });
+      return h("th", { class: (c.n ? "n" : "") + (c.classe ? " " + c.classe : ""),
+                       texto: c.t });
     }))]);
     var tbody = h("tbody", {}, linhas);
     return h("div", { class: "rolar" },
@@ -661,6 +663,285 @@
       }));
   }
 
+  // ------------------------------------------------------------- aba comparativo
+
+  var FORMATADORES = {
+    percentual: function (v) { return num(v, 1) + "%"; },
+    reais: reais,
+    razao: function (v) { return num(v, 2); }
+  };
+
+  function abaComparativo() {
+    if (!estado.cnpj) return Promise.resolve([semEnte("Comparativo")]);
+    return Promise.all([carregarEnte(), buscar("benchmark.json")])
+      .then(function (r) {
+        var e = r[0], b = r[1];
+        var meu = b.rpps[estado.cnpj];
+        if (!meu) {
+          return [cabecalhoEnte(e), vazio("Sem indicadores para este RPPS",
+            "O comparativo depende de dados de carteira, caixa e atuária. " +
+            "Este ente não tem o suficiente no banco local.")];
+        }
+
+        var ref = resolverReferencia(b, meu);
+        var alvo = grafico(b.indicadores.length * 54);
+
+        var linhasRegua = b.indicadores.map(function (ind) {
+          var brasil = b.grupos.brasil.estatisticas[ind.chave];
+          var grupo = ref.estatisticas ? ref.estatisticas[ind.chave] : null;
+          var valor = meu.valores[ind.chave];
+          var referencia = ref.valores ? ref.valores[ind.chave]
+                                       : (grupo ? grupo.mediana : null);
+          var minimo = brasil ? brasil.min : null;
+          var maximo = brasil ? brasil.max : null;
+          // A escala precisa conter os dois pontos, mesmo que um deles seja
+          // extremo — senão o losango encosta na borda sem dizer o quanto passou.
+          [valor, referencia].forEach(function (v) {
+            if (v === null || v === undefined) return;
+            if (minimo === null || v < minimo) minimo = v;
+            if (maximo === null || v > maximo) maximo = v;
+          });
+          return {
+            rotulo: ind.rotulo, valor: valor, referencia: referencia,
+            p25: grupo ? grupo.p25 : null, p75: grupo ? grupo.p75 : null,
+            min: minimo === null ? 0 : minimo, max: maximo === null ? 1 : maximo,
+            posicao: grupo ? posicaoNoGrupo(valor, grupo) : null,
+            formatar: FORMATADORES[ind.unidade] || FORMATADORES.razao
+          };
+        });
+
+        var nos = [
+          h("h2", { class: "secao", texto: "Comparativo" }),
+          cabecalhoEnte(e),
+          h("p", {
+            class: "intro",
+            texto: "Indicadores normalizados por tamanho — comparar o patrimônio " +
+              "de um estado com o de um município de cinco mil habitantes mediria " +
+              "porte, não gestão. A referência de grupo é a mediana, não a média: " +
+              "uns poucos RPPS estaduais concentram a maior parte do patrimônio e " +
+              "puxariam qualquer média para longe do RPPS típico."
+          }),
+          seletorReferencia(b, meu),
+          avisoCobertura(ref),
+          cartao("Posição em cada indicador", "vários endpoints",
+            "A régua é a distribuição nacional inteira · a faixa é onde está a " +
+            "metade do meio do grupo escolhido",
+            [alvo, h("div", { class: "legenda" }, [
+              h("span", {}, [h("i", { class: "losango", style: "background:var(--s2)" }),
+                e.ente || "Selecionado"]),
+              h("span", {}, [h("i", { class: "linha", style: "background:var(--s1)" }),
+                ref.rotulo]),
+              h("span", {}, [h("i", { style: "background:var(--s1);opacity:.32" }),
+                ref.ente ? "metade do meio de todos os RPPS"
+                         : "metade do meio do grupo"])
+            ])]),
+          cardAlocacao(b, meu, ref, e),
+          tabelaComparativo(b, meu, ref)
+        ];
+
+        depoisDeMontar(function () {
+          Charts.desenhar(alvo, "reguas", {
+            linhas: linhasRegua, altura: b.indicadores.length * 54,
+            nomeRpps: e.ente, nomeReferencia: ref.rotulo,
+            descricao: "Posição do RPPS em cada indicador"
+          });
+        });
+        return nos;
+      });
+  }
+
+  function avisoCobertura(ref) {
+    if (!ref.ente) return null;
+    if (ref.disponiveis === ref.total) return null;
+    var faltam = ref.total - ref.disponiveis;
+    return h("div", { class: "aviso-linha" }, [
+      h("span", { class: "ico", texto: "⚠" }),
+      h("span", {
+        texto: ref.rotulo + " tem " + ref.disponiveis + " dos " + ref.total +
+          " indicadores no banco local — " + faltam +
+          (faltam === 1 ? " fica" : " ficam") + " sem comparação. " +
+          "Pode ser que este RPPS não tenha declarado no período ingerido."
+      })
+    ]);
+  }
+
+  function cardAlocacao(b, meu, ref, e) {
+    var temCarteira = meu.alocacao && Object.keys(meu.alocacao).length;
+    if (!temCarteira) {
+      return cartao("Perfil da carteira", "DAIR_CARTEIRA",
+        "Sem carteira no banco para este RPPS", null);
+    }
+    var perfilRef = ref.ente ? ref.ente.alocacao
+                             : (ref.alocacao || b.grupos.brasil.alocacao);
+    var refTemCarteira = ref.ente
+      ? Object.keys(ref.ente.alocacao || {}).length > 0 : true;
+    var linhas = b.segmentos.map(function (seg) {
+      var referencia = ref.ente
+        ? (perfilRef[seg] === undefined ? null : perfilRef[seg])
+        : (perfilRef[seg] ? perfilRef[seg].mediana : null);
+      return {
+        rotulo: seg,
+        valor: meu.alocacao[seg] === undefined ? 0 : meu.alocacao[seg],
+        referencia: referencia
+      };
+    }).filter(function (l) { return l.valor > 0 || (l.referencia || 0) > 0; });
+
+    var alvo = grafico(linhas.length * 34 + 8);
+    depoisDeMontar(function () {
+      Charts.desenhar(alvo, "barrasPareadas", {
+        linhas: linhas, altura: linhas.length * 34 + 8,
+        nomeRpps: e.ente, nomeReferencia: ref.rotulo,
+        descricao: "Alocação por segmento comparada"
+      });
+    });
+    return cartao("Perfil da carteira por segmento", "DAIR_CARTEIRA",
+      refTemCarteira
+        ? "Percentual do patrimônio em cada segmento — a comparação que " +
+          "independe do porte do RPPS"
+        : ref.rotulo + " não tem carteira no banco local; só o perfil deste " +
+          "RPPS aparece abaixo",
+      [alvo, h("div", { class: "legenda" }, [
+        h("span", {}, [h("i", { style: "background:var(--s2)" }), e.ente || "Selecionado"]),
+        h("span", {}, [h("i", { style: "background:var(--s1)" }), ref.rotulo])
+      ])]);
+  }
+
+  function posicaoNoGrupo(valor, grupo) {
+    if (valor === null || valor === undefined || !grupo) return null;
+    // Aproximação a partir dos quartis: o suficiente para dizer em que parte da
+    // distribuição o RPPS está, sem carregar a série inteira para o navegador.
+    if (valor <= grupo.min) return 0;
+    if (valor >= grupo.max) return 100;
+    if (valor < grupo.p25) return Math.round(25 * (valor - grupo.min) / ((grupo.p25 - grupo.min) || 1));
+    if (valor < grupo.mediana) return Math.round(25 + 25 * (valor - grupo.p25) / ((grupo.mediana - grupo.p25) || 1));
+    if (valor < grupo.p75) return Math.round(50 + 25 * (valor - grupo.mediana) / ((grupo.p75 - grupo.mediana) || 1));
+    return Math.round(75 + 25 * (valor - grupo.p75) / ((grupo.max - grupo.p75) || 1));
+  }
+
+  function resolverReferencia(b, meu) {
+    if (estado.referencia === "regiao") {
+      var g = b.grupos.regiao[meu.regiao];
+      return g ? { rotulo: "Mediana · " + meu.regiao, estatisticas: g.estatisticas,
+                   alocacao: g.alocacao, rpps: g.rpps }
+               : { rotulo: "Região sem grupo", estatisticas: null, rpps: 0 };
+    }
+    if (estado.referencia === "porte") {
+      var p = b.grupos.porte[meu.porte];
+      var nome = b.rotulos_porte[meu.porte] || meu.porte;
+      return p ? { rotulo: "Mediana · " + nome, estatisticas: p.estatisticas,
+                   alocacao: p.alocacao, rpps: p.rpps }
+               : { rotulo: "Porte sem grupo", estatisticas: null, rpps: 0 };
+    }
+    if (estado.referencia === "rpps" && estado.referenciaCnpj) {
+      var outro = b.rpps[estado.referenciaCnpj];
+      if (outro) {
+        var disponiveis = b.indicadores.filter(function (i) {
+          var v = outro.valores[i.chave];
+          return v !== null && v !== undefined;
+        }).length;
+        return { rotulo: outro.ente, valores: outro.valores,
+                 estatisticas: b.grupos.brasil.estatisticas,
+                 alocacao: b.grupos.brasil.alocacao,
+                 rpps: 1, ente: outro, disponiveis: disponiveis,
+                 total: b.indicadores.length };
+      }
+    }
+    return { rotulo: "Mediana · todos os RPPS",
+             estatisticas: b.grupos.brasil.estatisticas,
+             alocacao: b.grupos.brasil.alocacao,
+             rpps: b.grupos.brasil.rpps };
+  }
+
+  function seletorReferencia(b, meu) {
+    var opcoes = [
+      { chave: "brasil", rotulo: "Todos os RPPS",
+        nota: b.grupos.brasil.rpps + " no banco" },
+      { chave: "regiao", rotulo: meu.regiao || "Região",
+        nota: (b.grupos.regiao[meu.regiao] || {}).rpps
+          ? b.grupos.regiao[meu.regiao].rpps + " RPPS" : "sem grupo" },
+      { chave: "porte", rotulo: b.rotulos_porte[meu.porte] || "Porte",
+        nota: (b.grupos.porte[meu.porte] || {}).rpps
+          ? b.grupos.porte[meu.porte].rpps + " RPPS" : "sem grupo" },
+      { chave: "rpps", rotulo: "Outro RPPS", nota: "escolher na lista" }
+    ];
+
+    var botoes = opcoes.map(function (o) {
+      var b2 = h("button", {
+        type: "button", class: "opcao" + (estado.referencia === o.chave ? " on" : ""),
+        "aria-pressed": estado.referencia === o.chave ? "true" : "false"
+      }, [
+        h("span", { class: "t", texto: o.rotulo }),
+        h("span", { class: "n", texto: o.nota })
+      ]);
+      b2.addEventListener("click", function () {
+        estado.referencia = o.chave;
+        if (o.chave !== "rpps") estado.referenciaCnpj = null;
+        render();
+      });
+      return b2;
+    });
+
+    var filhos = [
+      h("div", { class: "rotulo-grupo", texto: "Comparar com" }),
+      h("div", { class: "opcoes" }, botoes)
+    ];
+
+    if (estado.referencia === "rpps") {
+      var lista = h("select", { class: "escolha-rpps", id: "escolha-rpps" },
+        [h("option", { value: "", texto: "Escolha um RPPS…" })].concat(
+          Object.keys(b.rpps)
+            .filter(function (c) { return c !== estado.cnpj; })
+            .map(function (c) { return { cnpj: c, ente: b.rpps[c].ente,
+                                         uf: b.rpps[c].uf }; })
+            .sort(function (a, z) { return (a.ente || "").localeCompare(z.ente || ""); })
+            .map(function (o) {
+              var op = h("option", { value: o.cnpj,
+                texto: o.ente + " · " + (o.uf || "") });
+              if (o.cnpj === estado.referenciaCnpj) op.setAttribute("selected", "selected");
+              return op;
+            })));
+      lista.addEventListener("change", function () {
+        estado.referenciaCnpj = lista.value || null;
+        render();
+      });
+      filhos.push(lista);
+    }
+    return h("div", { class: "referencia" }, filhos);
+  }
+
+  function tabelaComparativo(b, meu, ref) {
+    var linhas = b.indicadores.map(function (ind) {
+      var fmt = FORMATADORES[ind.unidade] || FORMATADORES.razao;
+      var valor = meu.valores[ind.chave];
+      var grupo = ref.estatisticas ? ref.estatisticas[ind.chave] : null;
+      var referencia = ref.valores ? ref.valores[ind.chave]
+                                   : (grupo ? grupo.mediana : null);
+      var classe = "";
+      if (ind.direcao && valor !== null && referencia !== null &&
+          valor !== undefined && referencia !== undefined) {
+        var acima = valor > referencia;
+        classe = (ind.direcao === "maior") === acima ? "bom" : "ruim";
+      }
+      return h("tr", {}, [
+        h("td", {}, [
+          h("div", { texto: ind.rotulo }),
+          h("div", { class: "nota", texto: ind.nota })
+        ]),
+        h("td", { class: "n " + classe,
+          texto: valor === null || valor === undefined ? "—" : fmt(valor) }),
+        h("td", { class: "n",
+          texto: referencia === null || referencia === undefined ? "—" : fmt(referencia) }),
+        h("td", { class: "fonte-col mono", texto: ind.fonte })
+      ]);
+    });
+    return cartao("Indicadores lado a lado", null,
+      "Verde e vermelho só nos indicadores de direção inequívoca — quanto mais " +
+      "renda fixa ou quanto maior a alíquota não é melhor nem pior por si",
+      tabela([{ t: "Indicador" }, { t: "Este RPPS", n: true },
+        { t: ref.rotulo, n: true }, { t: "Fonte", classe: "fonte-col" }],
+        linhas, true));
+  }
+
   // ------------------------------------------------------------- aba ajuda
 
   function abaAjuda() {
@@ -688,6 +969,26 @@
             "Quando um recorte não pode ser derivado da API, a tela diz isso em vez de estimar.",
             "Os números são pré-agregados na ingestão; a API não é consultada a cada clique."
           ].map(function (t) { return h("li", { texto: t }); }))),
+        cartao("Como o comparativo funciona", null, null, [
+          h("p", {
+            texto: "Os indicadores são normalizados por tamanho — percentuais e " +
+              "razões. Comparar o patrimônio de um estado com o de um município " +
+              "de cinco mil habitantes mediria porte, não gestão."
+          }),
+          h("p", {
+            texto: "A referência de grupo é a mediana, não a média: uns poucos " +
+              "RPPS estaduais concentram a maior parte do patrimônio e puxariam " +
+              "qualquer média para longe do RPPS típico. A faixa no gráfico é o " +
+              "intervalo entre o primeiro e o terceiro quartil — onde está a " +
+              "metade do meio do grupo."
+          }),
+          h("p", {
+            texto: "Grupos com menos de três RPPS não geram estatística: quartis " +
+              "sobre dois pontos são aritmética, não informação. E verde e " +
+              "vermelho aparecem só nos indicadores de direção inequívoca; mais " +
+              "renda fixa ou alíquota maior não é melhor nem pior por si."
+          })
+        ]),
         cartao("Limitações", null, null,
           h("ul", {}, [
             "Os dados dependem do que cada RPPS declarou. Declaração ausente, atrasada ou " +
@@ -698,6 +999,8 @@
             "o nível em vigor aparece na aba Carteira.",
             "A marcação de capitais depende de uma tabela auxiliar mantida no repositório, " +
             "não da API.",
+            "O comparativo só enxerga os RPPS ingeridos. Com uma UF só no banco, " +
+            "\u0022todos os RPPS\u0022 quer dizer todos os daquela UF.",
             "Há defasagem entre o fato e a publicação. O painel não é fonte para prazo legal."
           ].map(function (t) { return h("li", { texto: t }); }))),
         h("div", { class: "cartao isencao" }, [
@@ -761,7 +1064,8 @@
 
   var ABAS = {
     panorama: abaPanorama, ficha: abaFicha, caixa: abaCaixa,
-    carteira: abaCarteiraEnte, atuaria: abaAtuaria, ajuda: abaAjuda
+    carteira: abaCarteiraEnte, atuaria: abaAtuaria,
+    comparativo: abaComparativo, ajuda: abaAjuda
   };
 
   var pendentes = [];
@@ -807,13 +1111,13 @@
   }
 
   function irParaEnte(cnpj) {
-    var aba = ["ficha", "caixa", "carteira", "atuaria"].indexOf(estado.aba) >= 0
+    var aba = ["ficha", "caixa", "carteira", "atuaria", "comparativo"].indexOf(estado.aba) >= 0
       ? estado.aba : "ficha";
     location.hash = "#/ente/" + cnpj + "/" + aba;
   }
 
   function irParaAba(aba, cnpj) {
-    location.hash = cnpj === null && ["ficha", "caixa", "carteira", "atuaria"].indexOf(aba) >= 0
+    location.hash = cnpj === null && ["ficha", "caixa", "carteira", "atuaria", "comparativo"].indexOf(aba) >= 0
       ? "#/" + aba + "/todos" : (estado.cnpj ? "#/ente/" + estado.cnpj + "/" + aba : "#/" + aba);
   }
 

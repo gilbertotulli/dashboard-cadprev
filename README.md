@@ -160,6 +160,25 @@ de acesso seria ruído. Se ainda assim o acesso precisar ser restrito, o Pages p
 exige GitHub Enterprise; a alternativa é servir a pasta `web/` atrás da autenticação
 que o instituto já usa.
 
+## O comparativo
+
+A aba **Comparativo** põe o RPPS selecionado contra uma referência escolhida:
+todos os RPPS ingeridos, a região, a faixa de porte, ou outro RPPS específico.
+
+Duas decisões sustentam a leitura:
+
+- **Indicadores normalizados, não valores absolutos.** Percentuais e razões —
+  ativos por inativo, cobertura das provisões, resultado sobre ingressos, perfil
+  da carteira por segmento. Comparar patrimônio bruto mediria porte, não gestão.
+- **Mediana, não média.** As distribuições são fortemente assimétricas: uns
+  poucos RPPS estaduais concentram a maior parte do patrimônio. A tela mostra
+  também o intervalo interquartil, para que a posição seja lida dentro da
+  dispersão e não contra um ponto só.
+
+Grupos com menos de três RPPS não geram estatística, e verde e vermelho aparecem
+só nos indicadores de direção inequívoca — mais renda fixa não é melhor nem pior
+por si. Faixas de porte, por segurados: até 1.000, de 1.000 a 10.000, acima disso.
+
 ## O que ainda falta
 
 - **A projeção atuarial ano a ano.** `DRAA_FLUXO_ATUARIAL` não é série temporal —

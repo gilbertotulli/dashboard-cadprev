@@ -115,6 +115,21 @@ def porte(segurados: Optional[int]) -> Optional[str]:
     return "grande"
 
 
+def alocacao(ficha: Mapping[str, Any]) -> Dict[str, float]:
+    """Perfil da carteira: o percentual em cada segmento.
+
+    O percentual compara entre RPPS de qualquer porte; o valor em reais, não.
+    Disponibilidades financeiras entram, porque fazem parte dos recursos ainda
+    que não sejam alocação de investimento — deixá-las de fora faria os
+    percentuais somarem menos de cem sem explicação na tela.
+    """
+    carteira = ficha.get("carteira") or {}
+    if not carteira.get("disponivel"):
+        return {}
+    return {(s.get("rotulo") or "Não informado"): s.get("perc") or 0.0
+            for s in carteira.get("segmentos") or []}
+
+
 def calcular(ficha: Mapping[str, Any]) -> Dict[str, Optional[float]]:
     """Extrai os indicadores de uma ficha já montada.
 
@@ -248,7 +263,12 @@ def montar(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
             "segurados": segurados or None,
             "porte": porte(segurados),
             "valores": calcular(ficha),
+            "alocacao": alocacao(ficha),
         }
+
+    #: Todos os segmentos vistos em qualquer RPPS, para que o comparativo tenha
+    #: as mesmas linhas independentemente de quem está selecionado.
+    segmentos = sorted({s for d in indicadores.values() for s in d["alocacao"]})
 
     def _grupo(filtro) -> Dict[str, Any]:
         membros = [d for d in indicadores.values() if filtro(d)]
@@ -258,7 +278,19 @@ def montar(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
             resumo = resumir(valores)
             if resumo:
                 estatisticas[indicador.chave] = resumo
-        return {"rpps": len(membros), "estatisticas": estatisticas}
+
+        # Mediana da alocação por segmento. Um RPPS sem carteira fica de fora;
+        # um com carteira e sem aquele segmento conta como zero, que é o valor
+        # verdadeiro — ele de fato não tem nada ali.
+        com_carteira = [m for m in membros if m["alocacao"]]
+        perfil = {}
+        for segmento in segmentos:
+            resumo = resumir([m["alocacao"].get(segmento, 0.0)
+                              for m in com_carteira])
+            if resumo:
+                perfil[segmento] = resumo
+        return {"rpps": len(membros), "com_carteira": len(com_carteira),
+                "estatisticas": estatisticas, "alocacao": perfil}
 
     regioes = {r: _grupo(lambda d, r=r: d["regiao"] == r)
                for r in grupos.ORDEM_REGIOES
@@ -274,6 +306,7 @@ def montar(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
             for i in INDICADORES
         ],
         "rotulos_porte": ROTULOS_PORTE,
+        "segmentos": segmentos,
         "grupos": {
             "brasil": _grupo(lambda d: True),
             "regiao": regioes,

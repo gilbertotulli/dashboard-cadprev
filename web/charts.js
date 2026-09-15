@@ -398,9 +398,152 @@
     });
   }
 
+  /* Comparativo: uma régua por indicador.
+   *
+   * A escala é sempre a distribuição nacional inteira, para que as linhas
+   * sejam comparáveis entre si e para que trocar de referência não faça o
+   * gráfico "se mexer" enganosamente. Dentro dela, a caixa marca o intervalo
+   * entre o primeiro e o terceiro quartil do grupo escolhido, o traço marca a
+   * mediana, e o losango marca o RPPS selecionado.
+   */
+  function reguas(svg, W, H, cfg) {
+    var linhasCfg = cfg.linhas;
+    // Sem rótulo, sete réguas iguais não dizem qual indicador é qual. Em tela
+    // larga o nome fica ao lado; em tela estreita, acima, onde há largura.
+    var aoLado = W >= 560;
+    var padL = aoLado ? Math.min(210, W * 0.3) : 0, padR = 46;
+    var alturaLinha = H / linhasCfg.length;
+
+    linhasCfg.forEach(function (l, i) {
+      var topo = i * alturaLinha;
+      var y = aoLado ? topo + alturaLinha / 2 : topo + alturaLinha / 2 + 8;
+      var pw = W - padL - padR;
+      svg.appendChild(aoLado
+        ? txt(0, y, l.rotulo, { fill: "var(--ink-2)", size: 11.5,
+                                baseline: "middle" })
+        : txt(0, topo + 12, l.rotulo, { fill: "var(--ink-2)", size: 11 }));
+      var span = (l.max - l.min) || 1;
+      var X = function (v) {
+        return padL + Math.max(0, Math.min(1, (v - l.min) / span)) * pw;
+      };
+
+      // trilho
+      svg.appendChild(S("line", {
+        x1: padL, x2: padL + pw, y1: y, y2: y,
+        stroke: "var(--rule)", "stroke-width": 6, "stroke-linecap": "round"
+      }));
+
+      // intervalo interquartil do grupo de referência
+      if (l.p25 !== null && l.p75 !== null && l.p25 !== undefined) {
+        svg.appendChild(S("line", {
+          x1: X(l.p25), x2: X(l.p75), y1: y, y2: y,
+          stroke: "var(--s1)", "stroke-width": 6, opacity: 0.32,
+          "stroke-linecap": "round"
+        }));
+      }
+
+      // referência: mediana do grupo, ou o valor do outro RPPS
+      if (l.referencia !== null && l.referencia !== undefined) {
+        svg.appendChild(S("line", {
+          x1: X(l.referencia), x2: X(l.referencia), y1: y - 8, y2: y + 8,
+          stroke: "var(--s1)", "stroke-width": 2.5, "stroke-linecap": "round"
+        }));
+      }
+
+      // o RPPS selecionado
+      if (l.valor !== null && l.valor !== undefined) {
+        var x = X(l.valor), r = 6;
+        svg.appendChild(S("path", {
+          d: "M" + x + "," + (y - r) + "L" + (x + r) + "," + y +
+             "L" + x + "," + (y + r) + "L" + (x - r) + "," + y + "Z",
+          fill: "var(--s2)", stroke: "var(--surface)", "stroke-width": 1.5
+        }));
+      }
+
+      if (l.valor !== null && l.valor !== undefined) {
+        svg.appendChild(txt(W, y, l.formatar(l.valor), {
+          fill: "var(--ink)", size: 11, weight: 500, anchor: "end",
+          baseline: "middle", tabular: true
+        }));
+      }
+
+      var alvo = S("rect", { x: 0, y: topo, width: W,
+                             height: alturaLinha, fill: "transparent" });
+      ligar(alvo, function (ev) {
+        var html = titulo(l.rotulo);
+        html += linha("var(--s2)", cfg.nomeRpps || "Selecionado",
+          l.valor === null || l.valor === undefined ? "sem dado" : l.formatar(l.valor));
+        html += linha("var(--s1)", cfg.nomeReferencia || "Referência",
+          l.referencia === null || l.referencia === undefined
+            ? "sem dado" : l.formatar(l.referencia));
+        if (l.p25 !== null && l.p25 !== undefined) {
+          html += '<span class="r sub">metade dos RPPS entre ' +
+            l.formatar(l.p25) + " e " + l.formatar(l.p75) + "</span>";
+        }
+        if (l.posicao !== null && l.posicao !== undefined) {
+          html += '<span class="r sub">acima de ' + l.posicao + "% do grupo</span>";
+        }
+        mostrar(html, ev);
+      });
+      svg.appendChild(alvo);
+    });
+  }
+
+  /* Duas barras por categoria, na mesma escala.
+   *
+   * Para perfil de alocação: todos os segmentos estão em percentual do mesmo
+   * total, então uma escala só serve para todos e a comparação é direta.
+   */
+  function barrasPareadas(svg, W, H, cfg) {
+    var linhasCfg = cfg.linhas;
+    var padL = Math.min(178, W * 0.42), padR = 52;
+    var alturaLinha = H / linhasCfg.length;
+    var bh = Math.min(9, (alturaLinha - 12) / 2);
+    var pw = W - padL - padR;
+    var max = 0;
+    linhasCfg.forEach(function (l) {
+      max = Math.max(max, l.valor || 0, l.referencia || 0);
+    });
+    max = max || 1;
+
+    linhasCfg.forEach(function (l, i) {
+      var topo = i * alturaLinha, centro = topo + alturaLinha / 2;
+      svg.appendChild(txt(0, centro, l.rotulo, {
+        fill: "var(--ink-2)", size: 11, baseline: "middle"
+      }));
+      [[l.valor, "var(--s2)", centro - bh - 1, cfg.nomeRpps],
+       [l.referencia, "var(--s1)", centro + 1, cfg.nomeReferencia]
+      ].forEach(function (par) {
+        var v = par[0];
+        if (v === null || v === undefined) return;
+        var largura = v / max * pw;
+        var barra = S("path", {
+          d: rrect(padL, par[2], largura, bh, 0, 3), fill: par[1]
+        });
+        ligar(barra, function (ev) {
+          mostrar(titulo(l.rotulo) + linha(par[1], par[3], num(v, 1) + "%"), ev);
+        });
+        svg.appendChild(barra);
+      });
+      // Cada barra leva o próprio número, à sua própria altura: um rótulo só,
+      // posicionado pelo maior dos dois, fica lendo como se fosse da outra série.
+      [[l.valor, "var(--ink)", centro - bh / 2 - 1],
+       [l.referencia, "var(--muted)", centro + bh / 2 + 1]
+      ].forEach(function (par) {
+        if (par[0] === null || par[0] === undefined) return;
+        svg.appendChild(txt(padL + par[0] / max * pw + 7, par[2],
+          num(par[0], 1) + "%", {
+            fill: par[1], size: 10, weight: 500, baseline: "middle",
+            tabular: true
+          }));
+      });
+    });
+  }
+
   var FORMAS = {
     empilhadas: empilhadas, barraUnica: barraUnica, linhas: linhas,
-    comLimite: comLimite, ranqueadas: ranqueadas
+    comLimite: comLimite, ranqueadas: ranqueadas, reguas: reguas,
+    barrasPareadas: barrasPareadas
   };
 
   var observador = null;
