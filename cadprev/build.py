@@ -25,7 +25,7 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional
 
-from . import codigos, fundos, grupos
+from . import benchmark, codigos, fundos, grupos
 from .store import Store
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -755,16 +755,20 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
         key=lambda d: (d["uf"] or "", d["ente"] or ""))
     gerados.append(_gravar("entes.json", indice, dir_saida))
 
-    escolhidos = list(entes.items())[:limite_entes] if limite_entes else entes.items()
+    escolhidos = list(entes.items())[:limite_entes] if limite_entes else list(entes.items())
+    fichas = {}
     for cnpj, dados in escolhidos:
-        _gravar(os.path.join("ente", cnpj + ".json"),
-                montar_ente(store, cnpj, dados), dir_saida)
+        ficha = montar_ente(store, cnpj, dados)
+        fichas[cnpj] = ficha
+        _gravar(os.path.join("ente", cnpj + ".json"), ficha, dir_saida)
+
+    gerados.append(_gravar("benchmark.json", benchmark.montar(fichas), dir_saida))
 
     meta = {
         "origem": store.origem_unica() or origem,
         "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "entes": len(entes),
-        "fichas": len(list(escolhidos)),
+        "fichas": len(escolhidos),
         "nivel_fundo": carteira.get("nivel"),
         "capitais_conhecidas": grupos.cobertura_capitais(),
         "execucoes": store.resumo(),

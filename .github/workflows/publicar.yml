@@ -5,7 +5,7 @@
 # falha alto e a versão anterior do site continua no ar — melhor do que publicar
 # uma tela de números vazios.
 #
-# Requer Pages habilitado em Settings → Pages → Source: GitHub Actions.
+# O Pages é habilitado pelo próprio workflow na primeira execução.
 name: publicar painel
 
 on:
@@ -152,7 +152,13 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # enablement liga o Pages na primeira execução, em vez de exigir que
+      # alguém vá às configurações do repositório. O site fica público — que é
+      # o ponto de publicar dados públicos — e pode ser desligado em
+      # Settings → Pages a qualquer momento.
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
