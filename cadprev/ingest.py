@@ -106,6 +106,7 @@ def ingerir(cliente: Cliente, store: Store, endpoint: str,
     traduzidos = (fieldmap.aplicar(resolucao, registro) for registro in fluxo)
     linhas = store.gravar(endpoint, traduzidos, escopo)
     store.registrar_execucao(endpoint, dict(filtros), linhas, resolucao, nivel)
+    store.marcar_origem("demonstracao" if cliente.fixtures else "api")
 
     log.info("%s: %d linhas (%d campos resolvidos%s)", endpoint, linhas,
              len(resolucao.encontrados),

@@ -726,6 +726,19 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
             ``api`` — um painel de dados públicos não pode deixar dúvida
             sobre o que está na tela.
     """
+    origens = store.origens()
+    if len(origens) > 1:
+        raise ValueError(
+            "este banco tem dados de origens diferentes ({}). Um painel "
+            "carimbado como real exibindo números sintéticos é o erro mais caro "
+            "que este projeto pode cometer, então a construção para aqui.\n"
+            "Apague {} e ingira de novo, ou use --banco para separar as bases."
+            .format(", ".join(origens), store.caminho))
+    if origens and origem == "api" and origens[0] != "api":
+        raise ValueError(
+            "o banco foi preenchido com dados de {}, mas a construção pediu "
+            "origem 'api'.".format(origens[0]))
+
     entes = montar_entes(store)
     panorama = montar_panorama(store, entes)
     carteira = montar_carteira_nacional(store, entes)
@@ -748,7 +761,7 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
                 montar_ente(store, cnpj, dados), dir_saida)
 
     meta = {
-        "origem": origem,
+        "origem": store.origem_unica() or origem,
         "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "entes": len(entes),
         "fichas": len(list(escolhidos)),

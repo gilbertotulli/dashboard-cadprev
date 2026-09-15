@@ -43,6 +43,12 @@ marca com `·` os que já têm.
   entre as curvas é informação.
 - **Não inventar número.** Se um recorte não pode ser derivado da API, a tela diz isso.
   Rateio sem base no dado não entra, nem com ressalva.
+- **Nunca misturar origens.** O banco registra se foi preenchido com dados reais ou
+  com o conjunto sintético, e a construção do painel **para** se encontrar as duas.
+  Um painel carimbado como real exibindo números inventados é o erro mais caro que
+  este projeto pode cometer.
+- **Ausência não é zero.** Competência sem declaração vira nulo, não zero: uma diz
+  "não informou", a outra diz "não gastou".
 - **Falhar alto.** Campo obrigatório ausente interrompe a ingestão com as chaves reais na
   mensagem. Coluna de nulos descoberta semanas depois é pior do que erro na hora.
 - **Procedência junto do número.** Todo cartão mostra o endpoint de origem; toda ingestão
@@ -59,10 +65,20 @@ python -m cadprev demo          # o painel precisa continuar de pé
 
 Se a mudança altera algo visível, diga na descrição do PR o que olhar na tela.
 
-Correção de bug ganha teste de regressão. Os dois que já existem contam a história:
-São Paulo e Rio de Janeiro caíam como RPPS estaduais porque o nome do município coincide
-com o do estado, e todo CRP vencido era contado como regular porque "VÁLIDO" e "VENCIDO"
-começam com a mesma letra.
+Correção de bug ganha teste de regressão. Os que já existem contam a história do
+projeto, e vale lê-los antes de mexer na agregação:
+
+- São Paulo e Rio de Janeiro caíam como RPPS estaduais, porque o nome do município
+  coincide com o do estado.
+- Todo CRP vencido era contado como regular, porque "VÁLIDO" e "VENCIDO" começam com
+  a mesma letra.
+- Metade das linhas do DIPR é base de cálculo, não dinheiro. Somá-las inflava o caixa
+  de Vitória de R$ 464 milhões para R$ 1,4 bilhão.
+- O código 109001 do fluxo atuarial é base de cálculo dentro da faixa das receitas.
+  O teste que pega isso confere que a composição fecha com o total declarado pela
+  própria API.
+- Os campos `ds_situacao` e `tp_crp` estão trocados em relação à documentação da API,
+  então a leitura classifica pelo valor e o teste cobre as duas ordens.
 
 ## Conduta
 

@@ -210,3 +210,48 @@ class TestClienteOffline(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOrigemDosDados(unittest.TestCase):
+    """A proteção contra misturar dados reais com sintéticos.
+
+    Um banco pode acabar com as duas origens: a substituição na ingestão é por
+    escopo, e o escopo do demo não coincide com o de uma carga real. O painel
+    sairia carimbado como real exibindo números inventados.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="cadprev-origem-")
+        self.banco = os.path.join(self.dir, "t.sqlite3")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_banco_novo_nao_tem_origem(self):
+        with Store(self.banco) as store:
+            self.assertEqual(store.origens(), [])
+            self.assertIsNone(store.origem_unica())
+
+    def test_marca_e_idempotente(self):
+        with Store(self.banco) as store:
+            store.marcar_origem("api")
+            store.marcar_origem("api")
+            self.assertEqual(store.origens(), ["api"])
+            self.assertEqual(store.origem_unica(), "api")
+
+    def test_construir_recusa_banco_misturado(self):
+        with Store(self.banco) as store:
+            store.marcar_origem("api")
+            store.marcar_origem("demonstracao")
+            self.assertIsNone(store.origem_unica())
+            with self.assertRaises(ValueError) as ctx:
+                build.construir(store, dir_saida=os.path.join(self.dir, "data"))
+            self.assertIn("origens diferentes", str(ctx.exception))
+
+    def test_construir_recusa_carimbar_demo_como_api(self):
+        with Store(self.banco) as store:
+            store.marcar_origem("demonstracao")
+            with self.assertRaises(ValueError) as ctx:
+                build.construir(store, dir_saida=os.path.join(self.dir, "data"),
+                                origem="api")
+            self.assertIn("demonstracao", str(ctx.exception))

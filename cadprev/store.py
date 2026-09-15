@@ -29,6 +29,13 @@ _TIPOS_SQL = {
     "inteiro": "INTEGER", "decimal": "REAL", "booleano": "INTEGER",
 }
 
+_DDL_ORIGEM = """
+CREATE TABLE IF NOT EXISTS origem (
+    marca  TEXT PRIMARY KEY,
+    quando TEXT NOT NULL
+)
+"""
+
 _DDL_EXECUCAO = """
 CREATE TABLE IF NOT EXISTS execucao (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,6 +59,7 @@ class Store:
         self.con.row_factory = sqlite3.Row
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute(_DDL_EXECUCAO)
+        self.con.execute(_DDL_ORIGEM)
         self.con.commit()
 
     def __enter__(self) -> "Store":
@@ -81,6 +89,32 @@ class Store:
                 endpoint.lower()))
         self.con.commit()
         return [c.nome for c in campos]
+
+    # -- origem dos dados -------------------------------------------------
+
+    def marcar_origem(self, marca: str) -> None:
+        """Registra que este banco recebeu dados de uma origem.
+
+        Um banco pode acabar com dados reais e sintéticos misturados — basta
+        ingerir por cima de um ``demo``, já que a substituição é por escopo e os
+        escopos não coincidem. O resultado seria um painel carimbado como real
+        exibindo números inventados, que é justamente o que este projeto não
+        pode deixar acontecer. Daí a marca.
+        """
+        self.con.execute(
+            "INSERT OR IGNORE INTO origem (marca, quando) VALUES (?, ?)",
+            (marca, datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        self.con.commit()
+
+    def origens(self) -> List[str]:
+        """Todas as origens já gravadas neste banco."""
+        return [linha[0] for linha in
+                self.con.execute("SELECT marca FROM origem ORDER BY marca")]
+
+    def origem_unica(self) -> Optional[str]:
+        """A origem do banco, ou ``None`` se houver mistura ou nada."""
+        marcas = self.origens()
+        return marcas[0] if len(marcas) == 1 else None
 
     # -- escrita ----------------------------------------------------------
 
