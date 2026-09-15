@@ -1,0 +1,61 @@
+{
+  "endpoint": "DRAA_FLUXO_ATUARIAL",
+  "observado_em": "2026-09-15",
+  "host": "https://apicadprev.trabalho.gov.br",
+  "envelope": [
+    "count",
+    "data",
+    "limit",
+    "offset",
+    "query",
+    "success"
+  ],
+  "count": 2048,
+  "limit": 5000,
+  "chaves_observadas": [
+    "dt_exercicio",
+    "no_ente",
+    "no_fluxo",
+    "nr_cnpj_entidade",
+    "nr_fluxo",
+    "sg_uf",
+    "tp_massa",
+    "tp_plano",
+    "vl_projetado"
+  ],
+  "registros_exemplo": [
+    {
+      "nr_cnpj_entidade": "27174077000134",
+      "sg_uf": "ES",
+      "no_ente": "Conceição da Barra",
+      "tp_plano": "Previdenciário",
+      "tp_massa": "Civil",
+      "dt_exercicio": 2025,
+      "nr_fluxo": 213001,
+      "no_fluxo": "Benefícios Concedidos - Encargos - Outras Aposentadorias Especiais",
+      "vl_projetado": 0
+    },
+    {
+      "nr_cnpj_entidade": "27165547000101",
+      "sg_uf": "ES",
+      "no_ente": "Viana",
+      "tp_plano": "Previdenciário",
+      "tp_massa": "Civil",
+      "dt_exercicio": 2025,
+      "nr_fluxo": 223000,
+      "no_fluxo": "Benefícios a Conceder - Encargos -  Outras Aposentadorias Especiais",
+      "vl_projetado": 0
+    },
+    {
+      "nr_cnpj_entidade": "27165190000153",
+      "sg_uf": "ES",
+      "no_ente": "Guarapari",
+      "tp_plano": "Previdenciário",
+      "tp_massa": "Civil",
+      "dt_exercicio": 2025,
+      "nr_fluxo": 129000,
+      "no_fluxo": "Benefícios a Conceder - Compensação Previdenciária a Receber",
+      "vl_projetado": 0
+    }
+  ]
+}

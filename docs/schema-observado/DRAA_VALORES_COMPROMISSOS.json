@@ -1,0 +1,77 @@
+{
+  "endpoint": "DRAA_VALORES_COMPROMISSOS",
+  "observado_em": "2026-09-15",
+  "host": "https://apicadprev.trabalho.gov.br",
+  "envelope": [
+    "count",
+    "data",
+    "limit",
+    "offset",
+    "query",
+    "success"
+  ],
+  "count": 3159,
+  "limit": 5000,
+  "chaves_observadas": [
+    "cd_demonstrativo",
+    "ds_item_resultado",
+    "dt_envio",
+    "dt_exercicio",
+    "no_categoria_demonstrativo",
+    "no_ente",
+    "nr_cnpj_entidade",
+    "sg_uf",
+    "te_situacao",
+    "tp_massa",
+    "tp_plano",
+    "vl_geracao_atual",
+    "vl_geracao_futura"
+  ],
+  "registros_exemplo": [
+    {
+      "nr_cnpj_entidade": "31776479000186",
+      "sg_uf": "ES",
+      "no_ente": "João Neiva",
+      "dt_exercicio": 2025,
+      "dt_envio": "2025-03-01 15:47:22.010",
+      "te_situacao": "Documentos Digitalizados",
+      "tp_plano": "Previdenciário",
+      "tp_massa": "Civil",
+      "cd_demonstrativo": 800501,
+      "ds_item_resultado": "Fundo de Oscilação de Riscos dos Benefícios Estruturados em Regime de Repartição de Capitais de Cobertura",
+      "no_categoria_demonstrativo": "Resultado",
+      "vl_geracao_atual": "0",
+      "vl_geracao_futura": null
+    },
+    {
+      "nr_cnpj_entidade": "27165653000187",
+      "sg_uf": "ES",
+      "no_ente": "Jerônimo Monteiro",
+      "dt_exercicio": 2025,
+      "dt_envio": "2025-03-14 12:31:52.803",
+      "te_situacao": "Documentos Digitalizados",
+      "tp_plano": "Financeiro",
+      "tp_massa": "Civil",
+      "cd_demonstrativo": 123000,
+      "ds_item_resultado": "Benefícios a Conceder - Contribuições Futuras dos Aposentados",
+      "no_categoria_demonstrativo": "Resultado",
+      "vl_geracao_atual": "0",
+      "vl_geracao_futura": null
+    },
+    {
+      "nr_cnpj_entidade": "27150549000119",
+      "sg_uf": "ES",
+      "no_ente": "Cariacica",
+      "dt_exercicio": 2025,
+      "dt_envio": "2025-03-07 12:23:47.633",
+      "te_situacao": "Documentos Digitalizados",
+      "tp_plano": "Previdenciário",
+      "tp_massa": "Civil",
+      "cd_demonstrativo": 109001,
+      "ds_item_resultado": "Valor Atual dos Salários Futuros",
+      "no_categoria_demonstrativo": "Resultado",
+      "vl_geracao_atual": "1942283590.47",
+      "vl_geracao_futura": null
+    }
+  ]
+}

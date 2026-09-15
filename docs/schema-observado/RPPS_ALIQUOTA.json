@@ -1,0 +1,65 @@
+{
+  "endpoint": "RPPS_ALIQUOTA",
+  "observado_em": "2026-09-15",
+  "host": "https://apicadprev.trabalho.gov.br",
+  "envelope": [
+    "count",
+    "data",
+    "limit",
+    "offset",
+    "query",
+    "success"
+  ],
+  "count": 1320,
+  "limit": 5000,
+  "chaves_observadas": [
+    "ds_plano_segregacao",
+    "dt_fim_vigencia",
+    "dt_inicio_vigencia",
+    "id_vigente",
+    "no_ente",
+    "no_sujeito_passivo",
+    "nr_cnpj_entidade",
+    "sg_uf",
+    "tp_regime",
+    "vl_aliquota"
+  ],
+  "registros_exemplo": [
+    {
+      "nr_cnpj_entidade": "27142058000126",
+      "no_ente": "Vitória",
+      "sg_uf": "ES",
+      "ds_plano_segregacao": "Fundo em Capitalização",
+      "no_sujeito_passivo": "Ativos",
+      "vl_aliquota": "10.00",
+      "dt_inicio_vigencia": "1997-05-08 03:00:00.000",
+      "dt_fim_vigencia": "2004-08-03 03:00:00.000",
+      "id_vigente": "NÃO VIGENTE",
+      "tp_regime": "RPPS"
+    },
+    {
+      "nr_cnpj_entidade": "27165208000117",
+      "no_ente": "Ibiraçu",
+      "sg_uf": "ES",
+      "ds_plano_segregacao": "Fundo em Capitalização",
+      "no_sujeito_passivo": "Aposentados",
+      "vl_aliquota": "11.00",
+      "dt_inicio_vigencia": "2010-07-15 03:00:00.000",
+      "dt_fim_vigencia": "2014-04-06 03:00:00.000",
+      "id_vigente": "NÃO VIGENTE",
+      "tp_regime": "RPPS"
+    },
+    {
+      "nr_cnpj_entidade": "27165208000117",
+      "no_ente": "Ibiraçu",
+      "sg_uf": "ES",
+      "ds_plano_segregacao": "Fundo em Capitalização",
+      "no_sujeito_passivo": "Aposentados",
+      "vl_aliquota": "6.50",
+      "dt_inicio_vigencia": "2001-03-01 03:00:00.000",
+      "dt_fim_vigencia": "2003-08-01 03:00:00.000",
+      "id_vigente": "NÃO VIGENTE",
+      "tp_regime": "RPPS"
+    }
+  ]
+}

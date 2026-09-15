@@ -323,12 +323,11 @@
 
   function cabecalhoEnte(e) {
     var crp = e.crp || {};
-    var hoje = new Date().toISOString().slice(0, 10);
-    var valido = crp.validade && crp.validade >= hoje;
+    var valido = crp.valido;
     var selo = crp.numero_crp
       ? h("span", { class: "selo " + (valido ? "ok" : "crit") },
-        [valido ? "✓ CRP válido até " + data(crp.validade)
-          : "✕ CRP vencido em " + data(crp.validade)])
+        [(valido ? "✓ CRP válido até " : "✕ CRP vencido em ") + data(crp.validade) +
+         (crp.judicial ? " · judicial" : "")])
       : h("span", { class: "selo neutro", texto: "sem registro de CRP" });
 
     return h("div", { class: "ficha-topo" }, [
@@ -353,9 +352,10 @@
       var crp = e.crp || {};
       var est = e.estatistica || {};
       var seg = e.segregacao || {};
-      var vigentes = (e.aliquotas || []).filter(function (a) { return !a.fim_vigencia; });
-      var razao = (est.aposentados || est.pensionistas)
-        ? (est.ativos || 0) / ((est.aposentados || 0) + (est.pensionistas || 0)) : null;
+      var vigentes = (e.aliquotas || []).filter(function (a) {
+        return a.vigente ? /VIGENTE/i.test(a.vigente) && !/NÃO|NAO/i.test(a.vigente)
+                         : !a.fim_vigencia;
+      });
 
       return [
         h("h2", { class: "secao", texto: "Ficha do RPPS" }),
@@ -364,17 +364,15 @@
           campo("Nº do CRP", crp.numero_crp || "—"),
           campo("Emissão", data(crp.emissao)),
           campo("Validade", data(crp.validade)),
-          campo("Via judicial", crp.judicial === null || crp.judicial === undefined
-            ? "—" : (crp.judicial ? "Sim" : "Não")),
-          campo("Segregação da massa", seg.possui_segregacao === null ||
-            seg.possui_segregacao === undefined ? "—"
-            : (seg.possui_segregacao ? "Sim" + (seg.data_segregacao ?
-              " — " + data(seg.data_segregacao) : "") : "Não")),
+          campo("Forma de emissão", crp.judicial === undefined ? "—"
+            : (crp.judicial ? "Judicial" : "Administrativa")),
+          campo("Segregação da massa", seg.segregacao || "—"),
           campo("Exercício do DRAA", est.exercicio || "—")
         ]),
         h("div", { class: "grade duas" }, [
           cartao("Alíquotas vigentes", "RPPS_ALIQUOTA",
-            vigentes.length ? "Sem data de término de vigência" : "Nenhuma alíquota vigente no banco",
+            vigentes.length ? "Declaradas como vigentes na fonte"
+                            : "Nenhuma alíquota vigente no banco",
             tabela([{ t: "Sujeito passivo" }, { t: "Plano" }, { t: "Alíquota", n: true }],
               vigentes.map(function (a) {
                 return h("tr", {}, [
@@ -384,17 +382,39 @@
                 ]);
               }))),
           cartao("Massa de participantes", "DRAA_ESTATISTICA",
-            est.exercicio ? "Exercício " + est.exercicio : "Sem DRAA no banco",
-            tabela([{ t: "Grupo" }, { t: "Pessoas", n: true }], [
-              linhaSimples("Servidores ativos", num(est.ativos, 0)),
-              linhaSimples("Aposentados", num(est.aposentados, 0)),
-              linhaSimples("Pensionistas", num(est.pensionistas, 0)),
-              linhaSimples("Dependentes", num(est.dependentes, 0)),
-              linhaSimples("Razão ativos / inativos", razao === null ? "—" : num(razao, 2))
-            ]))
+            est.disponivel ? "Exercício " + est.exercicio : "Sem DRAA no banco",
+            est.disponivel
+              ? tabela([{ t: "Grupo" }, { t: "Pessoas", n: true }, { t: "Folha mensal", n: true }],
+                (est.grupos || []).map(function (g) {
+                  return h("tr", {}, [
+                    h("td", { texto: g.rotulo }),
+                    h("td", { class: "n", texto: num(g.pessoas, 0) }),
+                    h("td", { class: "n", texto: g.folha ? reais(g.folha) : "—" })
+                  ]);
+                }).concat([
+                  h("tr", {}, [
+                    h("td", { texto: "Razão ativos / inativos" }),
+                    h("td", { class: "n", texto: est.razao_ativos_inativos === null
+                      ? "—" : num(est.razao_ativos_inativos, 2) }),
+                    h("td", {})
+                  ])
+                ]))
+              : h("p", { class: "sub", texto: "—" }))
         ])
       ];
     });
+  }
+
+  function tabelaComposicao(itens) {
+    if (!itens || !itens.length) return h("p", { class: "sub", texto: "Sem rubricas no período." });
+    return tabela([{ t: "Rubrica" }, { t: "Valor", n: true }, { t: "%", n: true }],
+      itens.slice(0, 7).map(function (i) {
+        return h("tr", {}, [
+          h("td", { texto: i.rotulo }),
+          h("td", { class: "n", texto: reais(i.valor) }),
+          h("td", { class: "n", texto: num(i.perc, 1) })
+        ]);
+      }));
   }
 
   function campo(k, v) {
@@ -430,22 +450,42 @@
           kpi("Ingressos no período", reais(c.total_receita), "bloco 10 do DIPR"),
           kpi("Dispêndios no período", reais(c.total_despesa), "bloco 11 do DIPR"),
           kpi("Resultado", (c.resultado >= 0 ? "+" : "−") + reais(Math.abs(c.resultado)),
-            serie.length + " competências", c.resultado >= 0 ? "bom" : "ruim"),
-          kpi("Beneficiários na folha", num(c.beneficiarios, 0), "aposentados e pensionistas")
+            c.meses_declarados + " de " + serie.length + " competências completas",
+            c.resultado >= 0 ? "bom" : "ruim"),
+          kpi("Beneficiários na folha",
+            (e.estatistica && e.estatistica.disponivel)
+              ? num(e.estatistica.inativos, 0) : "—",
+            "aposentados e pensionistas · DRAA")
         ]),
-        cartao("Ingressos e dispêndios, competência a competência", "DIPR · blocos 10–12",
-          "Em milhões de reais, na mesma escala — a distância entre as linhas é o resultado",
+        cartao("Ingressos e dispêndios, competência a competência", "DIPR",
+          "Em milhões de reais, na mesma escala · a linha se interrompe onde a " +
+          "competência não foi declarada" +
+          ((c.meses_sem_despesa || c.meses_sem_receita)
+            ? " — " + (c.meses_sem_despesa || 0) + " sem dispêndio e " +
+              (c.meses_sem_receita || 0) + " sem ingresso"
+            : ""),
           [alvo, legenda([
             { cor: "var(--s1)", rotulo: "Ingressos", linha: true },
             { cor: "var(--s2)", rotulo: "Dispêndios", linha: true }
-          ])])
+          ])]),
+        h("div", { class: "grade duas" }, [
+          cartao("De onde vem o dinheiro", "DIPR · rubricas de ingresso",
+            "Soma das rubricas do período · bases de cálculo não entram",
+            tabelaComposicao(c.origem)),
+          cartao("Para onde vai", "DIPR · rubricas UT-",
+            "Soma das rubricas de utilização de recursos",
+            tabelaComposicao(c.destino))
+        ])
       ].concat(depoisDeMontar(function () {
         Charts.desenhar(alvo, "linhas", {
           rotulos: rotulos, cada: serie.length > 14 ? 3 : 1, dec: 1, altura: 260,
           delta: "resultado", unidade: "/" + (serie[0] && serie[0].ano || ""),
+          rotuloAusente: "não declarado",
           series: [
-            { nome: "Ingressos", cor: "var(--s1)", dados: serie.map(function (p) { return p.receita / escalaMi; }) },
-            { nome: "Dispêndios", cor: "var(--s2)", dados: serie.map(function (p) { return p.despesa / escalaMi; }) }
+            { nome: "Ingressos", cor: "var(--s1)", dados: serie.map(function (p) {
+              return p.receita === null ? null : p.receita / escalaMi; }) },
+            { nome: "Dispêndios", cor: "var(--s2)", dados: serie.map(function (p) {
+              return p.despesa === null ? null : p.despesa / escalaMi; }) }
           ],
           descricao: "Ingressos e dispêndios mensais"
         });
@@ -514,69 +554,111 @@
       var a = e.atuaria || {};
       if (!a.disponivel) return [cabecalhoEnte(e), semDado("atuária", "DRAA_*")];
 
-      var fluxo = a.fluxo || [];
-      var alvo = grafico(266);
-      var escalaMi = 1e6;
-      var cruzamentoIndice = null;
-      fluxo.forEach(function (p, i) {
-        if (cruzamentoIndice === null && p.ano_projecao === a.cruzamento) cruzamentoIndice = i;
-      });
+      var r = a.resultado || {};
+      var f = a.fluxo || {};
+      var deficit = r.deficit || 0, superavit = r.superavit || 0;
+      var alvo = f.disponivel ? grafico(118) : null;
 
-      var custeio = a.custeio || {};
-      var deficit = (a.compromissos || []).reduce(function (soma, c) {
-        return soma + (c.geracao_atual || 0);
-      }, 0);
-
-      return [
+      var nos = [
         h("h2", { class: "secao", texto: "Situação atuarial" }),
         cabecalhoEnte(e),
-        h("div", { class: "kpis" }, [
-          kpi("Resultado atuarial", reais(deficit),
-            deficit > 0 ? "déficit — provisões a cobrir" : "superávit",
-            deficit > 0 ? "ruim" : "bom"),
-          kpi("Custo normal", pct(custeio.custo_normal, 2), "da folha de ativos"),
-          kpi("Custo suplementar", pct(custeio.custo_suplementar, 2), "amortização do déficit"),
-          kpi("Cruzamento das curvas", a.cruzamento || "—",
-            a.cruzamento ? "despesas passam as receitas" : "não ocorre no horizonte projetado")
+        h("div", { class: "contexto" }, [
+          h("span", { class: "pilula" }, ["Exercício ", h("b", { texto: String(a.exercicio || "—") })])
         ]),
-        fluxo.length ? cartao("Fluxo atuarial projetado", "DRAA_FLUXO_ATUARIAL",
-          "Em milhões de reais por ano — o cruzamento é lido da série, não vem pronto da API",
-          [alvo, legenda([
-            { cor: "var(--s1)", rotulo: "Receitas projetadas", linha: true },
-            { cor: "var(--s2)", rotulo: "Despesas projetadas", linha: true }
-          ])]) : null,
-        h("div", { class: "grade duas" }, [
-          cartao("Hipóteses da avaliação", "DRAA_HIPOTESE_ATUARIAL",
-            "O que sustenta a projeção ao lado",
-            h("div", { class: "campos" }, (a.hipoteses || []).map(function (hp) {
-              return campo(hp.descricao || "—", hp.valor || "—");
-            }))),
-          cartao("Compromissos por geração", "DRAA_VALORES_COMPROMISSOS",
-            "Valor presente",
-            tabela([{ t: "Componente" }, { t: "Atual", n: true }, { t: "Futura", n: true }],
-              (a.compromissos || []).map(function (c) {
-                return h("tr", {}, [
-                  h("td", { texto: c.descricao || "—" }),
-                  h("td", { class: "n", texto: reais(c.geracao_atual) }),
-                  h("td", { class: "n", texto: c.geracao_futura ? reais(c.geracao_futura) : "—" })
-                ]);
-              })))
+        h("div", { class: "kpis" }, [
+          kpi("Resultado atuarial",
+            reais(deficit > 0 ? deficit : superavit),
+            deficit > 0 ? "déficit — provisões a cobrir"
+              : superavit > 0 ? "superávit" : "equilíbrio",
+            deficit > 0 ? "ruim" : superavit > 0 ? "bom" : ""),
+          kpi("Ativos garantidores", reais(r.ativos_garantidores),
+            "recursos que lastreiam o plano"),
+          kpi("Receitas projetadas", reais(f.receitas), "total do fluxo atuarial"),
+          kpi("Despesas projetadas", reais(f.despesas), "total do fluxo atuarial",
+            (f.saldo || 0) < 0 ? "ruim" : "bom")
         ])
-      ].concat(fluxo.length ? (depoisDeMontar(function () {
-        Charts.desenhar(alvo, "linhas", {
-          rotulos: fluxo.map(function (p) { return String(p.ano_projecao); }),
-          cada: Math.max(1, Math.round(fluxo.length / 5)), dec: 0, altura: 266,
-          delta: "saldo",
-          anotacao: cruzamentoIndice === null ? null
-            : { em: cruzamentoIndice, texto: String(a.cruzamento) },
-          series: [
-            { nome: "Receitas", cor: "var(--s1)", dados: fluxo.map(function (p) { return (p.receitas || 0) / escalaMi; }) },
-            { nome: "Despesas", cor: "var(--s2)", dados: fluxo.map(function (p) { return (p.despesas || 0) / escalaMi; }) }
-          ],
-          descricao: "Projeção anual de receitas e despesas"
+      ];
+
+      if (f.disponivel) {
+        nos.push(cartao("Fluxo atuarial projetado", "DRAA_FLUXO_ATUARIAL",
+          "Totais projetados do plano — a API não devolve a projeção ano a ano, " +
+          "então não há curva de cruzamento aqui",
+          [alvo, legenda([
+            { cor: "var(--s1)", rotulo: "Receitas projetadas" },
+            { cor: "var(--s2)", rotulo: "Despesas projetadas" }
+          ])]));
+        nos.push(h("div", { class: "grade duas" }, [
+          cartao("Composição das receitas", "DRAA_FLUXO_ATUARIAL",
+            "Maiores itens projetados", tabelaItens(f.itens_receita)),
+          cartao("Composição das despesas", "DRAA_FLUXO_ATUARIAL",
+            "Maiores itens projetados", tabelaItens(f.itens_despesa))
+        ]));
+      }
+
+      nos.push(h("div", { class: "grade duas" }, [
+        cartao("Hipóteses da avaliação", "DRAA_HIPOTESE_ATUARIAL",
+          "O que sustenta os números acima",
+          (a.hipoteses || []).length
+            ? h("div", { class: "campos" }, a.hipoteses.map(function (hp) {
+                return campo(hp.descricao, hp.valor === null || hp.valor === undefined
+                  ? "—" : String(hp.valor));
+              }))
+            : h("p", { class: "sub", texto: "Sem hipóteses no banco." })),
+        cartao("Plano de custeio", "DRAA_PLANO_CUSTEIO",
+          "Alíquota definida na avaliação atuarial",
+          (a.custeio || []).length
+            ? tabela([{ t: "Contribuição" }, { t: "Alíquota", n: true },
+                { t: "Valor definido", n: true }],
+              a.custeio.map(function (cu) {
+                return h("tr", {}, [
+                  h("td", { texto: cu.rotulo || "—" }),
+                  h("td", { class: "n", texto: pct(cu.aliquota, 2) }),
+                  h("td", { class: "n", texto: cu.contribuicao ? reais(cu.contribuicao) : "—" })
+                ]);
+              }))
+            : h("p", { class: "sub", texto: "Sem plano de custeio no banco." }))
+      ]));
+
+      if ((a.compromissos || []).length) {
+        nos.push(cartao("Compromissos do plano", "DRAA_VALORES_COMPROMISSOS",
+          "Valor presente, por geração",
+          tabela([{ t: "Item" }, { t: "Plano" }, { t: "Geração atual", n: true },
+            { t: "Geração futura", n: true }],
+            a.compromissos.map(function (co) {
+              return h("tr", {}, [
+                h("td", { texto: co.descricao || "—" }),
+                h("td", { texto: co.plano || "—" }),
+                h("td", { class: "n", texto: co.geracao_atual ? reais(co.geracao_atual) : "—" }),
+                h("td", { class: "n", texto: co.geracao_futura ? reais(co.geracao_futura) : "—" })
+              ]);
+            }), true)));
+      }
+
+      if (f.disponivel) {
+        depoisDeMontar(function () {
+          Charts.desenhar(alvo, "barraUnica", {
+            altura: 118, alturaBarra: 30, titulo: "Fluxo atuarial projetado",
+            partes: [
+              { rotulo: "Receitas projetadas", valor: f.receitas || 0, cor: "var(--s1)" },
+              { rotulo: "Despesas projetadas", valor: f.despesas || 0, cor: "var(--s2)" }
+            ],
+            descricao: "Receitas e despesas projetadas do plano"
+          });
         });
-      }) || []) : []);
+      }
+      return nos;
     });
+  }
+
+  function tabelaItens(itens) {
+    if (!itens || !itens.length) return h("p", { class: "sub", texto: "Sem itens no banco." });
+    return tabela([{ t: "Item" }, { t: "Valor", n: true }],
+      itens.map(function (i) {
+        return h("tr", {}, [
+          h("td", { texto: i.descricao || "—" }),
+          h("td", { class: "n", texto: reais(i.valor) })
+        ]);
+      }));
   }
 
   // ------------------------------------------------------------- aba ajuda

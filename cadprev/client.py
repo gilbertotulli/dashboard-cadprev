@@ -40,7 +40,7 @@ class Cliente:
     """Consulta paginada aos recursos da API.
 
     Args:
-        base_url: host da API. Os espelhos estão em ``endpoints.MIRRORS``.
+        base_url: host da API. Ver ``endpoints.BASE_URL``.
         pausa: segundos entre requisições. A API é pública e gratuita;
             manter uma pausa é cortesia com um serviço que não cobra nada.
         tentativas: quantas vezes repetir uma falha temporária.

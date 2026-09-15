@@ -1,0 +1,81 @@
+{
+  "endpoint": "DIPR",
+  "observado_em": "2026-09-15",
+  "host": "https://apicadprev.trabalho.gov.br",
+  "envelope": [
+    "count",
+    "data",
+    "limit",
+    "offset",
+    "query",
+    "success"
+  ],
+  "count": 5000,
+  "limit": 5000,
+  "chaves_observadas": [
+    "dt_ano",
+    "dt_envio",
+    "dt_mes",
+    "id_rubrica",
+    "idrubrica",
+    "no_ente",
+    "no_orgao",
+    "no_plano",
+    "no_rubrica",
+    "nr_cnpj_entidade",
+    "nr_cnpj_orgao",
+    "sg_uf",
+    "te_rubrica",
+    "vl_rubrica"
+  ],
+  "registros_exemplo": [
+    {
+      "idrubrica": 446369,
+      "nr_cnpj_entidade": "27174143000176",
+      "sg_uf": "ES",
+      "no_ente": "São Gabriel da Palha",
+      "dt_mes": 1,
+      "dt_ano": 2025,
+      "dt_envio": "2026-02-12 15:53:13.747",
+      "no_plano": "PREVIDENCIARIO",
+      "nr_cnpj_orgao": 5251479000152,
+      "no_orgao": "Instituto de Previdência dos Servidores Públicos do Município de São Gabriel da Palha",
+      "id_rubrica": 7,
+      "no_rubrica": "UG-APO",
+      "te_rubrica": "Dos aposentados pagos pela Unidade Gestora do RPPS",
+      "vl_rubrica": "66332.79"
+    },
+    {
+      "idrubrica": 570057,
+      "nr_cnpj_entidade": "27150549000119",
+      "sg_uf": "ES",
+      "no_ente": "Cariacica",
+      "dt_mes": 1,
+      "dt_ano": 2025,
+      "dt_envio": "2025-03-28 14:18:30.593",
+      "no_plano": "FINANCEIRO",
+      "nr_cnpj_orgao": 27150549000119,
+      "no_orgao": "MUNICIPIO DE CARIACICA",
+      "id_rubrica": 28,
+      "no_rubrica": "13-SEG",
+      "te_rubrica": "13° - Dos servidores",
+      "vl_rubrica": "26378.50"
+    },
+    {
+      "idrubrica": 637380,
+      "nr_cnpj_entidade": "27142702000166",
+      "sg_uf": "ES",
+      "no_ente": "Aracruz",
+      "dt_mes": 1,
+      "dt_ano": 2025,
+      "dt_envio": "2025-04-24 22:19:42.693",
+      "no_plano": "PREVIDENCIARIO",
+      "nr_cnpj_orgao": 36330231000100,
+      "no_orgao": "INSTITUTO DE PREVIDÊNCIA E ASSISTÊNCIA DOS SERVIDORES DO MUNICÍPIO DE ARACRUZ",
+      "id_rubrica": 7,
+      "no_rubrica": "UG-APO",
+      "te_rubrica": "Dos aposentados pagos pela Unidade Gestora do RPPS",
+      "vl_rubrica": "43678.64"
+    }
+  ]
+}

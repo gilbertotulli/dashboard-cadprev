@@ -1,0 +1,69 @@
+{
+  "endpoint": "RPPS_REGIME_PREVIDENCIARIO",
+  "observado_em": "2026-09-15",
+  "host": "https://apicadprev.trabalho.gov.br",
+  "envelope": [
+    "count",
+    "data",
+    "limit",
+    "offset",
+    "query",
+    "success"
+  ],
+  "count": 280,
+  "limit": 5000,
+  "chaves_observadas": [
+    "dt_fim",
+    "dt_inicio",
+    "dt_legislacao",
+    "no_ente",
+    "no_tipo_legislacao",
+    "nr_cnpj_entidade",
+    "nr_legislacao",
+    "sg_uf",
+    "te_ementa",
+    "tp_regime",
+    "tp_vinculo_legislacao"
+  ],
+  "registros_exemplo": [
+    {
+      "nr_cnpj_entidade": "27165190000153",
+      "sg_uf": "ES",
+      "no_ente": "Guarapari",
+      "tp_regime": "RPPS",
+      "dt_inicio": "1981-05-21 03:00:00.000",
+      "dt_fim": null,
+      "no_tipo_legislacao": "LEI",
+      "nr_legislacao": "1635",
+      "dt_legislacao": "1997-02-18 03:00:00.000",
+      "te_ementa": "Altera redação aos artigos 83 106 107  148  150 e 151 e revoga o inciso IV  do Art. 81  todos da Lei Complementar n° 1.278/91 de 10 de abril de 1991.",
+      "tp_vinculo_legislacao": "Reestruturação"
+    },
+    {
+      "nr_cnpj_entidade": "27165638000139",
+      "sg_uf": "ES",
+      "no_ente": "Castelo",
+      "tp_regime": "RPPS",
+      "dt_inicio": "1992-10-20 03:00:00.000",
+      "dt_fim": "2002-04-28 03:00:00.000",
+      "no_tipo_legislacao": "LEI",
+      "nr_legislacao": "1440",
+      "dt_legislacao": "1992-10-20 03:00:00.000",
+      "te_ementa": "estatuto dos servidores.",
+      "tp_vinculo_legislacao": "Criação do Regime"
+    },
+    {
+      "nr_cnpj_entidade": "31723570000133",
+      "sg_uf": "ES",
+      "no_ente": "Vargem Alta",
+      "tp_regime": "RPPS",
+      "dt_inicio": "1990-06-28 03:00:00.000",
+      "dt_fim": null,
+      "no_tipo_legislacao": "LEI COMPLEMENTAR",
+      "nr_legislacao": "010",
+      "dt_legislacao": "2003-07-02 03:00:00.000",
+      "te_ementa": "dispõe sobre o estatuto dos servidores.",
+      "tp_vinculo_legislacao": "Reestruturação"
+    }
+  ]
+}

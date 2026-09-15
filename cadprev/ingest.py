@@ -125,13 +125,29 @@ def ingerir_varios(cliente: Cliente, store: Store, nomes: Iterable[str],
     resultados, erros = [], []
     for nome in nomes:
         filtros_validos = _filtrar_aplicaveis(nome, filtros)
+        escopo_valido = _escopo_aplicavel(nome, escopo)
         try:
-            resultados.append(ingerir(cliente, store, nome, escopo=escopo,
+            resultados.append(ingerir(cliente, store, nome, escopo=escopo_valido,
                                       **filtros_validos))
         except Exception as erro:  # noqa: BLE001 — relatar, não abortar
             log.error("%s falhou: %s", nome, erro)
             erros.append({"endpoint": nome, "erro": str(erro)})
     return {"ok": resultados, "erros": erros}
+
+
+def _escopo_aplicavel(endpoint: str, escopo: Optional[Mapping[str, Any]]
+                      ) -> Optional[Dict[str, Any]]:
+    """Restringe o escopo às colunas que o endpoint realmente tem.
+
+    ``--ano`` delimita DIPR e DAIR; ``--exercicio`` delimita o DRAA. Aplicar o
+    escopo inteiro a todos faria a substituição falhar com "no such column"
+    justamente nos endpoints em que ela não se aplica.
+    """
+    if not escopo:
+        return None
+    colunas = {campo.nome for campo in fieldmap.campos(endpoint)}
+    recorte = {k: v for k, v in escopo.items() if k in colunas}
+    return recorte or None
 
 
 def _filtrar_aplicaveis(endpoint: str, filtros: Mapping[str, Any]) -> Dict[str, Any]:

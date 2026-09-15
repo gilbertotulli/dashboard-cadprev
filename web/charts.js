@@ -182,7 +182,9 @@
     var padL = 44, padR = 56, padT = 14, padB = 28;
     var pw = W - padL - padR, ph = H - padT - padB, max = 0;
     cfg.series.forEach(function (s) {
-      s.dados.forEach(function (v) { if (v !== null) max = Math.max(max, v); });
+      s.dados.forEach(function (v) {
+        if (v !== null && v !== undefined) max = Math.max(max, v);
+      });
     });
     var sc = escala(max || 1);
     var X = function (i) { return padL + (pw * i / Math.max(1, cfg.rotulos.length - 1)); };
@@ -213,19 +215,37 @@
     }
 
     cfg.series.forEach(function (s) {
-      var d = s.dados.map(function (v, i) { return (i ? "L" : "M") + X(i) + "," + Y(v); }).join("");
+      // Ponto nulo é competência sem declaração, não valor zero: a linha se
+      // interrompe ali em vez de descer até o eixo e sugerir que nada entrou.
+      var d = "", abrindo = true, ultimo = -1;
+      s.dados.forEach(function (v, i) {
+        if (v === null || v === undefined) { abrindo = true; return; }
+        d += (abrindo ? "M" : "L") + X(i) + "," + Y(v);
+        abrindo = false;
+        ultimo = i;
+      });
+      if (!d) return;
       svg.appendChild(S("path", {
         d: d, fill: "none", stroke: s.cor, "stroke-width": 2,
         "stroke-linejoin": "round", "stroke-linecap": "round"
       }));
-      var ul = s.dados.length - 1;
+      // Um ponto cercado de ausências não vira segmento: marca-se sozinho.
+      s.dados.forEach(function (v, i) {
+        if (v === null || v === undefined) return;
+        var antes = s.dados[i - 1], depois = s.dados[i + 1];
+        if ((antes === null || antes === undefined) &&
+            (depois === null || depois === undefined)) {
+          svg.appendChild(S("circle", { cx: X(i), cy: Y(v), r: 3, fill: s.cor }));
+        }
+      });
       svg.appendChild(S("circle", {
-        cx: X(ul), cy: Y(s.dados[ul]), r: 4.5, fill: s.cor,
+        cx: X(ultimo), cy: Y(s.dados[ultimo]), r: 4.5, fill: s.cor,
         stroke: "var(--surface)", "stroke-width": 2
       }));
-      svg.appendChild(txt(X(ul) + 9, Y(s.dados[ul]), num(s.dados[ul], cfg.dec), {
-        fill: "var(--ink)", size: 11, weight: 500, baseline: "middle", tabular: true
-      }));
+      svg.appendChild(txt(X(ultimo) + 9, Y(s.dados[ultimo]),
+        num(s.dados[ultimo], cfg.dec), {
+          fill: "var(--ink)", size: 11, weight: 500, baseline: "middle", tabular: true
+        }));
     });
 
     var cruz = S("line", {
@@ -247,13 +267,21 @@
       cruz.setAttribute("x1", X(i)); cruz.setAttribute("x2", X(i));
       cruz.setAttribute("opacity", 0.45);
       var html = titulo(cfg.rotulos[i] + (cfg.unidade || ""));
+      var completo = true;
       cfg.series.forEach(function (s, j) {
+        var v = s.dados[i];
+        if (v === null || v === undefined) {
+          pontos[j].setAttribute("opacity", 0);
+          completo = false;
+          html += linha(s.cor, s.nome, cfg.rotuloAusente || "não declarado");
+          return;
+        }
         pontos[j].setAttribute("cx", X(i));
-        pontos[j].setAttribute("cy", Y(s.dados[i]));
+        pontos[j].setAttribute("cy", Y(v));
         pontos[j].setAttribute("opacity", 1);
-        html += linha(s.cor, s.nome, num(s.dados[i], cfg.dec));
+        html += linha(s.cor, s.nome, num(v, cfg.dec));
       });
-      if (cfg.delta && cfg.series.length === 2) {
+      if (cfg.delta && cfg.series.length === 2 && completo) {
         var d0 = cfg.series[0].dados[i] - cfg.series[1].dados[i];
         html += '<span class="r sub">' + cfg.delta + " " +
           (d0 >= 0 ? "+" : "−") + num(Math.abs(d0), cfg.dec) + "</span>";

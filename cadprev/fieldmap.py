@@ -1,24 +1,31 @@
 """Mapeamento entre os campos da resposta da API e os nomes usados no projeto.
 
-Por que esta camada existe
---------------------------
-Os nomes exatos dos campos devolvidos pela API do CADPREV não foram
-confirmados: o levantamento que originou este projeto foi feito sem acesso de
-rede aos domínios ``*.gov.br``, a partir do cliente R ``marcosfs2006/ADPrev`` e
-dos conjuntos de dados abertos equivalentes. Ver docs/api-cadprev.md.
+Os nomes aqui foram **verificados contra respostas reais** da API em 15/09/2026,
+com amostras do Espírito Santo. A evidência está em ``docs/schema-observado/``:
+um arquivo por endpoint, com as chaves observadas e registros de exemplo.
 
-Em vez de espalhar palpites por todo o código, cada campo lógico declara aqui
-uma lista de **candidatos**. Duas convenções coexistem nos artefatos públicos da
-SPREV e ambas estão contempladas:
+A camada continua existindo por dois motivos. Primeiro, porque a API já mudou de
+host uma vez e pode mudar de campo: um nome novo entra como candidato e nada
+mais no projeto precisa saber. Segundo, porque a resolução falha alto quando um
+campo obrigatório some — melhor do que gravar uma coluna de nulos que ninguém
+percebe até o número já ter circulado.
 
-* a dos parâmetros de consulta, com prefixo de tipo — ``nr_cnpj_entidade``,
-  ``sg_uf``, ``dt_ano``, e por extensão ``ds_``, ``vl_``, ``qt_``, ``pc_``;
-* a dos arquivos de dados abertos, sem prefixo — ``cnpj``, ``uf``, ``segmento``,
-  ``vlr_total_atual``.
+Formato longo
+-------------
+Vários endpoints não devolvem uma linha por ente, e sim uma linha por item:
 
-A resolução acontece uma vez por endpoint, contra as chaves realmente
-observadas. Se nenhum candidato casar, o erro lista as chaves que vieram — o
-problema se diagnostica sozinho em vez de virar coluna nula.
+* ``DIPR`` — uma linha por rubrica, por mês e por plano. Os totais de ingresso e
+  dispêndio não existem como campo: saem da soma das rubricas. Ver ``rubricas.py``.
+* ``DRAA_ESTATISTICA`` — uma linha por grupo populacional, com contagem separada
+  por sexo.
+* ``DRAA_FLUXO_ATUARIAL`` — uma linha por item de fluxo, com um único valor
+  projetado. **Não é série temporal**: a projeção ano a ano existe nos arquivos
+  de dados abertos, não na API.
+* ``DRAA_VALORES_COMPROMISSOS``, ``DRAA_HIPOTESE_ATUARIAL``,
+  ``DRAA_PLANO_CUSTEIO`` — uma linha por item do demonstrativo.
+* ``RPPS_CRP`` e ``RPPS_ALIQUOTA`` — o histórico inteiro, não a posição atual.
+
+A agregação de cada um está em ``build.py``; aqui ficam só os nomes e os tipos.
 
 Corrigir sem editar código
 --------------------------
@@ -26,8 +33,8 @@ Corrigir sem editar código
 
     {"DAIR_CARTEIRA": {"valor_total": "vl_total_atual"}}
 
-``python -m cadprev inspect DAIR_CARTEIRA`` gera um rascunho desse arquivo a
-partir de uma página real da API.
+``python -m cadprev inspect DAIR_CARTEIRA --uf ES`` mostra o que a API devolve
+hoje e sugere o conteúdo desse arquivo.
 """
 
 import json
@@ -69,133 +76,167 @@ def _c(nome, *candidatos, tipo="texto", obrigatorio=True, nota=""):
     return Campo(nome, tuple(candidatos), tipo, obrigatorio, nota)
 
 
-# Campos de identificação, repetidos em todos os endpoints.
+# Campos de identificação, presentes em todos os endpoints.
 _IDENT = (
     _c("cnpj_ente", "nr_cnpj_entidade", "cnpj_ente", "cnpj", tipo="cnpj"),
     _c("ente", "no_ente", "ente", "nm_ente"),
     _c("uf", "sg_uf", "uf"),
 )
 
+# O DRAA repete plano e massa em quase todos os seus recursos.
+_PLANO_MASSA = (
+    _c("exercicio", "dt_exercicio", "exercicio", tipo="inteiro"),
+    _c("plano", "tp_plano", "ds_plano_segregacao", obrigatorio=False,
+       nota="Previdenciário (capitalização), Financeiro (repartição) ou "
+            "Mantidos pelo Tesouro"),
+    _c("massa", "tp_massa", obrigatorio=False, nota="Civil ou Militar"),
+)
+
 MAPA: Dict[str, Tuple[Campo, ...]] = {
     "RPPS_REGIME_PREVIDENCIARIO": _IDENT + (
-        _c("regime", "ds_regime", "regime", "tp_regime",
-           nota="RGPS, RPPS ou RPPS em extinção"),
+        _c("regime", "tp_regime", "ds_regime", "regime",
+           nota="RPPS ou RGPS"),
+        _c("inicio", "dt_inicio", tipo="data", obrigatorio=False),
+        _c("fim", "dt_fim", tipo="data", obrigatorio=False,
+           nota="nulo = vigente; o endpoint devolve o histórico de legislação"),
+        _c("tipo_legislacao", "no_tipo_legislacao", obrigatorio=False),
+        _c("numero_legislacao", "nr_legislacao", obrigatorio=False),
     ),
+    # Os dois campos abaixo estão TROCADOS na API em relação à própria
+    # documentação. O Swagger descreve ds_situacao como "Vigente ou Vencido" e
+    # tp_crp como "Administrativo ou Judicial"; as respostas reais de 15/09/2026
+    # devolvem o contrário. Por isso os dois são lidos crus e a classificação
+    # acontece pelo VALOR, em build.py — assim continua certo se a SPREV
+    # corrigir a inversão.
     "RPPS_CRP": _IDENT + (
-        _c("numero_crp", "nr_crp", "num_crp", "numero_crp"),
-        _c("emissao", "dt_emissao", "dt_emissao_crp", "emissao", tipo="data"),
-        _c("validade", "dt_validade", "dt_validade_crp", "validade", tipo="data"),
-        _c("judicial", "st_judicial", "judicial", "in_judicial", tipo="booleano"),
-        _c("situacao", "ds_situacao", "situacao", "st_situacao",
-           obrigatorio=False, nota="VÁLIDO ou VENCIDO; derivável da validade"),
+        _c("numero_crp", "nr_crp", "num_crp"),
+        _c("emissao", "dt_emissao", tipo="data"),
+        _c("validade", "dt_validade", tipo="data"),
+        _c("campo_situacao", "ds_situacao", obrigatorio=False,
+           nota="documentado como Vigente/Vencido; na prática traz "
+                "Administrativo/Judicial"),
+        _c("campo_tipo", "tp_crp", obrigatorio=False,
+           nota="documentado como Administrativo/Judicial; na prática traz "
+                "Válido/Vencido"),
     ),
     "RPPS_ALIQUOTA": _IDENT + (
-        _c("plano", "ds_plano_segregacao", "plano_segregacao", "plano_segreg",
-           nota="FINANCEIRO (repartição) ou PREVIDENCIÁRIO (capitalização)"),
-        _c("sujeito_passivo", "ds_sujeito_passivo", "sujeito_passivo"),
-        _c("aliquota", "vl_aliquota", "pc_aliquota", "aliquota", tipo="decimal"),
-        _c("inicio_vigencia", "dt_inicio_vigencia", "inic_vigencia",
-           "dt_inic_vigencia", tipo="data"),
-        _c("fim_vigencia", "dt_fim_vigencia", "fim_vigencia", tipo="data",
-           obrigatorio=False, nota="nulo = vigente"),
+        _c("plano", "ds_plano_segregacao", "plano_segregacao",
+           nota="'Fundo em Capitalização' ou 'Fundo em Repartição'"),
+        _c("sujeito_passivo", "no_sujeito_passivo", "ds_sujeito_passivo"),
+        _c("aliquota", "vl_aliquota", "aliquota", tipo="decimal"),
+        _c("inicio_vigencia", "dt_inicio_vigencia", tipo="data"),
+        _c("fim_vigencia", "dt_fim_vigencia", tipo="data", obrigatorio=False),
+        _c("vigente", "id_vigente", obrigatorio=False,
+           nota="VIGENTE ou NÃO VIGENTE — declarado, não inferido da data"),
     ),
     "DIPR": _IDENT + (
         _c("ano", "dt_ano", "ano", tipo="inteiro"),
         _c("mes", "dt_mes", "mes", tipo="inteiro"),
-        _c("plano", "ds_plano_segregacao", "plano_segreg", "plano_segregacao",
-           obrigatorio=False,
-           nota="dimensão capitalizado x repartição — confirmada na API"),
-        _c("total_receita", "vl_total_receita", "total_receita", tipo="decimal"),
-        _c("total_despesa", "vl_total_despesa", "total_despesa", tipo="decimal"),
-        _c("resultado", "vl_resultado_final", "resultado_final", tipo="decimal",
-           obrigatorio=False, nota="derivável de receita - despesa"),
-        _c("nb_aposentados", "qt_nb_apos", "nb_apos", tipo="inteiro",
-           obrigatorio=False),
-        _c("nb_pensionistas", "qt_nb_pen", "nb_pen", tipo="inteiro",
-           obrigatorio=False),
-        _c("nb_servidores", "qt_nb_serv", "nb_serv", tipo="inteiro",
-           obrigatorio=False),
+        _c("plano", "no_plano", "ds_plano_segregacao", obrigatorio=False,
+           nota="PREVIDENCIARIO ou FINANCEIRO — a dimensão capitalizado x "
+                "repartição, confirmada na API"),
+        _c("rubrica", "no_rubrica",
+           nota="sigla da rubrica; o prefixo UT- marca dispêndio. Ver rubricas.py"),
+        _c("descricao_rubrica", "te_rubrica", obrigatorio=False),
+        _c("codigo_rubrica", "id_rubrica", tipo="inteiro", obrigatorio=False),
+        _c("valor", "vl_rubrica", tipo="decimal"),
+        _c("orgao", "no_orgao", obrigatorio=False),
+        _c("envio", "dt_envio", tipo="data", obrigatorio=False),
     ),
     "DAIR_CARTEIRA": _IDENT + (
-        _c("competencia", "dt_competencia", "competencia",
-           nota="mês e ano da posição"),
-        _c("segmento", "ds_segmento", "segmento",
+        _c("ano", "dt_ano", tipo="inteiro"),
+        _c("mes", "dt_mes_bimestre", tipo="inteiro"),
+        _c("segmento", "no_segmento", "ds_segmento", "segmento",
            nota="inclui 'Disponibilidades Financeiras', que não é alocação"),
-        _c("tipo_ativo", "ds_tipo_ativo", "tipo_ativo", obrigatorio=False),
-        _c("limite_cmn", "vl_limite_resol_cmn", "limite_resol_cmn",
-           tipo="decimal", obrigatorio=False,
-           nota="teto da Resolução CMN 3.922/10, no próprio registro"),
-        _c("identificacao_ativo", "ds_ident_ativo", "ident_ativo",
-           obrigatorio=False),
-        _c("nome_ativo", "no_ativo", "nm_ativo", "nome_ativo", obrigatorio=False),
-        _c("quantidade_cotas", "qt_quotas", "qtd_quotas", tipo="decimal",
+        _c("tipo_ativo", "no_tipo_ativo", "tipo_ativo", obrigatorio=False),
+        _c("limite_cmn", "pc_cmn", "limite_resol_cmn", tipo="decimal",
+           obrigatorio=False,
+           nota="teto da Resolução CMN 3.922/10, no próprio registro do ativo"),
+        _c("identificacao_ativo", "id_ativo", "ident_ativo", obrigatorio=False),
+        _c("nome_ativo", "no_fundo", "nm_ativo", obrigatorio=False),
+        _c("quantidade_cotas", "qt_rpps", "qtd_quotas", tipo="decimal",
            obrigatorio=False),
         _c("valor_unitario", "vl_atual_ativo", "vlr_atual_ativo", tipo="decimal",
            obrigatorio=False),
         _c("valor_total", "vl_total_atual", "vlr_total_atual", tipo="decimal"),
-        _c("perc_recursos", "pc_recursos_rpps", "perc_recursos_rpps",
-           tipo="decimal", obrigatorio=False),
-        _c("pl_fundo", "vl_pl_fundo", "pl_fundo", tipo="decimal",
+        _c("perc_recursos", "pc_rpps", "perc_recursos_rpps", tipo="decimal",
            obrigatorio=False),
-        _c("perc_pl_fundo", "pc_pl_fundo", "perc_pl_fundo", tipo="decimal",
+        _c("pl_fundo", "vl_patrimonio", "pl_fundo", tipo="decimal", obrigatorio=False),
+        _c("perc_pl_fundo", "pc_patrimonio", "perc_pl_fundo", tipo="decimal",
            obrigatorio=False),
-        # --- o campo da pendência de maior impacto ---
-        _c("plano", "ds_plano", "ds_plano_segregacao", "ds_tipo_recurso",
-           "tp_recurso", "plano", "plano_segregacao", "tipo_recurso",
-           tipo="texto", obrigatorio=False,
-           nota="NÃO CONFIRMADO. Se existir, permite a decomposição de três vias "
-                "(capitalizado / repartição / taxa de administração) — Nível A. "
-                "Ausente, o projeto cai no Nível B e classifica o RPPS, "
-                "não o ativo. Ver cadprev/fundos.py"),
+        # --- a pergunta central do projeto, agora respondida ---
+        _c("plano", "ds_plano", "ds_plano_segregacao", "tp_recurso",
+           obrigatorio=False,
+           nota="NÃO EXISTE na API (verificado em 15/09/2026). A carteira não "
+                "traz o plano do ativo, então o projeto opera no Nível B: "
+                "classifica o RPPS, não o ativo. Mantido como candidato para o "
+                "dia em que a SPREV expuser o campo. Ver fundos.py"),
     ),
-    "DRAA_ESTATISTICA": _IDENT + (
-        _c("exercicio", "dt_exercicio", "exercicio", tipo="inteiro"),
-        _c("ativos", "qt_ativos", "ativos", tipo="inteiro", obrigatorio=False),
-        _c("aposentados", "qt_aposentados", "aposentados", tipo="inteiro",
+    "DRAA_ESTATISTICA": _IDENT + _PLANO_MASSA + (
+        _c("tipo_populacao", "tp_populacao",
+           nota="Servidores, Aposentados, Pensionistas, Servidores Iminentes, "
+                "Militares"),
+        _c("categoria_populacao", "no_cat_populacao", obrigatorio=False),
+        _c("qt_masculino", "qt_grupo_masc", tipo="inteiro", obrigatorio=False),
+        _c("qt_feminino", "qt_grupo_fem", tipo="inteiro", obrigatorio=False),
+        _c("folha_masculino", "vl_folha_mensal_masc", tipo="decimal",
            obrigatorio=False),
-        _c("pensionistas", "qt_pensionistas", "pensionistas", tipo="inteiro",
+        _c("folha_feminino", "vl_folha_mensal_fem", tipo="decimal",
            obrigatorio=False),
-        _c("dependentes", "qt_dependentes", "dependentes", tipo="inteiro",
+        _c("idade_media_masculino", "vl_idade_media_masc", tipo="decimal",
            obrigatorio=False),
-    ),
-    "DRAA_SEGREGACAO_MASSA": _IDENT + (
-        _c("exercicio", "dt_exercicio", "exercicio", tipo="inteiro"),
-        _c("possui_segregacao", "st_segregacao", "possui_segregacao",
-           "in_segregacao", tipo="booleano", obrigatorio=False),
-        _c("data_segregacao", "dt_segregacao", "data_segregacao", tipo="data",
+        _c("idade_media_feminino", "vl_idade_media_fem", tipo="decimal",
            obrigatorio=False),
     ),
-    "DRAA_FLUXO_ATUARIAL": _IDENT + (
-        _c("exercicio", "dt_exercicio", "exercicio", tipo="inteiro"),
-        _c("ano_projecao", "dt_ano_projecao", "ano_projecao", "ano",
-           tipo="inteiro"),
-        _c("receitas", "vl_receitas", "receitas", tipo="decimal",
+    "DRAA_SEGREGACAO_MASSA": _IDENT + _PLANO_MASSA + (
+        _c("segregacao", "no_segregacao_massa", obrigatorio=False,
+           nota="'Não Possui' ou 'Instituida neste Exercicio ou Mantida'"),
+        _c("data_ingresso_segurado", "dt_ingresso_segurado", tipo="data",
            obrigatorio=False),
-        _c("despesas", "vl_despesas", "despesas", tipo="decimal",
+        _c("norma", "nr_norma_fundamento", obrigatorio=False),
+        _c("data_norma", "dt_norma_fundamento", tipo="data", obrigatorio=False),
+    ),
+    "DRAA_FLUXO_ATUARIAL": _IDENT + _PLANO_MASSA + (
+        _c("codigo", "nr_fluxo", tipo="inteiro",
+           nota="190000 = total das receitas; 240000 = total das despesas; "
+                "250001 = insuficiência ou excedente. Ver codigos.py"),
+        _c("descricao", "no_fluxo"),
+        _c("valor", "vl_projetado", tipo="decimal", obrigatorio=False),
+    ),
+    "DRAA_VALORES_COMPROMISSOS": _IDENT + _PLANO_MASSA + (
+        _c("codigo", "cd_demonstrativo", tipo="inteiro",
+           nota="600100 = déficit atuarial; 600300 = superávit. Ver codigos.py"),
+        _c("descricao", "ds_item_resultado", "ds_variavel"),
+        _c("categoria", "no_categoria_demonstrativo", obrigatorio=False,
+           nota="'Titulo' é cabeçalho de seção; só 'Resultado' tem valor"),
+        _c("geracao_atual", "vl_geracao_atual", tipo="decimal", obrigatorio=False),
+        _c("geracao_futura", "vl_geracao_futura", tipo="decimal",
            obrigatorio=False),
-        _c("saldo", "vl_saldo", "saldo", tipo="decimal", obrigatorio=False),
     ),
-    "DRAA_VALORES_COMPROMISSOS": _IDENT + (
-        _c("exercicio", "dt_exercicio", "exercicio", tipo="inteiro"),
-        _c("codigo", "cd_variavel", "codigo", obrigatorio=False),
-        _c("descricao", "ds_variavel", "descr", "descricao"),
-        _c("geracao_atual", "vl_geracao_atual", "vlr_geracao_atual",
-           tipo="decimal", obrigatorio=False),
-        _c("geracao_futura", "vl_geracao_futura", "vlr_geracao_futura",
-           tipo="decimal", obrigatorio=False),
-    ),
-    "DRAA_PLANO_CUSTEIO": _IDENT + (
-        _c("exercicio", "dt_exercicio", "exercicio", tipo="inteiro"),
-        _c("descricao", "ds_custo", "descricao", obrigatorio=False),
-        _c("custo_normal", "vl_custo_normal", "custo_normal", tipo="decimal",
+    "DRAA_HIPOTESE_ATUARIAL": _IDENT + _PLANO_MASSA + (
+        _c("codigo", "cd_hipotese_demografica", tipo="inteiro",
            obrigatorio=False),
-        _c("custo_suplementar", "vl_custo_suplementar", "custo_suplementar",
-           tipo="decimal", obrigatorio=False),
+        _c("descricao", "ds_hipotese_demografica", "ds_hipotese"),
+        _c("unidade", "tp_unidade", obrigatorio=False,
+           nota="PERCENTUAL, ANOS, etc."),
+        _c("valor", "te_hipotese_demografica", obrigatorio=False,
+           nota="texto: pode ser número, tábua ou justificativa"),
+        _c("longo_prazo", "vl_perspectiva_longo_prazo", tipo="decimal",
+           obrigatorio=False),
     ),
-    "DRAA_HIPOTESE_ATUARIAL": _IDENT + (
-        _c("exercicio", "dt_exercicio", "exercicio", tipo="inteiro"),
-        _c("descricao", "ds_hipotese", "descricao", "hipotese"),
-        _c("valor", "vl_hipotese", "valor", obrigatorio=False),
+    "DRAA_PLANO_CUSTEIO": _IDENT + _PLANO_MASSA + (
+        _c("tipo_contribuicao", "tp_contribuicao",
+           nota="Segurados Ativos, Aposentados, Pensionistas, Ente Federativo, "
+                "Ente Federativo - Total, Taxa de Administração, Aporte Anual"),
+        _c("base_calculo", "vl_anual_base_calculo", tipo="decimal",
+           obrigatorio=False),
+        _c("aliquota", "vl_aliquota", tipo="decimal", obrigatorio=False),
+        _c("contribuicao_esperada", "vl_contribuicao_esperada", tipo="decimal",
+           obrigatorio=False),
+        _c("aliquota_definida", "vl_aliquota_definida", tipo="decimal",
+           obrigatorio=False),
+        _c("contribuicao_definida", "vl_contribuicao_definida", tipo="decimal",
+           obrigatorio=False),
     ),
 }
 

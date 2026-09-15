@@ -1,0 +1,57 @@
+{
+  "endpoint": "RPPS_CRP",
+  "observado_em": "2026-09-15",
+  "host": "https://apicadprev.trabalho.gov.br",
+  "envelope": [
+    "count",
+    "data",
+    "limit",
+    "offset",
+    "query",
+    "success"
+  ],
+  "count": 3728,
+  "limit": 5000,
+  "chaves_observadas": [
+    "ds_situacao",
+    "dt_emissao",
+    "dt_validade",
+    "no_ente",
+    "nr_cnpj_entidade",
+    "nr_crp",
+    "sg_uf",
+    "tp_crp"
+  ],
+  "registros_exemplo": [
+    {
+      "nr_cnpj_entidade": "01609408000128",
+      "no_ente": "Marataízes",
+      "sg_uf": "ES",
+      "nr_crp": "980760-104543",
+      "ds_situacao": "ADMINISTRATIVO",
+      "dt_emissao": "09/04/2012",
+      "dt_validade": "06/10/2012",
+      "tp_crp": "VENCIDO"
+    },
+    {
+      "nr_cnpj_entidade": "01609408000128",
+      "no_ente": "Marataízes",
+      "sg_uf": "ES",
+      "nr_crp": "980760-108726",
+      "ds_situacao": "ADMINISTRATIVO",
+      "dt_emissao": "16/10/2012",
+      "dt_validade": "14/04/2013",
+      "tp_crp": "VENCIDO"
+    },
+    {
+      "nr_cnpj_entidade": "01609408000128",
+      "no_ente": "Marataízes",
+      "sg_uf": "ES",
+      "nr_crp": "980760-112817",
+      "ds_situacao": "ADMINISTRATIVO",
+      "dt_emissao": "15/04/2013",
+      "dt_validade": "12/10/2013",
+      "tp_crp": "VENCIDO"
+    }
+  ]
+}

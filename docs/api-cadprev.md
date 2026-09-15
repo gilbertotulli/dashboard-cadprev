@@ -1,244 +1,196 @@
 # API CADPREV — catálogo técnico
 
-Levantamento da superfície da API pública do CADPREV (Cadastro dos Regimes Próprios
-de Previdência Social), mantida pela Secretaria de Regimes Próprios de Previdência
-Social (SRPPS/SPREV), Ministério da Previdência Social.
+Levantamento da API pública do CADPREV, mantida pela Subsecretaria dos Regimes
+Próprios de Previdência Social (SRPPS), Ministério da Previdência Social.
 
-## Como este levantamento foi feito
+**Verificado contra a API em 15/09/2026**, com amostras do Espírito Santo. As
+respostas observadas estão em [`schema-observado/`](schema-observado/) — um
+arquivo por endpoint, com as chaves e registros de exemplo.
 
-O ambiente desta sessão bloqueia a saída HTTPS para os domínios `*.gov.br`
-(o proxy de egresso responde `403` ao `CONNECT`), então **nenhuma chamada real à API
-foi executada**. O contrato abaixo foi reconstruído a partir de:
+## O host
 
-- `marcosfs2006/ADPrev` — cliente R oficialmente publicado para esta API, que contém
-  as URLs, os parâmetros de consulta e o laço de paginação;
-- `marcosfs2006/ADPrevBook` — tutorial do mesmo autor, que documenta a estrutura dos
-  conjuntos de dados correspondentes;
-- catálogo de APIs governamentais e Portal de Dados Abertos.
-
-Tudo que está marcado como **não confirmado** precisa ser validado contra o Swagger
-(`/api-docs/`) a partir de uma rede com acesso liberado.
-
-## Contrato
-
-| Item | Valor |
+| | |
 | --- | --- |
-| Host canônico | `https://apicadprev.previdencia.gov.br` |
-| Espelhos históricos | `apicadprev.trabalho.gov.br`, `apicadprev.economia.gov.br` (mesmo serviço, renomeações de pasta ministerial) |
-| Documentação | `/api-docs/` — Swagger 2.0, `api cadprev 1.0.0 oas 2.0` |
-| Verbo | `GET` |
-| Autenticação | nenhuma — API aberta, sem chave nem cabeçalho |
-| Formato | JSON |
-| Caminho | `/{ENDPOINT}` — o nome do recurso em MAIÚSCULAS é o próprio caminho |
+| Host | `https://apicadprev.trabalho.gov.br` |
+| Documentação | `/api-docs/` — Swagger 2.0, protegido por captcha |
+| Verbo | `GET`, sempre |
+| Autenticação | nenhuma |
+| Formato | JSON ou CSV |
+| Limite de uso | **1 requisição por segundo**, declarado na documentação |
+| Data dos dados | 15/08/2026, conforme a própria documentação |
 
-### Envelope de resposta
+> **Cuidado com o host.** `apicadprev.previdencia.gov.br` e
+> `apicadprev.economia.gov.br` **não existem** — não resolvem em DNS. O primeiro
+> parece plausível pela renomeação da pasta ministerial e aparece em buscas; o
+> segundo é citado como endereço da documentação. Nenhum dos dois responde. Este
+> projeto chegou a adotar o primeiro por inferência e só descobriu o erro quando
+> um runner do GitHub devolveu `Name or service not known`.
+
+## Envelope e paginação
 
 ```json
-{
-  "data":  [ { "...": "..." } ],
-  "count": 5000,
-  "limit": 5000
-}
+{ "success": true, "data": [ … ], "count": 3728, "query": "…",
+  "offset": 0, "limit": 5000 }
 ```
 
-### Paginação
+`offset` avança de `limit` em `limit`; a última página é aquela em que
+`count < limit`.
 
-`offset` avança de `limit` em `limit`. A página é a última quando `count < limit`.
-O `limit` padrão observado é **5000**.
+## Parâmetros de consulta
 
-```
-GET /DIPR?nr_cnpj_entidade=39560008000148&dt_ano=2021&offset=0
-GET /DIPR?nr_cnpj_entidade=39560008000148&dt_ano=2021&offset=5000
-```
-
-### Parâmetros de consulta
-
-| Parâmetro | Tipo | Observação |
-| --- | --- | --- |
-| `nr_cnpj_entidade` | string | CNPJ do ente (só dígitos). **Filtro preferencial** |
-| `no_ente` | string | nome do ente, exatamente como na base |
-| `sg_uf` | string | sigla da UF, em maiúsculas |
-| `dt_ano` | inteiro | ano de competência (DIPR, DAIR) |
-| `dt_mes` | inteiro | mês de competência (DIPR, DAIR/APR) |
-| `dt_mes_bimestre` | inteiro | mês/bimestre de competência (DAIR/carteira) |
-| `dt_exercicio` | inteiro | exercício do DRAA |
-| `offset` | inteiro | deslocamento da paginação |
-
-Os parâmetros aceitos variam por endpoint; a recomendação do cliente R é consultar
-com poucos filtros (CNPJ, ano, UF) e refinar do lado do cliente.
-
-## Endpoints
-
-### Cadastro e regularidade
-
-| Endpoint | Conteúdo | Filtros |
-| --- | --- | --- |
-| `RPPS_REGIME_PREVIDENCIARIO` | regime do ente: RGPS, RPPS ou RPPS em extinção | `nr_cnpj_entidade`, `no_ente`, `sg_uf` |
-| `RPPS_CRP` | Certificado de Regularidade Previdenciária: número, emissão, validade, se judicial, situação | `nr_cnpj_entidade`, `no_ente`, `sg_uf` |
-| `RPPS_ALIQUOTA` | alíquotas de contribuição por plano e sujeito passivo, com vigência | `nr_cnpj_entidade`, `no_ente`, `sg_uf` |
-
-### DIPR — Demonstrativo de Informações Previdenciárias e Repasses
-
-| Endpoint | Conteúdo | Filtros |
-| --- | --- | --- |
-| `DIPR` | bases de cálculo, contribuições repassadas, deduções, aportes, parcelamentos, remuneração bruta, nº de beneficiários, ingressos, dispêndios, resultado do período e bloco de militares | `nr_cnpj_entidade`, `no_ente`, `sg_uf`, `dt_ano`, `dt_mes` |
-
-O DIPR é declarado bimestralmente, com dados mensais. A base correspondente tem
-**91 variáveis em 14 blocos**:
-
-| Bloco | Conteúdo | Prefixo |
-| --- | --- | --- |
-| 0 | identificação (ente, uf, competência, plano de segregação, data da informação) | — |
-| 1 | bases de cálculo — folhas do ente | `bc_` |
-| 2 | contribuições repassadas | `ct_` |
-| 3 | deduções | `deduc_` |
-| 4 | aportes e transferências | `aportes_` |
-| 5 | parcelamentos | `parcelamentos` |
-| 6 | bases de cálculo — folha da unidade gestora | `bcug_` |
-| 7 | contribuições arrecadadas pela unidade gestora | `ctug_` |
-| 8 | remuneração bruta | `rb_` |
-| 9 | número de beneficiários | `nb_` |
-| 10 | ingressos de recursos | `ing_` |
-| 11 | utilização de recursos | `desp_` |
-| 12 | resultado final | `total_`, `resultado_final` |
-| 13 | militares | `...mil_` |
-
-### DAIR — Demonstrativo das Aplicações e Investimentos de Recursos
-
-| Endpoint | Conteúdo | Filtros |
-| --- | --- | --- |
-| `DAIR_CARTEIRA` | carteira por ativo: segmento, tipo de ativo, limite da Resolução CMN 3.922/10, identificação e nome do ativo, cotas, valor unitário e total, % dos recursos do RPPS, PL do fundo e % do PL | `nr_cnpj_entidade`, `no_ente`, `sg_uf`, `dt_ano`, `dt_mes_bimestre` |
-| `DAIR_APLICACOES_RESGATE` | APR — Autorizações para Aplicação e Resgate | `nr_cnpj_entidade`, `no_ente`, `sg_uf`, `dt_ano`, `dt_mes` |
-
-### DRAA — Demonstrativo de Resultados da Avaliação Atuarial
-
-Todos aceitam `nr_cnpj_entidade`, `no_ente`, `sg_uf`, `dt_exercicio`.
-
-| Endpoint | Conteúdo |
+| Parâmetro | Onde se aplica |
 | --- | --- |
-| `DRAA_ENCAMINHAMENTO` | envio do DRAA à SPREV: data, situação |
-| `DRAA_DADOS_CONSOLIDADOS` | consolidação do demonstrativo |
-| `DRAA_ESTATISTICA` | massa de participantes: ativos, aposentados, pensionistas, dependentes |
-| `DRAA_VALORES_COMPROMISSOS` | compromissos por código/descrição, em geração atual e geração futura |
-| `DRAA_SEGREGACAO_MASSA` | plano financeiro × plano previdenciário |
-| `DRAA_PLANO_CUSTEIO` | custo normal e suplementar |
-| `DRAA_PLANO_BENEFICIO` | benefícios cobertos pelo plano |
-| `DRAA_CONTRIBUICAO` | contribuições consideradas na avaliação |
-| `DRAA_PLANO_AMORTIZACAO` | plano de equacionamento do déficit |
-| `DRAA_FORMA_AMORTIZACAO` | forma de amortização adotada |
-| `DRAA_FLUXO_ATUARIAL` | projeção anual de receitas, despesas e saldo do plano |
-| `DRAA_HIPOTESE_ATUARIAL` | taxa de juros, crescimento salarial, rotatividade |
-| `DRAA_HIPOTESE_BIOMETRICA` | tábuas de mortalidade, invalidez e sobrevivência |
-| `DRAA_PARECER_ATUARIAL` | parecer do atuário responsável |
-| `DRAA_COMPARATIVO_AVALIACAO` | comparação entre exercícios |
-| `DRAA_COMPARATIVO_RECEITA` | comparação de receitas entre exercícios |
+| `nr_cnpj_entidade` | todos — filtro preferencial |
+| `no_ente`, `sg_uf` | todos |
+| `dt_ano`, `dt_mes` | DIPR, DAIR |
+| `dt_mes_bimestre` | carteira do DAIR |
+| `dt_exercicio` | DRAA |
+| `offset` | paginação |
 
-## A dimensão de fundo: capitalizado, repartição simples e taxa de administração
+Qualquer campo da resposta também serve como filtro.
 
-Esta separação foi investigada especificamente. O resultado é misto e vale registrar
-com precisão, porque muda o que o painel pode prometer.
+## Os 39 endpoints
 
-### O que está confirmado na API
+`python -m cadprev endpoints` lista o catálogo e marca os que já têm mapa de
+campos neste projeto.
 
-A dimensão de plano **existe** e é nomeada `FINANCEIRO` (repartição simples) e
-`PREVIDENCIÁRIO` (capitalização):
-
-| Onde | Campo | O que permite |
+| Família | Nº | Conteúdo |
 | --- | --- | --- |
-| `DIPR` | `plano_segreg` | Ingressos, dispêndios e resultado **por plano**, mês a mês |
-| `RPPS_ALIQUOTA` | `plano_segregacao` | Alíquotas por plano e por sujeito passivo |
-| `DRAA_SEGREGACAO_MASSA` | — | Se o RPPS segregou a massa e como o fez |
+| Serviço | 1 | `DATA_ATUALIZACAO` |
+| Cadastro e regularidade | 3 | regime, CRP, alíquotas |
+| DIPR | 1 | informações previdenciárias e repasses |
+| DAIR | 8 | carteira, APR, governança, credenciamento, gestão |
+| DRAA | 26 | avaliação atuarial, em vinte e seis recortes |
 
-Ou seja: o **fluxo de caixa** e a **estrutura atuarial** já se separam entre capitalizado
-e não capitalizado hoje, sem nenhuma derivação.
+## Armadilhas verificadas
 
-### O que não está confirmado
+Quatro coisas que a leitura ingênua erra, todas confirmadas em dados reais.
 
-O arquivo de dados abertos da carteira do DAIR tem **exatamente 15 colunas** e nenhuma
-delas identifica plano ou fundo:
+### 1. No CRP, os campos estão trocados em relação à documentação
+
+O Swagger descreve:
+
+- `ds_situacao` — "Situação do CRP (Vigente ou Vencido)"
+- `tp_crp` — "Tipo de Emissão do CRP (Administrativo ou Judicial)"
+
+As respostas reais devolvem o contrário:
+
+```json
+{ "nr_crp": "980760-104543", "ds_situacao": "ADMINISTRATIVO",
+  "dt_emissao": "09/04/2012", "dt_validade": "06/10/2012", "tp_crp": "VENCIDO" }
+```
+
+Este projeto lê os dois campos crus e classifica **pelo valor**, não pelo nome —
+continua correto hoje e continuará se a inversão for corrigida. Ver
+`cadprev/build.py::_ler_crp`.
+
+Um detalhe adicional: "VÁLIDO" e "VENCIDO" começam com a mesma letra. Comparar
+prefixo conta todo certificado vencido como regular.
+
+### 2. O endpoint do CRP devolve o histórico, não a posição atual
+
+3.728 registros só para o Espírito Santo, que tem 79 RPPS. São todas as emissões
+desde sempre. A situação de hoje é a emissão mais recente de cada ente; contar as
+linhas cruas trata cada renovação como se fosse outro RPPS.
+
+O mesmo vale para `RPPS_ALIQUOTA`, que traz o campo `id_vigente`
+(`VIGENTE` / `NÃO VIGENTE`) — melhor do que inferir pela data de fim.
+
+### 3. No DIPR, metade das linhas é base de cálculo, não dinheiro
+
+O DIPR vem em formato longo: uma linha por rubrica, mês, plano e órgão. E as
+mesmas siglas aparecem **duas vezes**, com `id_rubrica` diferente e descrição
+idêntica:
 
 ```
-cnpj · uf · ente · competencia · segmento · tipo_ativo · limite_resol_cmn ·
-ident_ativo · nm_ativo · qtd_quotas · vlr_atual_ativo · vlr_total_atual ·
-perc_recursos_rpps · pl_fundo · perc_pl_fundo
+id=19  PAT-SEG  27.578.569,67     id=56  PAT-SEG   8.510.586,83
+id=27  SEG      27.578.569,67     id=64  SEG       3.929.609,71
 ```
 
-Os DAIR em PDF gerados pelo próprio CADPREV mostram os recursos vinculados aos
-respectivos planos e à taxa de administração, e a Portaria MTP nº 1.467/2022 exige que
-os recursos da taxa de administração sejam mantidos **de forma segregada** dos recursos
-destinados ao pagamento de benefícios. Logo a informação existe na declaração de origem.
-**O que não se sabe é se o endpoint `DAIR_CARTEIRA` a expõe** — só a leitura do Swagger
-resolve isso.
+Os ids abaixo de 33 são o **bloco 1** — as bases de cálculo, isto é, a folha
+sobre a qual as contribuições incidem. A pista está no valor: no bloco 1 a linha
+patronal e a do servidor são idênticas, porque são a mesma folha; no bloco 2 elas
+divergem, porque as alíquotas diferem.
 
-A taxa de administração como massa investida também não aparece na carteira. O que a API
-entrega hoje é a **despesa** (`desp_despadm`, no bloco 11 do DIPR), não a reserva aplicada.
+Somar o bloco 1 como receita multiplica o caixa do RPPS por várias vezes. Em
+Vitória, inflava a receita anual de R$ 464 mi para R$ 1,4 bi.
 
-### Como o painel deve tratar isso
+A separação entre entrada e saída está no prefixo da sigla: `UT-` é utilização de
+recursos; todo o resto é ingresso.
 
-Dois níveis, com degradação declarada na própria tela:
+### 4. O fluxo atuarial não é série temporal
 
-- **Nível A — se `DAIR_CARTEIRA` expuser o plano do ativo.** Decomposição de três vias do
-  patrimônio investido: capitalizado, repartição simples e taxa de administração.
-- **Nível B — garantido hoje.** Classificar o **RPPS**, não o ativo: sem segregação de
-  massa, toda a carteira é capitalizada; com segregação, a carteira é marcada como
-  *não decomposta*. O agregado nacional continua respondendo “quanto do patrimônio está
-  em regimes integralmente capitalizados”, que é a pergunta de risco relevante.
+`DRAA_FLUXO_ATUARIAL` devolve nove campos e um único `vl_projetado` por item de
+fluxo. Não há ano de projeção. A curva de receitas e despesas ao longo de décadas
+— e com ela o ano de cruzamento — está nos arquivos de dados abertos da SPREV,
+não na API.
 
-A distinção entre classificar o ativo e classificar o RPPS não pode ficar implícita: no
-Nível B, um RPPS com massa segregada tem carteira única na base e qualquer rateio entre
-planos seria invenção.
+O que a API dá: totais projetados (código `190000` para receitas, `240000` para
+despesas) e a composição de cada lado. Cuidado com o código `109001`, "Base de
+Cálculo da Contribuição Normal", que está na faixa das receitas sem ser receita —
+o mesmo engano do bloco 1 do DIPR, na outra ponta.
 
-## Agregação nacional da carteira
+**Há uma série temporal no DRAA**, em outro endpoint: `DRAA_PLANO_AMORTIZACAO`
+traz `dt_ano`, saldo inicial, juros, pagamentos, amortização e saldo final, ano a
+ano. Ainda não consumido por este projeto.
 
-A visão nacional dispensa filtro por CNPJ: basta `dt_ano` + `dt_mes_bimestre`, paginando
-até o fim.
+## A dimensão de fundo: resposta definitiva
 
-| Item | Estimativa |
-| --- | --- |
-| RPPS que enviam DAIR numa competência | ~2.000 |
-| Ativos por RPPS | dezenas |
-| Linhas por competência | ~100 mil a 170 mil |
-| Páginas de 5.000 | ~20 a 35 |
+A pergunta central do projeto era se a carteira pode ser separada entre fundo
+capitalizado, repartição simples e taxa de administração.
 
-Recortes por grupo, e de onde vem cada um:
+**Na carteira, não.** `DAIR_CARTEIRA` devolve dezesseis campos e nenhum identifica
+plano ou fundo:
 
-| Grupo | Origem |
-| --- | --- |
-| Região | derivada de `sg_uf` — direto da API |
-| Estaduais × municipais | derivável de `no_ente` (os RPPS estaduais aparecem como `Governo do Estado do …`); confirmar contra `RPPS_REGIME_PREVIDENCIARIO` |
-| Capitais | **não vem da API** — exige tabela auxiliar de 27 CNPJs mantida no repositório |
+```
+nr_cnpj_entidade · sg_uf · no_ente · dt_mes_bimestre · dt_ano · no_segmento
+no_tipo_ativo · pc_cmn · id_ativo · no_fundo · qt_rpps · vl_atual_ativo
+vl_total_atual · pc_rpps · vl_patrimonio · pc_patrimonio
+```
 
-Dois cuidados nos extremos do ranking:
+`no_fundo` é o nome do fundo de investimento, não o plano previdenciário.
 
-1. `segmento` inclui `Disponibilidades Financeiras`, com `tipo_ativo` e `limite_resol_cmn`
-   nulos. Decidir explicitamente se entra no patrimônio investido — entra no total de
-   recursos, mas não é alocação.
-2. O ranking dos **menores** patrimônios é o mais fácil de errar: quem não enviou o DAIR
-   na competência simplesmente não tem linha, e quem enviou com valor zerado apareceria no
-   topo da lista de menores. A regra tem de ser explícita — menor patrimônio **entre os que
-   enviaram DAIR na competência e com total maior que zero** — e a tela precisa dizer
-   quantos RPPS ficaram de fora.
+**Em caixa e atuária, sim.** A dimensão existe e está confirmada:
+
+| Endpoint | Campo | Valores |
+| --- | --- | --- |
+| `DIPR` | `no_plano` | `PREVIDENCIARIO`, `FINANCEIRO` |
+| `RPPS_ALIQUOTA` | `ds_plano_segregacao` | `Fundo em Capitalização`, `Fundo em Repartição` |
+| `DRAA_*` | `tp_plano` | `Previdenciário`, `Financeiro`, `Mantidos pelo Tesouro` |
+
+O mesmo conceito com três grafias — `cadprev/fundos.py` reconhece as três.
+
+**A pista mais próxima de um Nível A** está em `DAIR_APLICACOES_RESGATE`, que tem
+o campo `no_fundo_constituido` ("Plano/Fundo Constituido", com exemplo
+`FUNDO SOLIDÁRIO GARANTIDOR`). As **movimentações** carregam o fundo; a
+**posição** não. Reconstruir a carteira por fundo a partir do histórico de
+aplicações e resgates seria possível em tese e frágil na prática — precisaria da
+série completa desde a constituição de cada fundo. Não está feito, e não seria
+honesto apresentar o resultado como posição declarada.
+
+Portanto o projeto opera no **Nível B**: sem segregação de massa, a carteira
+inteira é capitalizada; com segregação, fica marcada como não decomposta, sem
+rateio arbitrado.
+
+## Volumetria observada
+
+Espírito Santo, 79 RPPS, uma competência:
+
+| Endpoint | Linhas | Observação |
+| --- | --- | --- |
+| `RPPS_CRP` | 3.728 | histórico completo |
+| `DIPR` | 20.445 | ano inteiro, formato longo |
+| `DAIR_CARTEIRA` | 1.778 | uma competência |
+| `DRAA_VALORES_COMPROMISSOS` | 3.159 | um exercício |
+| `DRAA_FLUXO_ATUARIAL` | 2.048 | um exercício |
+
+O Espírito Santo é cerca de 3,7% dos RPPS do país. Uma carga nacional da carteira
+numa competência fica na ordem de 50 mil linhas; o DIPR de um ano, na casa das
+centenas de milhares.
 
 ## O que não vem pela API
 
-Estas bases existem no ecossistema do CADPREV/SPREV, mas são publicadas como
-planilhas em dados abertos, não como endpoint:
-
-- **ISP** — Indicador de Situação Previdenciária (nota A–D em 3 dimensões e 6 indicadores);
-- **MSC** — Matriz de Saldos Contábeis;
-- **Parcelamento de débitos** — acordos de parcelamento entre ente e RPPS;
-- **Enquadramento de fundos** e **relação de fundos vedados** (CGACI-RPPS).
-
-Para um painel que precise desses blocos, a alternativa é ingerir as planilhas e
-cruzar pelo CNPJ do ente.
-
-## Pendências de validação
-
-1. Nomes exatos dos campos de cada resposta — os campos descritos aqui vêm dos
-   conjuntos de dados equivalentes, não de uma resposta capturada da API.
-2. Comportamento de erro (códigos e corpo) e existência de `rate limit`.
-3. Se `limit` é ajustável por parâmetro.
-4. Profundidade histórica por endpoint (o DIPR em dados abertos começa em 2014).
-5. **Se `DAIR_CARTEIRA` expõe o plano/fundo do ativo** — é a pendência de maior impacto:
-   decide entre o Nível A e o Nível B da decomposição por fundo.
-6. Se a carteira do DAIR traz os recursos da taxa de administração como massa investida.
+ISP (Indicador de Situação Previdenciária), MSC (Matriz de Saldos Contábeis),
+acordos de parcelamento de débitos e o enquadramento de fundos existem como
+planilha em dados abertos, não como endpoint. A marcação de capitais também não
+vem da API: depende de [`../data/capitais.csv`](../data/capitais.csv).

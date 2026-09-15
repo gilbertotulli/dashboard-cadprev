@@ -71,54 +71,45 @@ carteira nacional são 100 a 170 mil linhas. Por isso o painel **não consulta a
 vivo**: ingere uma vez, pré-agrega, e serve arquivos estáticos. Dá para hospedar em
 qualquer lugar que sirva HTML.
 
-## A pendência aberta: os nomes dos campos
+## Os nomes dos campos: resolvidos
 
-O levantamento que originou o projeto foi feito **sem acesso de rede** aos domínios
-`*.gov.br`. O contrato da API (caminhos, filtros, envelope `{data, count, limit}`,
-paginação por `offset`) veio do cliente R [`marcosfs2006/ADPrev`](https://github.com/marcosfs2006/ADPrev)
-e dos conjuntos de dados abertos equivalentes. **Os nomes exatos dos campos de resposta
-não foram confirmados.**
+O levantamento inicial foi feito **sem acesso de rede** aos domínios `*.gov.br`,
+então os nomes dos campos eram candidatos, não certezas. Em 15/09/2026 a API foi
+consultada de verdade e os nomes foram fixados. A evidência está em
+[`docs/schema-observado/`](docs/schema-observado/), um arquivo por endpoint.
 
-Em vez de espalhar palpites pelo código, a incerteza está isolada em
-[`cadprev/fieldmap.py`](cadprev/fieldmap.py). Cada campo lógico declara candidatos nas
-duas convenções observadas nos artefatos da SPREV, a resolução acontece contra o primeiro
-registro de cada ingestão, e falta de campo obrigatório **falha alto, listando as chaves
-que a API devolveu** — em vez de gravar uma coluna de nulos que ninguém percebe.
-
-Quem tiver acesso de rede fecha isso com um comando:
+A camada de mapeamento em [`cadprev/fieldmap.py`](cadprev/fieldmap.py) continua
+existindo, agora por outro motivo: a API já mudou de host uma vez, e quando um
+campo mudar de nome basta acrescentar um candidato. A resolução falha alto se um
+campo obrigatório sumir, com as chaves reais na mensagem.
 
 ```bash
 python -m cadprev inspect DAIR_CARTEIRA --uf ES --salvar --override
 ```
 
-A correção vai para `fieldmap.local.json` (ignorado pelo git) ou, quando valer para todos,
-para `cadprev/fieldmap.py`. **Contribuições aqui são as mais valiosas do projeto.**
-
-Quem não tiver acesso de rede à API resolve pelo GitHub: **Actions → descobrir campos da
-API → Run workflow**. Os runners alcançam `apicadprev.previdencia.gov.br`, e o resultado
-sai no resumo da execução e como artefato para baixar.
+**Cuidado com o host.** `apicadprev.previdencia.gov.br` e
+`apicadprev.economia.gov.br` não existem — não resolvem em DNS. O único host vivo
+é `apicadprev.trabalho.gov.br`.
 
 ## A separação por natureza do fundo
 
-Investigada especificamente, com resultado misto:
+Investigada e **respondida contra a API real**:
 
-- **Confirmado.** A dimensão de plano existe e é nomeada `FINANCEIRO` (repartição simples)
-  e `PREVIDENCIÁRIO` (capitalização), em `DIPR.plano_segreg`,
-  `RPPS_ALIQUOTA.plano_segregacao` e `DRAA_SEGREGACAO_MASSA`. Caixa e atuária já se
-  separam entre capitalizado e não capitalizado.
-- **Não confirmado.** O arquivo de dados abertos da carteira do DAIR tem 15 colunas e
-  nenhuma identifica plano ou fundo. A informação existe na origem — os DAIR em PDF do
-  CADPREV mostram os recursos vinculados aos planos e à taxa de administração, e a
-  Portaria MTP nº 1.467/2022 exige que a taxa de administração seja mantida segregada —
-  mas não se sabe se o endpoint `DAIR_CARTEIRA` a expõe.
+- **Na carteira, não existe.** `DAIR_CARTEIRA` devolve dezesseis campos e nenhum
+  identifica plano ou fundo. (`no_fundo` é o nome do fundo de investimento, não o
+  plano previdenciário.)
+- **Em caixa e atuária, existe.** `DIPR.no_plano`, `RPPS_ALIQUOTA.ds_plano_segregacao`
+  e `DRAA_*.tp_plano` trazem a dimensão, com três grafias diferentes para o mesmo
+  conceito.
+- **A pista mais próxima** está em `DAIR_APLICACOES_RESGATE.no_fundo_constituido`: as
+  movimentações carregam o fundo, a posição não.
 
-O painel opera em dois níveis, escolhidos pelo que a API de fato entregou e **declarados
-na tela**:
+O painel opera portanto no **Nível B**, declarado na tela:
 
 | Nível | Quando | O que mostra |
 | --- | --- | --- |
 | **A** | o endpoint expõe o plano do ativo | decomposição de três vias: capitalizado, repartição simples e taxa de administração |
-| **B** | não expõe (o que se sabe hoje) | classifica o **RPPS**, não o ativo: sem segregação de massa a carteira inteira é capitalizada; com segregação, fica *não decomposta* |
+| **B** | não expõe — **é o caso hoje** | classifica o **RPPS**, não o ativo: sem segregação de massa a carteira inteira é capitalizada; com segregação, fica *não decomposta* |
 
 No Nível B o projeto **não rateia** a carteira entre planos. Não há base no dado para
 isso, e o número resultante sairia daqui para dentro de um ofício.
@@ -171,18 +162,18 @@ que o instituto já usa.
 
 ## O que ainda falta
 
-Registrado aqui para não virar ausência silenciosa:
-
-- **Decomposição do DIPR por origem e destino.** O anteprojeto prevê as tabelas
-  "de onde vem o dinheiro" e "para onde vai", que abrem os blocos 10 e 11 do DIPR.
-  Elas não entraram porque isso exigiria mapear dezenas de campos (`ing_*`, `desp_*`)
-  cujos nomes reais não estão confirmados — seriam dezenas de palpites de uma vez. A
-  aba Caixa mostra hoje os totais e o resultado, que vêm de campos únicos. Assim que o
-  `inspect` rodar contra a API, essas tabelas são a primeira ampliação natural.
-- **Endpoints sem mapa de campos.** Onze dos 22 têm mapa; `python -m cadprev endpoints`
-  marca quais.
-- **Histórico.** A ingestão é por competência; comparar exercícios ainda depende de
+- **A projeção atuarial ano a ano.** `DRAA_FLUXO_ATUARIAL` não é série temporal —
+  dá totais projetados, não a curva. A curva está nos arquivos de dados abertos da
+  SPREV. Há, porém, uma série temporal ainda não consumida na API:
+  `DRAA_PLANO_AMORTIZACAO`, com saldo e amortização ano a ano.
+- **Endpoints sem mapa de campos.** Onze dos 39 têm mapa; `python -m cadprev
+  endpoints` marca quais. Governança, credenciamento e notificações do DAIR e do
+  DRAA abririam telas novas.
+- **Histórico.** A ingestão é por competência; comparar exercícios depende de
   ingerir cada um e de telas que ainda não existem.
+- **Carteira por fundo (Nível A).** Só seria possível reconstruindo a posição a
+  partir do histórico de aplicações e resgates, que carregam `no_fundo_constituido`.
+  Frágil, e o resultado não poderia ser apresentado como posição declarada.
 
 ## Testes
 

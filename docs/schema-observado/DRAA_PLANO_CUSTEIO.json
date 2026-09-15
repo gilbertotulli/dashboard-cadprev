@@ -1,0 +1,81 @@
+{
+  "endpoint": "DRAA_PLANO_CUSTEIO",
+  "observado_em": "2026-09-15",
+  "host": "https://apicadprev.trabalho.gov.br",
+  "envelope": [
+    "count",
+    "data",
+    "limit",
+    "offset",
+    "query",
+    "success"
+  ],
+  "count": 448,
+  "limit": 5000,
+  "chaves_observadas": [
+    "dt_envio",
+    "dt_exercicio",
+    "no_ente",
+    "nr_cnpj_entidade",
+    "sg_uf",
+    "te_situacao",
+    "tp_contribuicao",
+    "tp_massa",
+    "tp_plano",
+    "vl_aliquota",
+    "vl_aliquota_definida",
+    "vl_anual_base_calculo",
+    "vl_contribuicao_definida",
+    "vl_contribuicao_esperada"
+  ],
+  "registros_exemplo": [
+    {
+      "nr_cnpj_entidade": "27174119000137",
+      "sg_uf": "ES",
+      "no_ente": "Mimoso do Sul",
+      "dt_exercicio": 2025,
+      "dt_envio": "2025-03-28 20:12:22.447",
+      "te_situacao": "Documentos Digitalizados",
+      "tp_plano": "Financeiro",
+      "tp_massa": "Civil",
+      "tp_contribuicao": "Aporte Anual para Custeio das Despesas",
+      "vl_anual_base_calculo": null,
+      "vl_aliquota": null,
+      "vl_contribuicao_esperada": "0",
+      "vl_aliquota_definida": null,
+      "vl_contribuicao_definida": "0"
+    },
+    {
+      "nr_cnpj_entidade": "27150549000119",
+      "sg_uf": "ES",
+      "no_ente": "Cariacica",
+      "dt_exercicio": 2025,
+      "dt_envio": "2025-03-07 12:23:47.633",
+      "te_situacao": "Documentos Digitalizados",
+      "tp_plano": "Financeiro",
+      "tp_massa": "Civil",
+      "tp_contribuicao": "Aposentados",
+      "vl_anual_base_calculo": "35269888.94",
+      "vl_aliquota": "14",
+      "vl_contribuicao_esperada": "4937784.45",
+      "vl_aliquota_definida": "14",
+      "vl_contribuicao_definida": "4937784.45"
+    },
+    {
+      "nr_cnpj_entidade": "28539872000141",
+      "sg_uf": "ES",
+      "no_ente": "Pedro Canário",
+      "dt_exercicio": 2025,
+      "dt_envio": "2025-02-24 13:58:02.767",
+      "te_situacao": "Documentos Digitalizados",
+      "tp_plano": "Previdenciário",
+      "tp_massa": "Civil",
+      "tp_contribuicao": "Aposentados",
+      "vl_anual_base_calculo": "660969.01",
+      "vl_aliquota": "14",
+      "vl_contribuicao_esperada": "92535.66",
+      "vl_aliquota_definida": "14",
+      "vl_contribuicao_definida": "92535.66"
+    }
+  ]
+}

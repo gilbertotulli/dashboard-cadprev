@@ -71,22 +71,23 @@ _MUNICIPIOS = [
     ("RR", "Rorainópolis"),
 ]
 
+#: Segmentos e limites como a API os devolve (``no_segmento`` e ``pc_cmn``).
 _SEGMENTOS = [
-    ("Renda Fixa", 100.0, 0.74),
-    ("Renda Variável", 30.0, 0.11),
-    ("Investimentos Estruturados", 10.0, 0.045),
-    ("Investimentos no Exterior", 10.0, 0.04),
-    ("Fundos Imobiliários", 5.0, 0.02),
+    ("Renda Fixa", 100, 0.74),
+    ("Renda Variável", 30, 0.11),
+    ("Investimentos Estruturados", 10, 0.045),
+    ("Investimentos no Exterior", 10, 0.04),
+    ("Fundos Imobiliários", 5, 0.02),
     ("Disponibilidades Financeiras", None, 0.045),
 ]
 
+#: Descrições exatamente como a API as devolve — o painel casa por texto.
 _HIPOTESES = [
-    ("Taxa de juros atuarial", "5,04% a.a."),
-    ("Crescimento real da remuneração", "1,00% a.a."),
-    ("Rotatividade", "1,00% a.a."),
-    ("Tábua de mortalidade geral", "IBGE 2023"),
-    ("Tábua de mortalidade de inválidos", "IBGE 2023"),
-    ("Tábua de entrada em invalidez", "Álvaro Vindas"),
+    ("Projeção da Taxa de Juros Real para o Exercício", "5.38"),
+    ("Projeção da Taxa de Inflação de Longo Prazo", "4.00"),
+    ("Projeção de Crescimento Real do Salário", "1.00"),
+    ("Projeção de Crescimento Real dos Benefícios do Plano", "0.00"),
+    ("Projeção da Taxa de Rotatividade", "1.00"),
 ]
 
 _COMPROMISSOS = [
@@ -103,7 +104,13 @@ def _cnpj(indice: int) -> str:
 
 
 def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict[str, Any]]]:
-    """Monta o conjunto completo, no formato cru da API."""
+    """Monta o conjunto completo, no formato cru da API.
+
+    Os nomes e as formas seguem o que a API devolve de verdade — inclusive os
+    formatos longos (uma linha por rubrica, por item de fluxo, por grupo
+    populacional) e o histórico completo de CRP. Um demo em formato diferente
+    do real não testaria nada do que importa.
+    """
     rnd = random.Random(semente)
     entes = [(uf, nome, porte) for uf, nome, porte in _ENTES]
     entes += [(uf, nome, round(rnd.uniform(0.18, 4.2), 2))
@@ -121,104 +128,162 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         cnpj = _cnpj(indice)
         ident = {"nr_cnpj_entidade": cnpj, "no_ente": nome, "sg_uf": uf}
         segregado = rnd.random() < 0.38
-        patrimonio = porte * 1e9 if porte > 5 else porte * 1e9
+        patrimonio = porte * 1e9
 
-        tabelas["RPPS_REGIME_PREVIDENCIARIO"].append(dict(ident, ds_regime="RPPS"))
+        tabelas["RPPS_REGIME_PREVIDENCIARIO"].append(dict(
+            ident, tp_regime="RPPS", dt_inicio="1991-05-21 03:00:00.000",
+            dt_fim=None, no_tipo_legislacao="LEI", nr_legislacao=str(1000 + indice)))
 
-        # CRP: a maioria válida, alguns vencidos, poucos por via judicial.
-        sorteio = rnd.random()
-        judicial = sorteio > 0.94
-        vencido = 0.78 < sorteio <= 0.94
-        validade = "{}-{:02d}-{:02d}".format(
-            ANO - 1 if vencido else ANO + 1, rnd.randint(1, 12), rnd.randint(1, 28))
-        tabelas["RPPS_CRP"].append(dict(
-            ident, nr_crp="{:05d}/{}".format(indice + 1, ANO),
-            dt_emissao="{}-0{}-15".format(ANO, rnd.randint(1, 9)),
-            dt_validade=validade, st_judicial="S" if judicial else "N",
-            ds_situacao="VENCIDO" if vencido else "VÁLIDO"))
+        # CRP: o endpoint devolve o histórico. Três emissões por ente, e a
+        # situação da mais recente é o que o painel deve ler.
+        for anos_atras in (2, 1, 0):
+            vencido = anos_atras == 0 and rnd.random() > 0.82
+            judicial = anos_atras == 0 and rnd.random() > 0.94
+            emissao = "{}-{:02d}-{:02d}".format(
+                ANO - anos_atras, rnd.randint(1, 12), rnd.randint(1, 28))
+            validade = "{}-{:02d}-{:02d}".format(
+                ANO - anos_atras + (0 if vencido else 1),
+                rnd.randint(1, 12), rnd.randint(1, 28))
+            tabelas["RPPS_CRP"].append(dict(
+                ident, nr_crp="{:06d}-{:06d}".format(indice + 1, rnd.randint(1, 999999)),
+                dt_emissao=emissao, dt_validade=validade,
+                # Os dois campos vêm trocados na API real; o demo reproduz isso.
+                ds_situacao="JUDICIAL" if judicial else "ADMINISTRATIVO",
+                tp_crp="VENCIDO" if vencido else "VÁLIDO"))
 
         for sujeito, aliquota in (("Ativos", 14.0), ("Aposentados", 14.0),
                                   ("Pensionistas", 14.0),
                                   ("Ente", round(rnd.uniform(14, 24), 2))):
             tabelas["RPPS_ALIQUOTA"].append(dict(
-                ident, ds_plano_segregacao="PREVIDENCIÁRIO",
-                ds_sujeito_passivo=sujeito, vl_aliquota=aliquota,
-                dt_inicio_vigencia="2024-01-01", dt_fim_vigencia=None))
+                ident, ds_plano_segregacao="Fundo em Capitalização",
+                no_sujeito_passivo=sujeito, vl_aliquota="{:.2f}".format(aliquota),
+                dt_inicio_vigencia="2024-01-01 03:00:00.000",
+                dt_fim_vigencia=None, id_vigente="VIGENTE", tp_regime="RPPS"))
 
-        # DIPR: doze meses, com os picos de 13º em junho e dezembro.
-        base_receita = patrimonio / 1e9 * 1.35
-        base_despesa = base_receita * rnd.uniform(0.72, 0.98)
+        # DIPR: uma linha por rubrica, por mês e por plano. Os ids abaixo de 33
+        # são bases de cálculo — entram na amostra justamente para que o
+        # pipeline continue tendo de excluí-los.
+        folha = patrimonio / 1e9 * 3.1e6
         for mes in range(1, 13):
             extra = 1.45 if mes in (6, 12) else 1.0
-            deriva = 1 + (mes - 1) * 0.008
+            base = folha * extra
             tabelas["DIPR"].append(dict(
-                ident, dt_ano=ANO, dt_mes=mes,
-                ds_plano_segregacao="PREVIDENCIÁRIO",
-                vl_total_receita=round(base_receita * extra * deriva * 1e6, 2),
-                vl_total_despesa=round(base_despesa * extra * deriva * 1e6, 2),
-                qt_nb_apos=int(porte * 47), qt_nb_pen=int(porte * 11),
-                qt_nb_serv=int(porte * 138)))
+                ident, dt_ano=ANO, dt_mes=mes, no_plano="PREVIDENCIARIO",
+                no_orgao="Prefeitura", id_rubrica=19, no_rubrica="PAT-SEG",
+                te_rubrica="Patronal relativa aos servidores",
+                vl_rubrica="{:.2f}".format(base)))
+            tabelas["DIPR"].append(dict(
+                ident, dt_ano=ANO, dt_mes=mes, no_plano="PREVIDENCIARIO",
+                no_orgao="Prefeitura", id_rubrica=27, no_rubrica="SEG",
+                te_rubrica="Dos servidores", vl_rubrica="{:.2f}".format(base)))
+            for id_rub, sigla, fator in ((56, "PAT-SEG", 0.22), (64, "SEG", 0.14),
+                                         (79, "ING-REND-APL", 0.09),
+                                         (82, "UT-APO", 0.26), (83, "UT-PEN", 0.05),
+                                         (96, "UT-DESP-ADM", 0.012)):
+                tabelas["DIPR"].append(dict(
+                    ident, dt_ano=ANO, dt_mes=mes, no_plano="PREVIDENCIARIO",
+                    no_orgao="Prefeitura", id_rubrica=id_rub, no_rubrica=sigla,
+                    te_rubrica=sigla, vl_rubrica="{:.2f}".format(base * fator)))
 
-        # DAIR: a carteira por segmento, com alguns ativos em cada.
         for segmento, limite, fatia in _SEGMENTOS:
             valor_segmento = patrimonio * fatia * rnd.uniform(0.85, 1.15)
             ativos = 1 if segmento == "Disponibilidades Financeiras" else rnd.randint(2, 4)
             for n in range(ativos):
                 valor = valor_segmento / ativos
                 registro = dict(
-                    ident, dt_competencia="{:02d}/{}".format(MES_DAIR, ANO),
-                    ds_segmento=segmento, ds_tipo_ativo="Tipo exemplo",
-                    vl_limite_resol_cmn=limite,
-                    no_ativo="{} — fundo exemplo {}".format(segmento, n + 1),
-                    vl_total_atual=round(valor, 2),
-                    pc_recursos_rpps=round(valor / patrimonio * 100, 2),
-                    pc_pl_fundo=round(rnd.uniform(0.4, 16.0), 2))
+                    ident, dt_ano=ANO, dt_mes_bimestre=MES_DAIR,
+                    no_segmento=segmento, no_tipo_ativo="Tipo exemplo",
+                    pc_cmn=limite, id_ativo="{}/{}".format(indice, n),
+                    no_fundo="{} — fundo exemplo {}".format(segmento, n + 1),
+                    qt_rpps="1.0000000000",
+                    vl_atual_ativo="{:.10f}".format(valor),
+                    vl_total_atual="{:.2f}".format(valor),
+                    pc_rpps="{:.2f}".format(valor / patrimonio * 100),
+                    vl_patrimonio=None,
+                    pc_patrimonio="{:.2f}".format(rnd.uniform(0.4, 16.0)))
                 if nivel_a:
                     registro["ds_plano"] = (
                         "TAXA DE ADMINISTRAÇÃO" if n == 0 and rnd.random() < 0.12
                         else ("FINANCEIRO" if segregado and rnd.random() < 0.3
-                              else "PREVIDENCIÁRIO"))
+                              else "PREVIDENCIARIO"))
                 tabelas["DAIR_CARTEIRA"].append(registro)
 
-        tabelas["DRAA_ESTATISTICA"].append(dict(
-            ident, dt_exercicio=ANO, qt_ativos=int(porte * 138),
-            qt_aposentados=int(porte * 47), qt_pensionistas=int(porte * 11),
-            qt_dependentes=int(porte * 196)))
+        # DRAA_ESTATISTICA: uma linha por grupo populacional, contagem por sexo.
+        for tipo, fator in (("Servidores", 138), ("Aposentados", 47),
+                            ("Pensionistas", 11), ("Servidores Iminentes", 9)):
+            total = int(porte * fator)
+            tabelas["DRAA_ESTATISTICA"].append(dict(
+                ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
+                cd_populacao=1110100, tp_populacao=tipo,
+                no_cat_populacao="DEMAIS SERVIDORES",
+                qt_grupo_masc=total // 2, qt_grupo_fem=total - total // 2,
+                vl_folha_mensal_masc=total // 2 * 3200.0,
+                vl_folha_mensal_fem=(total - total // 2) * 3100.0,
+                vl_idade_media_masc=54.2, vl_idade_media_fem=52.8))
 
         tabelas["DRAA_SEGREGACAO_MASSA"].append(dict(
-            ident, dt_exercicio=ANO, st_segregacao="S" if segregado else "N",
-            dt_segregacao="2012-01-01" if segregado else None))
+            ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
+            no_segregacao_massa=("Instituida neste Exercicio ou Mantida"
+                                 if segregado else "Não Possui"),
+            dt_ingresso_segurado="2012-01-01 00:00:00.000" if segregado else None,
+            nr_norma_fundamento="1262",
+            dt_norma_fundamento="2004-12-27 02:00:00.000"))
 
-        # Fluxo atuarial: receitas caindo, despesas em corcova.
-        for passo, ano in enumerate(range(ANO, ANO + 76, 5)):
-            t = passo / 15
-            receitas = patrimonio / 1e9 * 42 * (1 + 0.25 * t - 1.15 * t ** 2)
-            despesas = patrimonio / 1e9 * 30 * (1 + 3.4 * t - 3.1 * t ** 2)
+        # DRAA_FLUXO_ATUARIAL: itens de fluxo com um valor projetado cada,
+        # incluindo a base de cálculo (109001) e os dois totais.
+        receitas = patrimonio / 1e9 * 42e6
+        despesas = patrimonio / 1e9 * 61e6
+        for codigo, descricao, valor in (
+                (109001, "Base de Cálculo da Contribuição Normal", receitas * 2.4),
+                (121000, "Benefícios a Conceder - Contribuições do Ente", receitas * 0.6),
+                (122000, "Benefícios a Conceder - Contribuições dos Segurados Ativos", receitas * 0.3),
+                (111000, "Benefícios Concedidos - Contribuições dos Aposentados", receitas * 0.1),
+                (190000, "TOTAL DAS RECEITAS COM CONTRIBUIÇÕES E COMPENSAÇÃO PREVIDENCIÁRIA", receitas),
+                (211001, "Benefícios Concedidos - Encargos - Aposentadorias Programadas", despesas * 0.74),
+                (215001, "Benefícios Concedidos - Encargos - Pensões Por Morte", despesas * 0.12),
+                (221000, "Benefícios a Conceder - Encargos -  Aposentadorias Programadas", despesas * 0.14),
+                (240000, "TOTAL  DAS DESPESAS COM BENEFÍCIOS DO PLANO", despesas)):
             tabelas["DRAA_FLUXO_ATUARIAL"].append(dict(
-                ident, dt_exercicio=ANO, dt_ano_projecao=ano,
-                vl_receitas=round(max(receitas, 0) * 1e6, 2),
-                vl_despesas=round(max(despesas, 0) * 1e6, 2)))
+                ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
+                nr_fluxo=codigo, no_fluxo=descricao, vl_projetado=round(valor, 2)))
 
         deficit = patrimonio * rnd.uniform(1.8, 4.6)
-        for codigo, descricao, fator_atual, fator_futuro in _COMPROMISSOS:
+        for codigo, descricao, categoria, atual, futura in (
+                (300000, "PROVISÃO MATEMÁTICA DOS BENEFÍCIOS CONCEDIDOS", "Titulo", 0, 0),
+                (500000, "ATIVOS GARANTIDORES DOS COMPROMISSOS DO PLANO", "Resultado",
+                 patrimonio, 0),
+                (600100, "Déficit Atuarial", "Resultado", deficit, 0),
+                (121000, "Benefícios a Conceder - Contribuições Futuras do Ente",
+                 "Resultado", deficit * 0.35, deficit * 0.12),
+                (211000, "Benefícios Concedidos - Encargos - Aposentadorias Programadas",
+                 "Resultado", deficit * 0.9, 0)):
             tabelas["DRAA_VALORES_COMPROMISSOS"].append(dict(
-                ident, dt_exercicio=ANO, cd_variavel=codigo,
-                ds_variavel=descricao,
-                vl_geracao_atual=round(deficit * fator_atual, 2),
-                vl_geracao_futura=round(deficit * fator_futuro, 2)))
+                ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
+                cd_demonstrativo=codigo, ds_item_resultado=descricao,
+                no_categoria_demonstrativo=categoria,
+                vl_geracao_atual="{:.2f}".format(atual),
+                vl_geracao_futura="{:.2f}".format(futura) if futura else None))
 
         for descricao, valor in _HIPOTESES:
             tabelas["DRAA_HIPOTESE_ATUARIAL"].append(dict(
-                ident, dt_exercicio=ANO, ds_hipotese=descricao, vl_hipotese=valor))
+                ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
+                cd_hipotese_demografica=10001,
+                ds_hipotese_demografica=descricao, tp_unidade="PERCENTUAL",
+                te_hipotese_demografica=valor,
+                vl_perspectiva_longo_prazo=valor))
 
-        tabelas["DRAA_PLANO_CUSTEIO"].append(dict(
-            ident, dt_exercicio=ANO, ds_custo="Plano previdenciário",
-            vl_custo_normal=round(rnd.uniform(18, 32), 2),
-            vl_custo_suplementar=round(rnd.uniform(0, 12), 2)))
+        for tipo, aliquota in (("Segurados Ativos", 14.0), ("Aposentados", 14.0),
+                               ("Pensionistas", 14.0), ("Ente Federativo", 19.12),
+                               ("Ente Federativo - Total", 22.0),
+                               ("Taxa de Administração", 2.88)):
+            tabelas["DRAA_PLANO_CUSTEIO"].append(dict(
+                ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
+                tp_contribuicao=tipo, vl_anual_base_calculo=folha * 12,
+                vl_aliquota=aliquota, vl_contribuicao_esperada=folha * 12 * aliquota / 100,
+                vl_aliquota_definida=aliquota,
+                vl_contribuicao_definida=folha * 12 * aliquota / 100))
 
     return tabelas
-
-
 def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     """Grava as amostras no formato de página da API."""
     os.makedirs(destino, exist_ok=True)

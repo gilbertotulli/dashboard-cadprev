@@ -61,7 +61,49 @@ class TestPipeline(unittest.TestCase):
         self.assertLess(panorama["kpis"]["perc_valido"], 100.0)
         self.assertTrue(panorama["vencidos_ha_mais_tempo"])
         for item in panorama["vencidos_ha_mais_tempo"]:
-            self.assertGreater(item["dias"], 0)
+            self.assertGreaterEqual(item["dias"], 0)
+
+    def test_crp_lido_por_valor_e_nao_por_campo(self):
+        """A API e a sua documentação discordam sobre qual campo é qual;
+        a leitura precisa funcionar nas duas ordens."""
+        from cadprev.build import _ler_crp
+        hoje = "2026-09-15"
+        # ordem real da API
+        self.assertEqual(_ler_crp("ADMINISTRATIVO", "VENCIDO", None, hoje),
+                         {"valido": False, "judicial": False})
+        self.assertEqual(_ler_crp("JUDICIAL", "VÁLIDO", None, hoje),
+                         {"valido": True, "judicial": True})
+        # ordem documentada, caso a SPREV corrija a inversão
+        self.assertEqual(_ler_crp("Vigente", "Judicial", None, hoje),
+                         {"valido": True, "judicial": True})
+        self.assertEqual(_ler_crp("Vencido", "Administrativo", None, hoje),
+                         {"valido": False, "judicial": False})
+
+    def test_crp_usa_a_emissao_mais_recente(self):
+        """O endpoint devolve o histórico; contar linhas cruas trataria cada
+        renovação como um RPPS diferente."""
+        panorama = self._json("panorama.json")
+        entes = self._json("entes.json")
+        self.assertEqual(panorama["kpis"]["entes"], len(entes))
+
+    def test_bases_de_calculo_fora_do_caixa(self):
+        """Regressão: as rubricas de id abaixo de 33 são a folha sobre a qual a
+        contribuição incide, não dinheiro que entrou. Somá-las multiplicava o
+        caixa do RPPS por várias vezes."""
+        from cadprev import codigos
+        entes = self._json("entes.json")
+        ficha = self._json(os.path.join("ente", entes[0]["cnpj"] + ".json"))
+        caixa = ficha["caixa"]
+        with Store(self.banco) as store:
+            bruto = store.consultar(
+                "SELECT SUM(valor) FROM dipr WHERE cnpj_ente = ?",
+                (entes[0]["cnpj"],))[0][0] or 0.0
+            bases = store.consultar(
+                "SELECT SUM(valor) FROM dipr WHERE cnpj_ente = ? AND codigo_rubrica < ?",
+                (entes[0]["cnpj"], codigos.CODIGO_MINIMO_VALOR_EFETIVO))[0][0] or 0.0
+        self.assertGreater(bases, 0, "o demo precisa conter bases de cálculo")
+        movimentado = caixa["total_receita"] + caixa["total_despesa"]
+        self.assertAlmostEqual(movimentado, bruto - bases, places=0)
 
     def test_vencidos_ordenados_do_maior_atraso(self):
         vencidos = self._json("panorama.json")["vencidos_ha_mais_tempo"]
@@ -95,19 +137,42 @@ class TestPipeline(unittest.TestCase):
         entes = self._json("entes.json")
         self.assertTrue(entes)
         ficha = self._json(os.path.join("ente", entes[0]["cnpj"] + ".json"))
-        for secao in ("caixa", "carteira", "atuaria"):
+        for secao in ("caixa", "carteira", "atuaria", "estatistica"):
             self.assertTrue(ficha[secao]["disponivel"], secao)
         self.assertIsNotNone(ficha["crp"])
+        self.assertIn("valido", ficha["crp"])
 
-    def test_cruzamento_atuarial_e_lido_da_serie(self):
+    def test_fluxo_atuarial_fecha_com_os_totais(self):
+        """A composição soma exatamente o total declarado pela própria API.
+
+        É a checagem que pega erro de classificação: se um item de base de
+        cálculo entrasse como receita, a soma estouraria o total.
+        """
         entes = self._json("entes.json")
         ficha = self._json(os.path.join("ente", entes[0]["cnpj"] + ".json"))
         fluxo = ficha["atuaria"]["fluxo"]
-        cruzamento = ficha["atuaria"]["cruzamento"]
-        self.assertIsNotNone(cruzamento)
-        anteriores = [p for p in fluxo if p["ano_projecao"] < cruzamento]
-        for ponto in anteriores:
-            self.assertLessEqual(ponto["despesas"], ponto["receitas"])
+        self.assertTrue(fluxo["disponivel"])
+        soma_receitas = sum(i["valor"] for i in fluxo["itens_receita"])
+        self.assertAlmostEqual(soma_receitas, fluxo["receitas"], places=0)
+        soma_despesas = sum(i["valor"] for i in fluxo["itens_despesa"])
+        self.assertAlmostEqual(soma_despesas, fluxo["despesas"], places=0)
+
+    def test_resultado_atuarial_vem_do_codigo(self):
+        entes = self._json("entes.json")
+        ficha = self._json(os.path.join("ente", entes[0]["cnpj"] + ".json"))
+        resultado = ficha["atuaria"]["resultado"]
+        self.assertIn(resultado["situacao"], ("deficit", "superavit", "equilibrio"))
+        self.assertGreater(resultado["ativos_garantidores"], 0)
+
+    def test_mes_sem_rubrica_nao_vira_zero(self):
+        """Ausência de declaração e valor zero são coisas diferentes."""
+        entes = self._json("entes.json")
+        ficha = self._json(os.path.join("ente", entes[0]["cnpj"] + ".json"))
+        caixa = ficha["caixa"]
+        self.assertIn("meses_declarados", caixa)
+        for ponto in caixa["serie"]:
+            if ponto["receita"] is None or ponto["despesa"] is None:
+                self.assertIsNone(ponto["resultado"])
 
     def test_disponibilidades_marcadas_como_nao_alocacao(self):
         """Disponibilidades financeiras entram no total mas não na leitura

@@ -25,6 +25,11 @@ patrimônio investido: capitalizado, repartição simples e taxa de administraç
 de massa, a carteira inteira é capitalizada; com segregação, fica marcada como
 *não decomposta*.
 
+Em 15/09/2026, com acesso à API, a pergunta foi respondida: ``DAIR_CARTEIRA``
+devolve dezesseis campos e **nenhum deles identifica plano ou fundo**. O projeto
+opera no Nível B. A evidência está em ``docs/schema-observado/DAIR_CARTEIRA.json``
+e o candidato continua declarado no ``fieldmap``, para o dia em que mudar.
+
 O que este módulo não faz, deliberadamente: ratear a carteira entre planos no
 Nível B. Não há base no dado para isso, e o número resultante sairia daqui para
 dentro de um ofício.
@@ -40,22 +45,29 @@ CAPITALIZADO = "capitalizado"
 REPARTICAO = "reparticao"
 TAXA_ADMINISTRACAO = "taxa_administracao"
 NAO_DECOMPOSTO = "nao_decomposto"
+MANTIDO_TESOURO = "mantido_tesouro"
 
 ROTULOS = {
     CAPITALIZADO: "Capitalizado",
     REPARTICAO: "Repartição simples",
     TAXA_ADMINISTRACAO: "Taxa de administração",
     NAO_DECOMPOSTO: "Não decomposto",
+    MANTIDO_TESOURO: "Mantido pelo Tesouro",
 }
 
 #: Como cada rótulo aparece na fonte. A chave é a forma normalizada.
+#: As formas observadas na API em 15/09/2026 estão marcadas. A SPREV escreve o
+#: mesmo conceito de três jeitos conforme o endpoint: "Fundo em Capitalização"
+#: em RPPS_ALIQUOTA, "PREVIDENCIARIO" em DIPR, "Previdenciário" no DRAA.
 _SINONIMOS = {
-    "previdenciario": CAPITALIZADO,
+    "previdenciario": CAPITALIZADO,            # DIPR, DRAA
     "planoprevidenciario": CAPITALIZADO,
+    "fundoemcapitalizacao": CAPITALIZADO,      # RPPS_ALIQUOTA
     "capitalizacao": CAPITALIZADO,
     "capitalizado": CAPITALIZADO,
-    "financeiro": REPARTICAO,
+    "financeiro": REPARTICAO,                  # DIPR, DRAA
     "planofinanceiro": REPARTICAO,
+    "fundoemreparticao": REPARTICAO,           # RPPS_ALIQUOTA
     "reparticao": REPARTICAO,
     "reparticaosimples": REPARTICAO,
     "taxadeadministracao": TAXA_ADMINISTRACAO,
@@ -63,6 +75,7 @@ _SINONIMOS = {
     "administrativa": TAXA_ADMINISTRACAO,
     "reservaadministrativa": TAXA_ADMINISTRACAO,
     "txadministracao": TAXA_ADMINISTRACAO,
+    "mantidospelotesouro": MANTIDO_TESOURO,    # DRAA
 }
 
 
@@ -102,7 +115,24 @@ def detectar_nivel(campos_resolvidos: Iterable[str]) -> str:
     return NIVEL_A if "plano" in set(campos_resolvidos) else NIVEL_B
 
 
-def classificar_rpps(possui_segregacao: Optional[bool]) -> str:
+def possui_segregacao(texto: Optional[str]) -> Optional[bool]:
+    """Lê o campo de segregação do DRAA, que é texto e não booleano.
+
+    A API devolve "Não Possui" ou "Instituida neste Exercicio ou Mantida".
+
+    >>> possui_segregacao("Não Possui")
+    False
+    >>> possui_segregacao("Instituida neste Exercicio ou Mantida")
+    True
+    >>> possui_segregacao(None) is None
+    True
+    """
+    if texto is None or str(texto).strip() == "":
+        return None
+    return not _normalizar(texto).startswith("naopossui")
+
+
+def classificar_rpps(tem_segregacao: Optional[bool]) -> str:
     """Classificação de Nível B: vale para a carteira inteira do RPPS.
 
     Sem segregação de massa, todo o patrimônio está no plano previdenciário —
@@ -116,7 +146,7 @@ def classificar_rpps(possui_segregacao: Optional[bool]) -> str:
     >>> classificar_rpps(None)
     'nao_decomposto'
     """
-    if possui_segregacao is False:
+    if tem_segregacao is False:
         return CAPITALIZADO
     return NAO_DECOMPOSTO
 
