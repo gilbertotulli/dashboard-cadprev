@@ -129,29 +129,39 @@ class Store:
         colunas = self.criar_tabela(endpoint)
         tabela = endpoint.lower()
         agora = datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-        if escopo:
-            onde = " AND ".join("{} = ?".format(k) for k in escopo)
-            self.con.execute("DELETE FROM {} WHERE {}".format(tabela, onde),
-                             tuple(escopo.values()))
-        else:
-            self.con.execute("DELETE FROM {}".format(tabela))
-
         sql = "INSERT INTO {} ({}) VALUES ({})".format(
             tabela, ", ".join(colunas + ["_ingerido_em"]),
             ", ".join("?" * (len(colunas) + 1)))
 
+        # Tudo ou nada. A fonte dos registros é um gerador que vai buscando
+        # página por página na API, e uma falha no meio é normal — a rede cai, a
+        # API pede calma. Sem a transação, o DELETE já teria apagado os dados
+        # bons e as inserções parciais ficariam: o endpoint apareceria com
+        # centenas de milhares de linhas e nenhum registro de execução, e o
+        # build seguinte trataria o pedaço como se fosse a base inteira.
         total = 0
-        lote: List[Sequence[Any]] = []
-        for registro in registros:
-            lote.append(tuple(registro.get(c) for c in colunas) + (agora,))
-            if len(lote) >= 2000:
+        try:
+            if escopo:
+                onde = " AND ".join("{} = ?".format(k) for k in escopo)
+                self.con.execute("DELETE FROM {} WHERE {}".format(tabela, onde),
+                                 tuple(escopo.values()))
+            else:
+                self.con.execute("DELETE FROM {}".format(tabela))
+
+            lote: List[Sequence[Any]] = []
+            for registro in registros:
+                lote.append(tuple(registro.get(c) for c in colunas) + (agora,))
+                if len(lote) >= 2000:
+                    self.con.executemany(sql, lote)
+                    total += len(lote)
+                    lote.clear()
+            if lote:
                 self.con.executemany(sql, lote)
                 total += len(lote)
-                lote.clear()
-        if lote:
-            self.con.executemany(sql, lote)
-            total += len(lote)
+        except BaseException:
+            self.con.rollback()
+            raise
+
         self.con.commit()
         return total
 

@@ -255,3 +255,87 @@ class TestOrigemDosDados(unittest.TestCase):
                 build.construir(store, dir_saida=os.path.join(self.dir, "data"),
                                 origem="api")
             self.assertIn("demonstracao", str(ctx.exception))
+
+
+class TestLimiteDeTaxa(unittest.TestCase):
+    """A API devolve 420 quando o volume acumulado incomoda."""
+
+    def test_codigos_de_limite_reconhecidos(self):
+        from cadprev.client import CODIGOS_DE_LIMITE
+        self.assertIn(420, CODIGOS_DE_LIMITE)
+        self.assertIn(429, CODIGOS_DE_LIMITE)
+
+    def test_pausa_cresce_e_para_no_teto(self):
+        from cadprev.client import Cliente
+        cliente = Cliente(pausa=1.0, pausa_maxima=8.0)
+        vistas = []
+        for _ in range(5):
+            cliente._desacelerar()
+            vistas.append(cliente.pausa)
+        self.assertEqual(vistas, [2.0, 4.0, 8.0, 8.0, 8.0])
+        self.assertEqual(cliente.limites_recebidos, 5)
+
+    def test_retry_after_manda(self):
+        import urllib.error
+        from cadprev.client import Cliente
+        cliente = Cliente()
+        erro = urllib.error.HTTPError(
+            "http://x", 429, "slow down", {"Retry-After": "90"}, None)
+        self.assertEqual(cliente._espera_do_limite(erro, 1), 90.0)
+
+    def test_sem_retry_after_dobra_a_cada_tentativa(self):
+        import urllib.error
+        from cadprev.client import Cliente, ESPERA_INICIAL_LIMITE
+        cliente = Cliente()
+        erro = urllib.error.HTTPError("http://x", 420, "calm", {}, None)
+        self.assertEqual(cliente._espera_do_limite(erro, 1), ESPERA_INICIAL_LIMITE)
+        self.assertEqual(cliente._espera_do_limite(erro, 3), ESPERA_INICIAL_LIMITE * 4)
+
+
+class TestIngestaoAtomica(unittest.TestCase):
+    """Regressão: uma varredura interrompida no meio apagava os dados bons e
+    deixava o pedaço gravado, sem registro de execução. O build seguinte tratava
+    o pedaço como base completa."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="cadprev-atomico-")
+        self.banco = os.path.join(self.dir, "t.sqlite3")
+        self.bom = [{"cnpj_ente": "00000000000001", "ente": "Bom", "uf": "ES",
+                     "numero_crp": "1", "emissao": "2026-01-01",
+                     "validade": "2027-01-01"}]
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _falha_no_meio(self):
+        for i in range(5000):
+            yield dict(self.bom[0], cnpj_ente="{:014d}".format(i + 100))
+        raise RuntimeError("a API pediu calma")
+
+    def test_falha_preserva_o_que_havia(self):
+        with Store(self.banco) as store:
+            store.gravar("RPPS_CRP", self.bom)
+        with Store(self.banco) as store:
+            with self.assertRaises(RuntimeError):
+                store.gravar("RPPS_CRP", self._falha_no_meio())
+        with Store(self.banco) as store:
+            self.assertEqual(store.contar("RPPS_CRP"), 1)
+            linha = store.consultar("SELECT ente FROM rpps_crp")[0]
+            self.assertEqual(linha["ente"], "Bom")
+
+    def test_falha_nao_registra_execucao(self):
+        with Store(self.banco) as store:
+            with self.assertRaises(RuntimeError):
+                store.gravar("RPPS_CRP", self._falha_no_meio())
+        with Store(self.banco) as store:
+            self.assertIsNone(store.ultima_execucao("RPPS_CRP"))
+            self.assertEqual(store.contar("RPPS_CRP"), 0)
+
+    def test_sucesso_substitui(self):
+        with Store(self.banco) as store:
+            store.gravar("RPPS_CRP", self.bom)
+            novos = [dict(self.bom[0], cnpj_ente="00000000000002", ente="Novo")]
+            store.gravar("RPPS_CRP", novos)
+            self.assertEqual(store.contar("RPPS_CRP"), 1)
+            self.assertEqual(store.consultar("SELECT ente FROM rpps_crp")[0]["ente"],
+                             "Novo")

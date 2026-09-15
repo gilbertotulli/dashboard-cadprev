@@ -27,6 +27,15 @@ USER_AGENT = (
     "dashboard-cadprev/0.1 (+https://github.com/gilbertotulli/dashboard-cadprev)"
 )
 
+#: Códigos com que a API pede calma. O 420 é o que ela devolve de fato quando o
+#: volume acumulado incomoda — não é erro do pedido, é pedido de espera, e
+#: desistir dele joga fora uma varredura inteira.
+CODIGOS_DE_LIMITE = frozenset({420, 429, 503})
+
+#: Espera inicial depois de um pedido de calma. Bem maior que a de um erro
+#: comum: a janela de limite da API se mede em minutos, não em segundos.
+ESPERA_INICIAL_LIMITE = 30.0
+
 
 class ErroDaAPI(RuntimeError):
     """A API respondeu, mas com erro, ou respondeu algo que não é o envelope."""
@@ -50,13 +59,16 @@ class Cliente:
 
     def __init__(self, base_url: str = endpoints.BASE_URL, pausa: float = 1.0,
                  tentativas: int = 4, timeout: float = 60.0,
-                 fixtures: Optional[str] = None) -> None:
+                 fixtures: Optional[str] = None,
+                 pausa_maxima: float = 8.0) -> None:
         self.base_url = base_url.rstrip("/")
         self.pausa = pausa
+        self.pausa_maxima = pausa_maxima
         self.tentativas = tentativas
         self.timeout = timeout
         self.fixtures = fixtures or os.environ.get("CADPREV_FIXTURES") or None
         self.requisicoes = 0
+        self.limites_recebidos = 0
 
     # -- rede -------------------------------------------------------------
 
@@ -79,12 +91,17 @@ class Cliente:
                 self.requisicoes += 1
                 return json.loads(corpo)
             except urllib.error.HTTPError as erro:
-                # 4xx é problema do pedido: repetir não resolve.
-                if 400 <= erro.code < 500:
+                if erro.code in CODIGOS_DE_LIMITE:
+                    espera = max(espera, self._espera_do_limite(erro, tentativa))
+                    self._desacelerar()
+                    ultimo_erro = erro
+                elif 400 <= erro.code < 500:
+                    # Aí sim é problema do pedido: repetir não resolve.
                     raise ErroDaAPI(
                         "{} respondeu {} {}".format(url, erro.code, erro.reason)
                     ) from erro
-                ultimo_erro = erro
+                else:
+                    ultimo_erro = erro
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as erro:
                 ultimo_erro = erro
 
@@ -97,6 +114,34 @@ class Cliente:
         raise ErroDaAPI(
             "{} falhou após {} tentativas: {}".format(url, self.tentativas, ultimo_erro)
         )
+
+    def _espera_do_limite(self, erro: urllib.error.HTTPError,
+                          tentativa: int) -> float:
+        """Quanto esperar depois de um pedido de calma.
+
+        Se a resposta trouxer ``Retry-After``, ele manda — é a própria API
+        dizendo o tempo. Sem ele, parte de meio minuto e dobra a cada tentativa.
+        """
+        cabecalho = (erro.headers or {}).get("Retry-After")
+        if cabecalho:
+            try:
+                return max(1.0, float(cabecalho))
+            except (TypeError, ValueError):
+                pass
+        return ESPERA_INICIAL_LIMITE * (2 ** (tentativa - 1))
+
+    def _desacelerar(self) -> None:
+        """Aumenta a pausa entre páginas depois de um pedido de calma.
+
+        Repetir a página que falhou e voltar ao ritmo anterior só adia o
+        próximo 420. A varredura inteira passa a andar mais devagar.
+        """
+        self.limites_recebidos += 1
+        anterior = self.pausa
+        self.pausa = min(self.pausa_maxima, max(self.pausa * 2, 2.0))
+        if self.pausa != anterior:
+            log.warning("a API pediu calma; pausa entre páginas passa de "
+                        "%.1fs para %.1fs", anterior, self.pausa)
 
     # -- fixtures ---------------------------------------------------------
 

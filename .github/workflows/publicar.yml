@@ -48,6 +48,9 @@ concurrency:
 jobs:
   publicar:
     runs-on: ubuntu-latest
+    # A carga nacional é longa e fica mais longa ainda quando a API pede calma.
+    # O teto evita que uma execução travada ocupe a fila indefinidamente.
+    timeout-minutes: 240
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
@@ -104,18 +107,26 @@ jobs:
           # vazio, não justifica derrubar a publicação inteira. Os essenciais
           # são conferidos logo abaixo.
           #
-          # Cadastro, DIPR e DRAA: o DIPR vem com o ano inteiro, para que a aba
-          # de caixa tenha a série mensal completa.
-          python -m cadprev ingest \
-            RPPS_REGIME_PREVIDENCIARIO RPPS_CRP RPPS_ALIQUOTA DIPR \
-            DRAA_ESTATISTICA DRAA_SEGREGACAO_MASSA DRAA_FLUXO_ATUARIAL \
-            DRAA_VALORES_COMPROMISSOS DRAA_HIPOTESE_ATUARIAL DRAA_PLANO_CUSTEIO \
-            $FILTRO_UF --ano "$ANO" --exercicio "$ANO" 2>&1 | tee ingest.log || true
-
+          # Os essenciais primeiro, enquanto a API ainda está sem reclamar. Na
+          # carga nacional ela começa a pedir calma depois de algumas centenas
+          # de milhares de linhas, e deixar a carteira por último foi o que fez
+          # a primeira tentativa terminar sem o dado que sustenta o painel.
+          #
           # A carteira é de uma competência só: o ano inteiro seriam mais de um
           # milhão de linhas sem ganho de leitura.
           python -m cadprev ingest DAIR_CARTEIRA \
-            $FILTRO_UF --ano "$ANO" --mes "$MES" 2>&1 | tee -a ingest.log || true
+            $FILTRO_UF --ano "$ANO" --mes "$MES" 2>&1 | tee ingest.log || true
+
+          python -m cadprev ingest RPPS_CRP RPPS_REGIME_PREVIDENCIARIO \
+            RPPS_ALIQUOTA $FILTRO_UF 2>&1 | tee -a ingest.log || true
+
+          # O DIPR vem com o ano inteiro, para que a aba de caixa tenha a série
+          # mensal completa. É a maior carga, e vai por último de propósito.
+          python -m cadprev ingest \
+            DRAA_ESTATISTICA DRAA_SEGREGACAO_MASSA DRAA_FLUXO_ATUARIAL \
+            DRAA_VALORES_COMPROMISSOS DRAA_HIPOTESE_ATUARIAL \
+            DRAA_PLANO_CUSTEIO DIPR \
+            $FILTRO_UF --ano "$ANO" --exercicio "$ANO" 2>&1 | tee -a ingest.log || true
 
           python -m cadprev status
 
