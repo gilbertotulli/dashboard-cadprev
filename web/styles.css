@@ -139,7 +139,9 @@ p.intro{margin:0 0 20px;color:var(--ink-2);font-size:.92rem;max-width:74ch}
 .kpi.ruim .val{color:var(--crit)}
 
 /* ---------- cartões ---------- */
-.grade{display:grid;gap:16px;margin-bottom:16px}
+/* Cada cartão tem a altura do próprio conteúdo. Sem isto, um cartão curto
+   ao lado de uma tabela longa fica com um vão vazio embaixo do gráfico. */
+.grade{display:grid;gap:16px;margin-bottom:16px;align-items:start}
 .grade.duas{grid-template-columns:1fr 1fr}
 .grade.larga{grid-template-columns:1.45fr 1fr}
 @media (max-width:780px){.grade.duas,.grade.larga{grid-template-columns:1fr}}
