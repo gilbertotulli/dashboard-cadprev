@@ -94,6 +94,10 @@ python -m cadprev inspect DAIR_CARTEIRA --uf ES --salvar --override
 A correção vai para `fieldmap.local.json` (ignorado pelo git) ou, quando valer para todos,
 para `cadprev/fieldmap.py`. **Contribuições aqui são as mais valiosas do projeto.**
 
+Quem não tiver acesso de rede à API resolve pelo GitHub: **Actions → descobrir campos da
+API → Run workflow**. Os runners alcançam `apicadprev.previdencia.gov.br`, e o resultado
+sai no resumo da execução e como artefato para baixar.
+
 ## A separação por natureza do fundo
 
 Investigada especificamente, com resultado misto:
@@ -125,6 +129,45 @@ ISP (Indicador de Situação Previdenciária), MSC (Matriz de Saldos Contábeis)
 parcelamento de débitos e o enquadramento de fundos existem como planilha em dados
 abertos, não como endpoint. A marcação de capitais também não vem da API: depende de
 [`data/capitais.csv`](data/capitais.csv), mantido aqui.
+
+## Publicar para outros RPPS
+
+O painel é um site estático: `web/` são arquivos soltos, sem servidor nem banco de
+dados. Isso abre três caminhos.
+
+### GitHub Pages (o caminho curto)
+
+Já existe o workflow `publicar painel`, que **ingere dados reais da API** — os runners
+do GitHub alcançam `apicadprev.previdencia.gov.br` — e publica o resultado.
+
+1. **Settings → Pages → Source: GitHub Actions**
+2. **Actions → publicar painel → Run workflow**
+
+Deixe `uf` em branco para o país inteiro, ou preencha (`ES`, por exemplo) para uma
+publicação mais rápida. Marque `usar_demonstracao` para subir o conjunto sintético e
+mostrar a forma do painel antes de os dados reais estarem resolvidos.
+
+O endereço fica `https://gilbertotulli.github.io/dashboard-cadprev/`, público para
+qualquer pessoa com o link. Depois disso ele se republica sozinho toda segunda-feira,
+e a cada push no `main`.
+
+Para um endereço institucional, Pages aceita domínio próprio (Settings → Pages →
+Custom domain) com um registro CNAME apontando para `gilbertotulli.github.io`.
+
+### No servidor do próprio instituto
+
+Rode `python -m cadprev ingest ...` e `python -m cadprev build` numa máquina com
+acesso à API e sirva a pasta `web/` em qualquer servidor web. Não há processo para
+manter no ar — é HTML, CSS, JS e JSON.
+
+Para atualizar sozinho, um `cron` semanal com os mesmos dois comandos basta.
+
+### Controle de acesso
+
+O Pages público é o ajuste natural aqui: são dados que já são públicos, e a restrição
+de acesso seria ruído. Se ainda assim o acesso precisar ser restrito, o Pages privado
+exige GitHub Enterprise; a alternativa é servir a pasta `web/` atrás da autenticação
+que o instituto já usa.
 
 ## O que ainda falta
 

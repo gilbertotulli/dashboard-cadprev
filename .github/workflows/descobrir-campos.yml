@@ -1,0 +1,81 @@
+# Descobre os nomes reais dos campos da API do CADPREV.
+#
+# Por que aqui: os runners do GitHub têm internet aberta e alcançam
+# apicadprev.previdencia.gov.br. Uma execução deste workflow resolve a pendência
+# central do projeto — os nomes de campo que o levantamento inicial não pôde
+# confirmar — sem ninguém precisar rodar nada localmente.
+#
+# Como usar: aba Actions → "descobrir campos da API" → Run workflow.
+# O resultado sai no resumo da execução e como artefato para baixar.
+name: descobrir campos da API
+
+on:
+  workflow_dispatch:
+    inputs:
+      uf:
+        description: "UF para a amostra (menos dados, resposta mais rápida)"
+        required: false
+        default: "ES"
+      endpoints:
+        description: "Endpoints, separados por espaço (vazio = os do painel)"
+        required: false
+        default: ""
+
+jobs:
+  descobrir:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Consultar a API
+        id: inspecionar
+        continue-on-error: true
+        run: |
+          ALVOS="${{ inputs.endpoints }}"
+          if [ -z "$ALVOS" ]; then
+            ALVOS="RPPS_REGIME_PREVIDENCIARIO RPPS_CRP RPPS_ALIQUOTA DIPR
+                   DAIR_CARTEIRA DRAA_ESTATISTICA DRAA_SEGREGACAO_MASSA
+                   DRAA_FLUXO_ATUARIAL DRAA_VALORES_COMPROMISSOS
+                   DRAA_HIPOTESE_ATUARIAL DRAA_PLANO_CUSTEIO"
+          fi
+          python -m cadprev inspect $ALVOS \
+            --uf "${{ inputs.uf }}" --salvar --override 2>&1 | tee saida.txt
+
+      - name: Resumo da execução
+        if: always()
+        run: |
+          {
+            echo "# Campos observados na API do CADPREV"
+            echo
+            echo "UF da amostra: \`${{ inputs.uf }}\`"
+            echo
+            echo '```'
+            cat saida.txt 2>/dev/null || echo "(sem saída)"
+            echo '```'
+            echo
+            echo "## O que fazer com isto"
+            echo
+            echo "1. Baixe o artefato \`schema-observado\` abaixo."
+            echo "2. Compare com os candidatos em \`cadprev/fieldmap.py\`."
+            echo "3. Se algum campo obrigatório ficou sem resolver, acrescente o"
+            echo "   nome real aos candidatos daquele campo e abra um PR com os"
+            echo "   arquivos de \`docs/schema-observado/\` como evidência."
+            echo
+            echo "**A pergunta de maior peso:** \`DAIR_CARTEIRA\` traz o plano do"
+            echo "ativo? Se sim, o painel passa do Nível B para o Nível A e a"
+            echo "carteira se decompõe entre capitalizado, repartição simples e"
+            echo "taxa de administração."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: schema-observado
+          path: |
+            docs/schema-observado/
+            saida.txt
+          if-no-files-found: warn

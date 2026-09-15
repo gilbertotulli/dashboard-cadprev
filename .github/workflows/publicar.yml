@@ -1,0 +1,162 @@
+# Publica o painel no GitHub Pages.
+#
+# Os runners do GitHub alcançam a API do CADPREV, então a publicação ingere
+# dados reais. Se os nomes dos campos ainda não estiverem resolvidos, a ingestão
+# falha alto e a versão anterior do site continua no ar — melhor do que publicar
+# uma tela de números vazios.
+#
+# Requer Pages habilitado em Settings → Pages → Source: GitHub Actions.
+name: publicar painel
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"      # segundas, 06:17 UTC (03:17 em Brasília)
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      uf:
+        description: "UF (vazio = todos os RPPS do país)"
+        required: false
+        default: ""
+      ano:
+        description: "Exercício (vazio = ano corrente)"
+        required: false
+        default: ""
+      mes:
+        description: "Mês da competência do DAIR (vazio = três meses atrás)"
+        required: false
+        default: ""
+      usar_demonstracao:
+        description: "Publicar o conjunto sintético em vez de dados reais"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Definir a competência
+        id: comp
+        run: |
+          ANO="${{ inputs.ano }}"
+          MES="${{ inputs.mes }}"
+          [ -z "$ANO" ] && ANO=$(date -u +%Y)
+          # O DAIR leva algumas semanas entre o fato e a publicação; três meses
+          # atrás é uma competência que já costuma estar completa.
+          [ -z "$MES" ] && MES=$(date -u -d "3 months ago" +%-m)
+          echo "ano=$ANO" >> "$GITHUB_OUTPUT"
+          echo "mes=$MES" >> "$GITHUB_OUTPUT"
+          echo "Competência: $MES/$ANO"
+
+      - name: Conjunto de demonstração
+        if: inputs.usar_demonstracao
+        run: python -m cadprev demo
+
+      - name: Ingerir dados reais
+        if: ${{ !inputs.usar_demonstracao }}
+        env:
+          UF: ${{ inputs.uf }}
+          ANO: ${{ steps.comp.outputs.ano }}
+          MES: ${{ steps.comp.outputs.mes }}
+        run: |
+          FILTRO_UF=""
+          [ -n "$UF" ] && FILTRO_UF="--uf $UF"
+
+          # Melhor esforço: a falha de um endpoint secundário deixa um cartão
+          # vazio, não justifica derrubar a publicação inteira. Os essenciais
+          # são conferidos logo abaixo.
+          #
+          # Cadastro, DIPR e DRAA: o DIPR vem com o ano inteiro, para que a aba
+          # de caixa tenha a série mensal completa.
+          python -m cadprev ingest \
+            RPPS_REGIME_PREVIDENCIARIO RPPS_CRP RPPS_ALIQUOTA DIPR \
+            DRAA_ESTATISTICA DRAA_SEGREGACAO_MASSA DRAA_FLUXO_ATUARIAL \
+            DRAA_VALORES_COMPROMISSOS DRAA_HIPOTESE_ATUARIAL DRAA_PLANO_CUSTEIO \
+            $FILTRO_UF --ano "$ANO" --exercicio "$ANO" 2>&1 | tee ingest.log || true
+
+          # A carteira é de uma competência só: o ano inteiro seriam mais de um
+          # milhão de linhas sem ganho de leitura.
+          python -m cadprev ingest DAIR_CARTEIRA \
+            $FILTRO_UF --ano "$ANO" --mes "$MES" 2>&1 | tee -a ingest.log || true
+
+          python -m cadprev status
+
+          # Sem estes dois não há painel: o CRP sustenta o panorama e a ficha,
+          # a carteira sustenta a aba de investimentos.
+          python - <<'PY'
+          import sys
+          from cadprev.store import Store
+          with Store() as store:
+              faltando = [nome for nome in ("RPPS_CRP", "DAIR_CARTEIRA")
+                          if store.contar(nome) == 0]
+          if faltando:
+              print("\nSem dados nos endpoints essenciais: " + ", ".join(faltando),
+                    file=sys.stderr)
+              print("Se a causa for campo obrigatório não resolvido, rode o workflow"
+                    " 'descobrir campos da API'.", file=sys.stderr)
+              sys.exit(1)
+          PY
+
+      - name: Construir o painel
+        run: |
+          if [ "${{ inputs.usar_demonstracao }}" = "true" ]; then
+            echo "painel já construído com o conjunto de demonstração"
+          else
+            python -m cadprev build --origem api
+          fi
+          test -s web/data/meta.json
+          test -s web/data/entes.json
+
+      - name: Resumo
+        if: always()
+        run: |
+          {
+            echo "# Publicação do painel"
+            echo
+            if [ "${{ inputs.usar_demonstracao }}" = "true" ]; then
+              echo "Publicado com o **conjunto de demonstração** (dados sintéticos)."
+            else
+              echo "Competência do DAIR: **${{ steps.comp.outputs.mes }}/${{ steps.comp.outputs.ano }}**"
+              echo "UF: **${{ inputs.uf || 'todas' }}**"
+            fi
+            echo
+            if [ -f web/data/meta.json ]; then
+              echo '```json'
+              python -c "import json;m=json.load(open('web/data/meta.json'));print(json.dumps({k:m[k] for k in ('origem','gerado_em','entes','nivel_fundo')},ensure_ascii=False,indent=2))"
+              echo '```'
+            else
+              echo "> A construção não produziu dados."
+              echo
+              echo "Se a ingestão falhou por campo obrigatório não resolvido, rode o"
+              echo "workflow **descobrir campos da API** e ajuste \`cadprev/fieldmap.py\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
