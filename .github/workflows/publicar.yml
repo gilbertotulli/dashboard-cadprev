@@ -40,7 +40,10 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # Não cancelar: a carga nacional leva perto de quarenta minutos, e matá-la
+  # para rodar outra idêntica é desperdício — de tempo e de requisições a um
+  # serviço público que pede uma por segundo.
+  cancel-in-progress: false
 
 jobs:
   publicar:
@@ -54,6 +57,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      # O banco sobrevive entre execuções. Um push de código não precisa varrer a
+      # API de novo: republica com os dados que já estão lá, e o dado se renova
+      # no agendamento semanal ou quando alguém dispara a mão.
+      - uses: actions/cache@v4
+        with:
+          path: cadprev.sqlite3
+          key: cadprev-banco-${{ github.run_id }}
+          restore-keys: cadprev-banco-
 
       - name: Definir a competência
         id: comp
@@ -79,6 +91,12 @@ jobs:
           ANO: ${{ steps.comp.outputs.ano }}
           MES: ${{ steps.comp.outputs.mes }}
         run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ -s cadprev.sqlite3 ]; then
+            echo "Push de código com banco em cache: republicando sem reingerir."
+            python -m cadprev status
+            exit 0
+          fi
+
           FILTRO_UF=""
           [ -n "$UF" ] && FILTRO_UF="--uf $UF"
 
