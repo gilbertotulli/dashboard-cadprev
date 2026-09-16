@@ -59,6 +59,7 @@ cadprev/        ingestão e agregação (Python, sem dependências)
   store.py        SQLite + procedência de cada ingestão
   fundos.py       separação por natureza do fundo (Níveis A e B)
   qualidade.py    o que a própria base contradiz, e as chaves de recorte
+  competencia.py  pergunta à API qual competência do DAIR já fechou
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
 web/            painel estático (HTML, CSS e JS, sem build)
@@ -176,6 +177,19 @@ Duas decisões sustentam a leitura:
   também o intervalo interquartil, para que a posição seja lida dentro da
   dispersão e não contra um ponto só.
 
+A quarta referência é um conjunto montado à mão: busca por nome (sem exigir
+acento), filtro por UF, e um atalho para somar o estado inteiro de uma vez. Com
+um RPPS escolhido a comparação é direta; com vários, a referência passa a ser a
+mediana deles.
+
+Essa mediana é calculada no navegador — não há como pré-computar a mediana de um
+conjunto que o leitor monta na hora. É a única aritmética do projeto que existe
+nos dois lados, e duas implementações da mesma conta divergem sozinhas: o teste
+`tests/estatistica-do-navegador.mjs` extrai as funções do próprio `web/app.js`,
+remonta em JavaScript os grupos que o Python pré-calculou e exige igualdade até o
+centésimo. Ele já pegou duas divergências de arredondamento — multiplicar por cem
+antes de arredondar, e o empate exato que o Python manda para o par.
+
 Grupos com menos de três RPPS não geram estatística, e verde e vermelho aparecem
 só nos indicadores de direção inequívoca — mais renda fixa não é melhor nem pior
 por si. Faixas de porte, por segurados: até 1.000, de 1.000 a 10.000, acima disso.
@@ -236,6 +250,36 @@ As outras três medem a atualidade do dado, não a sua correção. Quem entregou
 último DAIR há cinco meses não errou nada — apenas descreve uma situação mais
 antiga. Se isso desqualifica o número depende da pergunta, e quem decide é quem
 pergunta.
+
+## O agendamento
+
+A carga roda às segundas, 06:17 UTC. A competência **não** é deduzida do
+calendário: o passo `python -m cadprev competencia` pergunta à API qual é a mais
+recente já publicada, caminhando para trás e escolhendo a primeira que esteja
+substancialmente cheia em relação à melhor vista.
+
+A conta anterior — ano corrente, mês de três meses atrás — funcionava em nove
+meses do ano e quebrava nos outros três: em janeiro pedia o mês de outubro do ano
+corrente, uma competência que ainda não aconteceu. A carga voltaria vazia, a
+guarda de endpoint essencial derrubaria o job, e o painel ficaria sem atualizar
+de janeiro a março, todo ano.
+
+O critério é relativo, e não um piso absoluto, porque com filtro de UF os volumes
+caem duas ordens de grandeza — qualquer número fixo estaria errado num dos dois
+casos. Em 16/09/2026 a competência 8 existia com 17 linhas no país inteiro:
+publicá-la mostraria um patrimônio nacional de quase zero.
+
+O que protege a base entre uma carga e outra:
+
+- **Gravação transacional.** Um endpoint que falha desfaz o próprio trabalho; o
+  que estava lá continua lá. Nunca fica meia varredura gravada.
+- **Guarda de endpoints essenciais.** Sem CRP e sem carteira o job falha, e a
+  versão publicada continua no ar.
+- **Cache só do que deu certo.** O banco só é guardado quando a varredura fechou
+  e os essenciais vieram.
+- **Procedência à vista.** A aba Qualidade lista a data de ingestão de cada
+  endpoint e marca os que ficaram para trás — a mistura de safras que a gravação
+  transacional torna possível não pode ser invisível.
 
 ## O que ainda falta
 

@@ -29,3 +29,13 @@ jobs:
           test -s web/data/meta.json
           test -s web/data/carteira-nacional.json
           test -s web/data/panorama.json
+          test -s web/data/filtros.json
+          test -s web/data/qualidade.json
+
+      # O comparativo calcula a mediana de uma seleção arbitrária no navegador,
+      # porque não há como pré-computar a mediana de um conjunto que o leitor
+      # monta na hora. É a única conta que existe nos dois lados, e duas
+      # implementações da mesma conta divergem sozinhas com o tempo: este passo
+      # exige que a seleção reproduza o grupo equivalente até o centésimo.
+      - name: A estatística do navegador bate com a do Python
+        run: node tests/estatistica-do-navegador.mjs

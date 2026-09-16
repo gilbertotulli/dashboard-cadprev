@@ -28,9 +28,13 @@
     <div class="busca">
       <label for="busca" class="sr-only" hidden>Buscar RPPS</label>
       <input id="busca" type="search" autocomplete="off" placeholder="Buscar RPPS por nome ou CNPJ…">
+      <label for="busca-uf" class="sr-only" hidden>Filtrar por UF</label>
+      <select id="busca-uf" class="uf-filtro" title="Restringir a busca a uma UF">
+        <option value="">UF</option>
+      </select>
       <div class="sugestoes" id="sugestoes" hidden></div>
     </div>
-    <button class="btn-tema" id="btn-tema" type="button" aria-label="Alternar tema">Tema</button>
+    <button class="btn-tema" id="btn-tema" type="button">Tema</button>
   </div>
 </header>
 

@@ -76,15 +76,39 @@ jobs:
           key: cadprev-banco-${{ github.run_id }}
           restore-keys: cadprev-banco-
 
+      # A competência é perguntada à fonte, não deduzida do calendário. A conta
+      # anterior — ano corrente, mês de três meses atrás — pedia, de janeiro a
+      # março, uma competência do ano que ainda não tinha chegado, e teria
+      # deixado o painel sem atualizar esses três meses todo ano.
       - name: Definir a competência
         id: comp
+        if: ${{ !inputs.usar_demonstracao }}
+        env:
+          UF: ${{ inputs.uf }}
         run: |
           ANO="${{ inputs.ano }}"
           MES="${{ inputs.mes }}"
-          [ -z "$ANO" ] && ANO=$(date -u +%Y)
-          # O DAIR leva algumas semanas entre o fato e a publicação; três meses
-          # atrás é uma competência que já costuma estar completa.
-          [ -z "$MES" ] && MES=$(date -u -d "3 months ago" +%-m)
+          # Republicar do cache não muda competência nenhuma. Descobri-la
+          # custaria catorze requisições a um serviço público que pede uma por
+          # segundo, para jogar o resultado fora.
+          if [ "${{ github.event_name }}" = "push" ] && [ -s cadprev.sqlite3 ]; then
+            echo "republicando do cache: competência inalterada"
+            echo "ano=$ANO" >> "$GITHUB_OUTPUT"
+            echo "mes=$MES" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$ANO" ] || [ -z "$MES" ]; then
+            FILTRO_UF=""
+            [ -n "$UF" ] && FILTRO_UF="--uf $UF"
+            if ! python -m cadprev competencia $FILTRO_UF > competencia.txt; then
+              echo "::error::não consegui descobrir a competência do DAIR na API"
+              cat competencia.txt || true
+              exit 1
+            fi
+            cat competencia.txt
+            [ -z "$ANO" ] && ANO=$(grep '^ano=' competencia.txt | cut -d= -f2)
+            [ -z "$MES" ] && MES=$(grep '^mes=' competencia.txt | cut -d= -f2)
+          fi
           echo "ano=$ANO" >> "$GITHUB_OUTPUT"
           echo "mes=$MES" >> "$GITHUB_OUTPUT"
           echo "Competência: $MES/$ANO"
@@ -196,7 +220,9 @@ jobs:
             if [ "${{ inputs.usar_demonstracao }}" = "true" ]; then
               echo "Publicado com o **conjunto de demonstração** (dados sintéticos)."
             else
-              echo "Competência do DAIR: **${{ steps.comp.outputs.mes }}/${{ steps.comp.outputs.ano }}**"
+              COMP="${{ steps.comp.outputs.mes }}/${{ steps.comp.outputs.ano }}"
+              [ "$COMP" = "/" ] && COMP="a mesma do banco em cache"
+              echo "Competência do DAIR: **$COMP**"
               echo "UF: **${{ inputs.uf || 'todas' }}**"
             fi
             echo

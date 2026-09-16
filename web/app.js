@@ -11,7 +11,8 @@
 
   var D = "data/";
   var estado = { meta: null, entes: [], cnpj: null, aba: "panorama", cache: {},
-                 referencia: "brasil", referenciaCnpj: null,
+                 referencia: "brasil", selecao: [], selecaoUf: "",
+                 selecaoAberta: false,
                  filtros: null, chaves: null };
   var conteudo = document.getElementById("conteudo");
 
@@ -39,6 +40,57 @@
   function reaisExatos(v) {
     if (v === null || v === undefined || isNaN(v)) return "—";
     return (v < 0 ? "\u2212" : "") + "R$ " + num(Math.abs(v), 2);
+  }
+
+  /* Busca por nome sem exigir acento: "vitoria" acha "Vitória", "sao" acha
+   * "São". Normalizar na digitação e no alvo é o mesmo trabalho, e sem isso
+   * metade dos municípios brasileiros só aparece para quem sabe onde fica o
+   * til. NFD separa a letra do acento; a faixa \u0300-\u036f é o acento. */
+  function semAcento(texto) {
+    return String(texto || "").normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  }
+
+  /* Índice montado uma vez: normalizar 5.596 nomes a cada tecla digitada é
+   * trabalho repetido à toa. */
+  var indiceBusca = null;
+  function paraBusca() {
+    if (!indiceBusca) {
+      indiceBusca = estado.entes.map(function (e) {
+        return { e: e, nome: semAcento(e.ente), cnpj: e.cnpj || "" };
+      });
+    }
+    return indiceBusca;
+  }
+
+  function filtrarEntes(termo, uf, limite) {
+    var alvo = semAcento(termo).trim();
+    var digitos = termo.replace(/\D/g, "");
+    var achados = [];
+    var todos = paraBusca();
+    for (var i = 0; i < todos.length; i++) {
+      var r = todos[i];
+      if (uf && r.e.uf !== uf) continue;
+      if (alvo.length >= 2 && r.nome.indexOf(alvo) < 0 &&
+          !(digitos.length >= 3 && r.cnpj.indexOf(digitos) >= 0)) continue;
+      if (alvo.length < 2 && digitos.length < 3 && !uf) continue;
+      achados.push(r.e);
+    }
+    return { total: achados.length, itens: achados.slice(0, limite || 12) };
+  }
+
+  function ufsConhecidas() {
+    var vistas = {};
+    estado.entes.forEach(function (e) { if (e.uf) vistas[e.uf] = true; });
+    return Object.keys(vistas).sort();
+  }
+
+  function diasEntre(inicio, fim) {
+    if (!inicio || !fim) return 0;
+    var a = Date.parse(String(inicio).slice(0, 10));
+    var b = Date.parse(String(fim).slice(0, 10));
+    if (isNaN(a) || isNaN(b)) return 0;
+    return Math.max(0, Math.round((b - a) / 86400000));
   }
 
   function pct(v, casas) { return v === null || v === undefined ? "—" : num(v, casas === undefined ? 1 : casas) + "%"; }
@@ -889,6 +941,104 @@
     return Math.round(75 + 25 * (valor - grupo.p75) / ((grupo.max - grupo.p75) || 1));
   }
 
+  /* Estatística de um conjunto escolhido a dedo.
+   *
+   * Espelha cadprev/benchmark.py: mesmo percentil por interpolação linear,
+   * mesma recusa de resumir menos de três valores. É a única aritmética do
+   * projeto que existe nos dois lados, e existe porque o conjunto é montado
+   * aqui — não há como pré-calcular a mediana de uma seleção arbitrária.
+   * Conferida contra os grupos pré-calculados: selecionar todos os RPPS de uma
+   * região tem de reproduzir exatamente a mediana daquela região.
+   */
+  function percentilJS(ordenados, p) {
+    if (!ordenados.length) return null;
+    if (ordenados.length === 1) return ordenados[0];
+    var posicao = (ordenados.length - 1) * p;
+    var baixo = Math.floor(posicao);
+    var alto = Math.min(baixo + 1, ordenados.length - 1);
+    var peso = posicao - baixo;
+    return ordenados[baixo] * (1 - peso) + ordenados[alto] * peso;
+  }
+
+  /* O arredondamento do round() do Python, replicado.
+   *
+   * Duas armadilhas, e as duas apareceram na conferência contra os grupos
+   * pré-calculados. Math.round(v * 100) / 100 erra porque multiplicar por cem
+   * introduz erro de ponto flutuante: 4,215 vira 421.50000000000006 e sobe para
+   * 4,22, quando o Python devolve 4,21. E toFixed(2) sozinho erra no empate
+   * exato: 4,625 é representável em binário, o Python manda para o par (4,62) e
+   * o toFixed sobe (4,63).
+   *
+   * Por isso se olha a expansão decimal e se decide na mão: acima do meio sobe,
+   * abaixo desce, e no empate exato vai para o centésimo par.
+   */
+  function arredondar(v) {
+    if (v === null || v === undefined) return null;
+    if (typeof v !== "number" || !isFinite(v) || Math.abs(v) >= 1e15) return v;
+    var negativo = v < 0;
+    var texto = Math.abs(v).toFixed(20);
+    var ponto = texto.indexOf(".");
+    var centesimos = Number(texto.slice(0, ponto) + texto.slice(ponto + 1, ponto + 3));
+    var sobra = texto.slice(ponto + 3);
+    var primeiro = sobra.charCodeAt(0) - 48;
+    var sobe;
+    if (primeiro > 5) sobe = true;
+    else if (primeiro < 5) sobe = false;
+    else sobe = /[1-9]/.test(sobra.slice(1)) ? true : centesimos % 2 === 1;
+    var resultado = (centesimos + (sobe ? 1 : 0)) / 100;
+    return negativo ? -resultado : resultado;
+  }
+
+  function resumirJS(valores) {
+    var limpos = valores.filter(function (v) {
+      return v !== null && v !== undefined;
+    }).sort(function (a, z) { return a - z; });
+    if (limpos.length < 3) return null;
+    return {
+      n: limpos.length,
+      min: arredondar(limpos[0]),
+      p25: arredondar(percentilJS(limpos, 0.25)),
+      mediana: arredondar(percentilJS(limpos, 0.50)),
+      p75: arredondar(percentilJS(limpos, 0.75)),
+      max: arredondar(limpos[limpos.length - 1])
+    };
+  }
+
+  function medianaJS(valores) {
+    var limpos = valores.filter(function (v) {
+      return v !== null && v !== undefined;
+    }).sort(function (a, z) { return a - z; });
+    return limpos.length ? arredondar(percentilJS(limpos, 0.50)) : null;
+  }
+
+  function grupoDaSelecao(b, cnpjs) {
+    var membros = cnpjs.map(function (c) { return b.rpps[c]; })
+      .filter(Boolean);
+    var estatisticas = {}, medianas = {};
+    b.indicadores.forEach(function (ind) {
+      var valores = membros.map(function (m) { return m.valores[ind.chave]; });
+      var resumo = resumirJS(valores);
+      if (resumo) estatisticas[ind.chave] = resumo;
+      medianas[ind.chave] = medianaJS(valores);
+    });
+    // Um RPPS sem carteira fica de fora do perfil; um com carteira e sem aquele
+    // segmento conta como zero, que é o valor verdadeiro. Mesma regra do Python.
+    var comCarteira = membros.filter(function (m) {
+      return m.alocacao && Object.keys(m.alocacao).length;
+    });
+    var alocacao = {};
+    b.segmentos.forEach(function (seg) {
+      var valores = comCarteira.map(function (m) {
+        return m.alocacao[seg] === undefined ? 0 : m.alocacao[seg];
+      });
+      var resumo = resumirJS(valores);
+      if (resumo) alocacao[seg] = resumo;
+      else if (valores.length) alocacao[seg] = { mediana: medianaJS(valores) };
+    });
+    return { rpps: membros.length, com_carteira: comCarteira.length,
+             estatisticas: estatisticas, medianas: medianas, alocacao: alocacao };
+  }
+
   function resolverReferencia(b, meu) {
     if (estado.referencia === "regiao") {
       var g = b.grupos.regiao[meu.regiao];
@@ -903,9 +1053,10 @@
                    alocacao: p.alocacao, rpps: p.rpps }
                : { rotulo: "Porte sem grupo", estatisticas: null, rpps: 0 };
     }
-    if (estado.referencia === "rpps" && estado.referenciaCnpj) {
-      var outro = b.rpps[estado.referenciaCnpj];
-      if (outro) {
+    if (estado.referencia === "selecao" && estado.selecao.length) {
+      var escolhidos = estado.selecao.filter(function (c) { return b.rpps[c]; });
+      if (escolhidos.length === 1) {
+        var outro = b.rpps[escolhidos[0]];
         var disponiveis = b.indicadores.filter(function (i) {
           var v = outro.valores[i.chave];
           return v !== null && v !== undefined;
@@ -915,6 +1066,13 @@
                  alocacao: b.grupos.brasil.alocacao,
                  rpps: 1, ente: outro, disponiveis: disponiveis,
                  total: b.indicadores.length };
+      }
+      if (escolhidos.length > 1) {
+        var g = grupoDaSelecao(b, escolhidos);
+        return { rotulo: "Mediana · " + escolhidos.length + " selecionados",
+                 valores: g.medianas, estatisticas: g.estatisticas,
+                 alocacao: g.alocacao, rpps: g.rpps,
+                 poucos: escolhidos.length < 3 };
       }
     }
     return { rotulo: "Mediana · todos os RPPS",
@@ -933,7 +1091,10 @@
       { chave: "porte", rotulo: b.rotulos_porte[meu.porte] || "Porte",
         nota: (b.grupos.porte[meu.porte] || {}).rpps
           ? b.grupos.porte[meu.porte].rpps + " RPPS" : "sem grupo" },
-      { chave: "rpps", rotulo: "Outro RPPS", nota: "escolher na lista" }
+      { chave: "selecao", rotulo: "Seleção",
+        nota: estado.selecao.length
+          ? estado.selecao.length + (estado.selecao.length > 1 ? " escolhidos" : " escolhido")
+          : "escolher RPPS" }
     ];
 
     var botoes = opcoes.map(function (o) {
@@ -946,7 +1107,9 @@
       ]);
       b2.addEventListener("click", function () {
         estado.referencia = o.chave;
-        if (o.chave !== "rpps") estado.referenciaCnpj = null;
+        if (o.chave !== "selecao") {
+          estado.selecao = []; estado.selecaoUf = ""; estado.selecaoAberta = false;
+        }
         render();
       });
       return b2;
@@ -957,27 +1120,150 @@
       h("div", { class: "opcoes" }, botoes)
     ];
 
-    if (estado.referencia === "rpps") {
-      var lista = h("select", { class: "escolha-rpps", id: "escolha-rpps" },
-        [h("option", { value: "", texto: "Escolha um RPPS…" })].concat(
-          Object.keys(b.rpps)
-            .filter(function (c) { return c !== estado.cnpj; })
-            .map(function (c) { return { cnpj: c, ente: b.rpps[c].ente,
-                                         uf: b.rpps[c].uf }; })
-            .sort(function (a, z) { return (a.ente || "").localeCompare(z.ente || ""); })
-            .map(function (o) {
-              var op = h("option", { value: o.cnpj,
-                texto: o.ente + " · " + (o.uf || "") });
-              if (o.cnpj === estado.referenciaCnpj) op.setAttribute("selected", "selected");
-              return op;
-            })));
-      lista.addEventListener("change", function () {
-        estado.referenciaCnpj = lista.value || null;
-        render();
-      });
-      filhos.push(lista);
-    }
+    if (estado.referencia === "selecao") filhos.push(escolhaDeRpps(b));
     return h("div", { class: "referencia" }, filhos);
+  }
+
+  /* Um combobox com 5.596 opções é uma lista para rolar, não para escolher — e
+   * não deixa comparar com mais de um. Aqui a busca é a mesma do topo (sem
+   * exigir acento), a UF restringe, e o que foi escolhido vira ficha removível.
+   * Com a UF marcada dá para levar o estado inteiro de uma vez, que é a
+   * comparação que motivou isto: o meu RPPS contra os vizinhos. */
+  function escolhaDeRpps(b) {
+    var elegiveis = Object.keys(b.rpps).filter(function (c) {
+      return c !== estado.cnpj;
+    });
+    var porCnpj = {};
+    elegiveis.forEach(function (c) { porCnpj[c] = b.rpps[c]; });
+
+    var campo = h("input", { type: "search", class: "busca-ref",
+      autocomplete: "off", placeholder: "Buscar RPPS para comparar…" });
+    var seletor = h("select", { class: "uf-filtro" },
+      [h("option", { value: "", texto: "UF" })].concat(
+        ufsConhecidas().map(function (uf) {
+          var op = h("option", { value: uf, texto: uf });
+          if (uf === estado.selecaoUf) op.setAttribute("selected", "selected");
+          return op;
+        })));
+    var achados = h("div", { class: "achados-ref" });
+
+    function daUf(uf) {
+      return elegiveis.filter(function (c) { return porCnpj[c].uf === uf; });
+    }
+
+    function acrescentar(cnpjs) {
+      cnpjs.forEach(function (c) {
+        if (estado.selecao.indexOf(c) < 0) estado.selecao.push(c);
+      });
+      render();
+    }
+
+    function listar() {
+      var uf = seletor.value || null;
+      var alvo = semAcento(campo.value).trim();
+      achados.textContent = "";
+      if (!alvo && !uf) return;
+      // Já escolhidos saem da lista: oferecê-los de novo é ruído, e contá-los
+      // no "e mais N" faria o número prometer resultados que não existem.
+      var lista = elegiveis.filter(function (c) {
+        if (estado.selecao.indexOf(c) >= 0) return false;
+        if (uf && porCnpj[c].uf !== uf) return false;
+        if (alvo.length < 2) return true;
+        return semAcento(porCnpj[c].ente).indexOf(alvo) >= 0;
+      });
+      if (uf) {
+        var faltam = daUf(uf).filter(function (c) {
+          return estado.selecao.indexOf(c) < 0;
+        });
+        if (faltam.length) {
+          achados.appendChild(h("button", {
+            type: "button", class: "todos-uf",
+            texto: "+ todos os " + faltam.length + " RPPS de " + uf,
+            onclick: function () { acrescentar(faltam); }
+          }));
+        }
+      }
+      lista.slice(0, 40).forEach(function (c) {
+        achados.appendChild(h("button", {
+          type: "button",
+          onclick: function () { acrescentar([c]); }
+        }, [porCnpj[c].ente,
+            h("span", { class: "uf", texto: porCnpj[c].uf || "" })]));
+      });
+      if (lista.length > 40) {
+        achados.appendChild(h("span", { class: "mais",
+          texto: "e mais " + num(lista.length - 40, 0) + " — refine o nome" }));
+      }
+    }
+
+    campo.addEventListener("input", listar);
+    seletor.addEventListener("change", function () {
+      estado.selecaoUf = seletor.value;
+      listar();
+    });
+
+    function ficha(c) {
+      var r = porCnpj[c];
+      return h("span", { class: "ficha-ref" }, [
+        document.createTextNode((r ? r.ente : c) + (r && r.uf ? " · " + r.uf : "")),
+        h("button", {
+          type: "button", "aria-label": "Remover " + (r ? r.ente : c), texto: "×",
+          onclick: function () {
+            estado.selecao = estado.selecao.filter(function (x) { return x !== c; });
+            render();
+          }
+        })
+      ]);
+    }
+
+    /* Somar um estado inteiro produz oitenta fichas, e oitenta fichas empurram
+     * a comparação — que é o objeto da tela — para fora da primeira dobra. A
+     * lista fica dobrada por padrão; quem quiser conferir item a item abre. */
+    var LIMITE_DOBRA = 8;
+    var caixaFichas = h("div", { class: "fichas-ref" });
+
+    function desenharFichas() {
+      caixaFichas.textContent = "";
+      if (!estado.selecao.length) return;
+      var dobrar = estado.selecao.length > LIMITE_DOBRA && !estado.selecaoAberta;
+      var visiveis = dobrar ? estado.selecao.slice(0, LIMITE_DOBRA) : estado.selecao;
+      visiveis.forEach(function (c) { caixaFichas.appendChild(ficha(c)); });
+      if (estado.selecao.length > LIMITE_DOBRA) {
+        caixaFichas.appendChild(h("button", {
+          type: "button", class: "link limpar",
+          texto: dobrar ? "+ " + (estado.selecao.length - LIMITE_DOBRA) + " outros"
+                        : "mostrar menos",
+          onclick: function () {
+            estado.selecaoAberta = !estado.selecaoAberta;
+            desenharFichas();
+          }
+        }));
+      }
+      caixaFichas.appendChild(h("button", {
+        type: "button", class: "link limpar", texto: "limpar seleção",
+        onclick: function () {
+          estado.selecao = []; estado.selecaoAberta = false; render();
+        }
+      }));
+    }
+    desenharFichas();
+
+    var partes = [h("div", { class: "linha-busca" }, [campo, seletor]), achados];
+    if (estado.selecao.length) {
+      partes.push(h("p", { class: "resumo-selecao", texto:
+        estado.selecao.length + " RPPS na comparação" +
+        (estado.selecaoUf ? " · filtrando " + estado.selecaoUf : "") }));
+      partes.push(caixaFichas);
+    }
+    if (estado.selecao.length === 2) {
+      partes.push(h("p", { class: "nota", texto:
+        "Com dois selecionados a linha de referência é a mediana dos dois, mas " +
+        "não há faixa interquartil: quartis sobre dois pontos são aritmética, " +
+        "não informação. A partir de três a faixa aparece." }));
+    }
+    var caixa = h("div", { class: "escolha-rpps" }, partes);
+    depoisDeMontar(listar);
+    return caixa;
   }
 
   function tabelaComparativo(b, meu, ref) {
@@ -1103,6 +1389,19 @@
               "intervalo entre o primeiro e o terceiro quartil — onde está a " +
               "metade do meio do grupo."
           }),
+          h("p", {
+            texto: "A referência também pode ser um conjunto montado à mão: " +
+              "busque pelo nome, filtre por UF, e some quantos RPPS quiser. " +
+              "Com a UF marcada dá para levar o estado inteiro de uma vez — o " +
+              "seu RPPS contra os vizinhos. Com um só escolhido, a comparação " +
+              "é direta; com vários, a referência passa a ser a mediana deles."
+          }),
+          h("p", { class: "nota",
+            texto: "A mediana de uma seleção é calculada no navegador, porque " +
+              "não há como pré-computar a mediana de um conjunto montado na " +
+              "hora. É a única conta do projeto que existe nos dois lados, e um " +
+              "teste do repositório exige que ela reproduza os grupos " +
+              "pré-calculados até o último centésimo." }),
           h("p", {
             texto: "Grupos com menos de três RPPS não geram estatística: quartis " +
               "sobre dois pontos são aritmética, não informação. E verde e " +
@@ -1249,6 +1548,45 @@
               h("td", { class: "n", texto: num(l.valor, 0) })
             ]);
           })));
+
+        // Procedência por endpoint. A gravação é transacional: um endpoint que
+        // falha na atualização mantém o que já estava lá, o que é melhor que
+        // perder o dado — mas deixa a tela misturando safras. Sem esta tabela a
+        // mistura seria invisível.
+        var exec = (estado.meta && estado.meta.execucoes) || [];
+        if (exec.length) {
+          var recente = exec.reduce(function (a, e) {
+            return e.quando && e.quando > a ? e.quando : a;
+          }, "");
+          var atrasados = 0;
+          var linhasExec = exec.slice().sort(function (a, b) {
+            return (a.endpoint || "").localeCompare(b.endpoint || "");
+          }).map(function (e) {
+            var dias = diasEntre(e.quando, recente);
+            if (dias >= 1) atrasados += 1;
+            return h("tr", {}, [
+              h("td", {}, [h("code", { texto: e.endpoint })]),
+              h("td", { class: "n", texto: num(e.linhas, 0) }),
+              h("td", { texto: data(e.quando) }),
+              h("td", { class: dias >= 1 ? "n ruim" : "n",
+                        texto: dias >= 1 ? "−" + num(dias, 0) + " d" : "em dia" })
+            ]);
+          });
+          nos.push(h("h3", { texto: "Procedência de cada endpoint" }));
+          nos.push(h("p", { class: "nota", texto:
+            atrasados
+              ? "A gravação é transacional: um endpoint que falha na atualização " +
+                "mantém o que já estava no banco, em vez de ficar pela metade. " +
+                "O preço é que a tela pode misturar safras — " + atrasados +
+                (atrasados > 1 ? " endpoints estão" : " endpoint está") +
+                " mais antigo que o resto desta carga."
+              : "Todos os endpoints vieram da mesma carga. Quando um falha, o " +
+                "anterior é preservado e passa a aparecer aqui com a diferença " +
+                "de dias, para que a mistura de safras não fique invisível." }));
+          nos.push(tabela([{ t: "Endpoint" }, { t: "Linhas", n: true },
+                           { t: "Ingerido em" }, { t: "Defasagem", n: true }],
+                          linhasExec, true));
+        }
 
         nos.push(h("p", { class: "nota", texto:
           "Situação apurada em " + data(q.referencia) + "." }));
@@ -1433,24 +1771,31 @@
   function montarBusca() {
     var campo = document.getElementById("busca");
     var caixa = document.getElementById("sugestoes");
+    var seletorUf = document.getElementById("busca-uf");
 
     function fechar() { caixa.hidden = true; caixa.textContent = ""; }
 
-    campo.addEventListener("input", function () {
-      var termo = campo.value.trim().toLowerCase();
-      var somenteDigitos = termo.replace(/\D/g, "");
-      if (termo.length < 2) return fechar();
-
-      var achados = estado.entes.filter(function (e) {
-        return (e.ente || "").toLowerCase().indexOf(termo) >= 0 ||
-          (somenteDigitos.length >= 3 && (e.cnpj || "").indexOf(somenteDigitos) >= 0);
-      }).slice(0, 12);
-
+    /* Com UF escolhida a lista aparece sem digitar nada: o caso de uso é
+     * "quero ver quem tem no meu estado", e exigir que se digite alguma coisa
+     * para isso seria pedir que a pessoa já saiba a resposta. */
+    function sugerir() {
+      var uf = seletorUf.value || null;
+      var r = filtrarEntes(campo.value, uf, 30);
       caixa.textContent = "";
-      if (!achados.length) {
-        caixa.appendChild(h("div", { class: "vazio", texto: "Nenhum RPPS com esse nome no banco local." }));
+
+      if (!campo.value.trim() && !uf) return fechar();
+
+      if (!r.itens.length) {
+        caixa.appendChild(h("div", { class: "vazio", texto:
+          uf ? "Nenhum RPPS com esse nome em " + uf + "."
+             : "Nenhum RPPS com esse nome no banco local." }));
       } else {
-        achados.forEach(function (e) {
+        if (r.total > r.itens.length) {
+          caixa.appendChild(h("div", { class: "cabeca", texto:
+            "mostrando " + r.itens.length + " de " + num(r.total, 0) +
+            " — refine o nome" }));
+        }
+        r.itens.forEach(function (e) {
           var b = h("button", { type: "button" }, [
             e.ente || e.cnpj, h("span", { class: "uf", texto: e.uf || "" })
           ]);
@@ -1463,11 +1808,29 @@
         });
       }
       caixa.hidden = false;
+    }
+
+    campo.addEventListener("input", sugerir);
+    campo.addEventListener("focus", sugerir);
+    seletorUf.addEventListener("change", function () {
+      sugerir();
+      campo.focus();
     });
 
     campo.addEventListener("keydown", function (ev) { if (ev.key === "Escape") fechar(); });
     document.addEventListener("click", function (ev) {
-      if (!caixa.contains(ev.target) && ev.target !== campo) fechar();
+      if (!caixa.contains(ev.target) && ev.target !== campo &&
+          ev.target !== seletorUf) fechar();
+    });
+  }
+
+  /* O índice de entes chega depois do primeiro desenho, então as UF só podem
+   * ser listadas quando ele chega — antes disso o seletor ficaria vazio. */
+  function preencherUfs() {
+    var seletorUf = document.getElementById("busca-uf");
+    if (!seletorUf || seletorUf.options.length > 1) return;
+    ufsConhecidas().forEach(function (uf) {
+      seletorUf.appendChild(h("option", { value: uf, texto: uf }));
     });
   }
 
@@ -1477,14 +1840,42 @@
     try { guardado = localStorage.getItem("cadprev-tema"); } catch (e) { /* sem storage */ }
     if (guardado) document.documentElement.setAttribute("data-tema", guardado);
 
-    btn.addEventListener("click", function () {
+    /* O rótulo anuncia o destino, não o estado atual: um botão escrito "Tema"
+     * não diz o que o clique faz, e um escrito "Escuro" no escuro é ambíguo
+     * entre "você está aqui" e "vá para lá". */
+    function escuroAgora() {
       var atual = document.documentElement.getAttribute("data-tema");
-      var escuroAgora = atual
-        ? atual === "escuro"
-        : window.matchMedia("(prefers-color-scheme: dark)").matches;
-      var novo = escuroAgora ? "claro" : "escuro";
+      return atual ? atual === "escuro"
+                   : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    }
+
+    function rotular() {
+      var vai = escuroAgora() ? "claro" : "escuro";
+      btn.textContent = "";
+      btn.appendChild(h("span", { class: "ico", "aria-hidden": "true",
+                                  texto: vai === "escuro" ? "\u263e" : "\u2600" }));
+      btn.appendChild(document.createTextNode(
+        "Tema " + (vai === "escuro" ? "escuro" : "claro")));
+      btn.setAttribute("aria-label",
+        "Mudar para o tema " + vai + ". Tema atual: " +
+        (escuroAgora() ? "escuro" : "claro") + ".");
+      btn.setAttribute("title", btn.getAttribute("aria-label"));
+    }
+
+    rotular();
+    if (window.matchMedia) {
+      var consulta = window.matchMedia("(prefers-color-scheme: dark)");
+      var aoMudar = function () {
+        if (!document.documentElement.getAttribute("data-tema")) rotular();
+      };
+      if (consulta.addEventListener) consulta.addEventListener("change", aoMudar);
+    }
+
+    btn.addEventListener("click", function () {
+      var novo = escuroAgora() ? "claro" : "escuro";
       document.documentElement.setAttribute("data-tema", novo);
       try { localStorage.setItem("cadprev-tema", novo); } catch (e) { /* sem storage */ }
+      rotular();
     });
   }
 
@@ -1503,6 +1894,8 @@
       estado.meta = r[0];
       estado.entes = r[1] || [];
       estado.chaves = r[2];
+      indiceBusca = null;
+      preencherUfs();
       if (estado.chaves) {
         estado.filtros = filtrosIniciais(estado.chaves);
         montarChaves();

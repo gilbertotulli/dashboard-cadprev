@@ -68,7 +68,7 @@ header.topo{border-bottom:1px solid var(--rule);background:var(--surface)}
 .marca{display:flex;flex-direction:column;gap:1px;margin-right:auto}
 .marca .n{font-family:Newsreader,Georgia,serif;font-size:1.32rem;font-weight:600;line-height:1.1}
 .marca .s{font-size:.74rem;color:var(--muted)}
-.busca{position:relative}
+.busca{position:relative;display:flex;gap:6px;align-items:center}
 .busca input{
   font:inherit;font-size:.86rem;padding:8px 12px;width:min(300px,60vw);
   border:1px solid var(--rule-strong);border-radius:7px;
@@ -87,10 +87,22 @@ header.topo{border-bottom:1px solid var(--rule);background:var(--surface)}
 .sugestoes button:hover,.sugestoes button:focus-visible{background:var(--surface-2)}
 .sugestoes button .uf{color:var(--muted);font-size:.75rem;margin-left:6px}
 .sugestoes .vazio{padding:10px;color:var(--muted);font-size:.82rem}
+.sugestoes .cabeca{
+  padding:7px 10px;color:var(--muted);font-size:.74rem;
+  border-bottom:1px solid var(--rule);margin-bottom:3px;
+}
+.uf-filtro{
+  font:inherit;font-size:.8rem;padding:8px 6px;border-radius:7px;
+  border:1px solid var(--rule-strong);background:var(--paper);color:var(--ink-2);
+  cursor:pointer;flex:none;
+}
+.uf-filtro:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .btn-tema{
   font:inherit;font-size:.8rem;background:none;border:1px solid var(--rule-strong);
   border-radius:7px;padding:7px 11px;color:var(--ink-2);cursor:pointer;
+  display:inline-flex;align-items:center;gap:6px;white-space:nowrap;
 }
+.btn-tema .ico{font-size:.95rem;line-height:1}
 .btn-tema:hover{background:var(--surface-2)}
 
 /* ---------- abas ---------- */
@@ -257,11 +269,6 @@ footer.rodape p+p{margin-top:8px}
 .opcao .n{font-size:.7rem;color:var(--muted)}
 .opcao.on{border-color:var(--accent);background:var(--accent-soft)}
 .opcao.on .t{color:var(--accent-ink);font-weight:500}
-.escolha-rpps{
-  font:inherit;font-size:.85rem;margin-top:12px;width:min(420px,100%);
-  padding:8px 11px;border:1px solid var(--rule-strong);border-radius:7px;
-  background:var(--paper);color:var(--ink);
-}
 .legenda i.losango{transform:rotate(45deg);border-radius:1px}
 table.dados td .nota{font-size:.74rem;color:var(--muted);margin-top:2px;max-width:46ch}
 /* A coluna anterior é numérica e tem padding-right zero; sem folga à esquerda
@@ -340,3 +347,38 @@ table.dados td.n.ruim{color:var(--crit);font-weight:500}
 }
 .chave.inerte{opacity:.5;cursor:not-allowed}
 .chave.inerte .quantos{font-style:italic}
+
+/* ---------- escolha de RPPS para comparar ---------- */
+.escolha-rpps{margin-top:10px}
+.escolha-rpps .linha-busca{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.escolha-rpps .busca-ref{
+  font:inherit;font-size:.85rem;padding:7px 11px;flex:1 1 240px;min-width:0;
+  border:1px solid var(--rule-strong);border-radius:7px;
+  background:var(--paper);color:var(--ink);
+}
+.achados-ref{
+  display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:168px;overflow-y:auto;
+}
+.achados-ref:empty{margin-top:0}
+.achados-ref button{
+  font:inherit;font-size:.8rem;background:var(--surface);color:var(--ink-2);
+  border:1px solid var(--rule);border-radius:6px;padding:5px 9px;cursor:pointer;
+}
+.achados-ref button:hover{border-color:var(--accent);color:var(--accent-ink)}
+.achados-ref button .uf{color:var(--muted);font-size:.72rem;margin-left:5px}
+.achados-ref .todos-uf{border-color:var(--accent);color:var(--accent-ink);font-weight:500}
+.achados-ref .mais{font-size:.76rem;color:var(--muted);align-self:center}
+.fichas-ref{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;align-items:center}
+.ficha-ref{
+  display:inline-flex;align-items:center;gap:6px;font-size:.79rem;
+  background:var(--accent-soft);color:var(--accent-ink);
+  border:1px solid var(--accent);border-radius:999px;padding:3px 5px 3px 11px;
+}
+.ficha-ref button{
+  font:inherit;line-height:1;background:none;border:0;cursor:pointer;
+  color:var(--accent-ink);padding:0 4px;font-size:1rem;border-radius:999px;
+}
+.ficha-ref button:hover{background:rgba(0,0,0,.08)}
+.resumo-selecao{
+  margin:10px 0 0;font-size:.8rem;color:var(--ink-2);font-weight:500;
+}

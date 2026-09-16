@@ -155,6 +155,25 @@ def cmd_status(args) -> int:
     return 0
 
 
+def cmd_competencia(args) -> int:
+    """Descobre na fonte qual competência do DAIR já está fechada.
+
+    Existe para que o agendamento não precise adivinhar por calendário. A saída
+    sai em ``chave=valor``, pronta para alimentar o ``$GITHUB_OUTPUT``.
+    """
+    from cadprev import competencia as comp
+    cliente = Cliente(pausa=args.pausa)
+    achado = comp.mais_recente_fechada(cliente, uf=args.uf)
+    if achado is None:
+        print("nenhuma competência do DAIR tem dados nos últimos {} meses"
+              .format(comp.MESES_PARA_TRAS), file=sys.stderr)
+        return 1
+    ano, mes = achado
+    print("ano={}".format(ano))
+    print("mes={}".format(mes))
+    return 0
+
+
 def cmd_serve(args) -> int:
     import http.server
     import socketserver
@@ -234,6 +253,12 @@ def construir_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("status", help="o que já foi ingerido")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("competencia",
+                       help="pergunta à API qual competência do DAIR já fechou")
+    p.add_argument("--uf")
+    p.add_argument("--pausa", type=float, default=1.0)
+    p.set_defaults(func=cmd_competencia)
 
     p = sub.add_parser("serve", help="serve o painel localmente")
     p.add_argument("--porta", type=int, default=8000)
