@@ -81,6 +81,47 @@ _SEGMENTOS = [
     ("Disponibilidades Financeiras", None, 0.045),
 ]
 
+#: Valor de cota único, para que a aritmética do demo seja conferível a olho:
+#: quantidade x cota tem de bater com o valor total, e é a violação dessa
+#: identidade que revela o lançamento envenenado.
+_COTA = 4.1571579040
+
+#: Piso do patrimônio líquido dos fundos do catálogo. Compartilhar fundos entre
+#: os entes é o que permite ao painel saber o tamanho de cada um: com um
+#: declarante só não há consenso, e sem consenso não há régua.
+#:
+#: O PL declarado varia de declarante para declarante, como na fonte real — lá
+#: o mesmo fundo aparece com valores que diferem em ordens de grandeza. O que
+#: não varia é a relação: nenhum RPPS é dono de mais do que o fundo inteiro.
+_PL_FUNDO = 5.2e8
+
+#: O ente cuja carteira traz a cota com a vírgula seis casas fora do lugar,
+#: reproduzindo Santo Afonso/MT na carga de 15/09/2026.
+_ENTE_ENVENENADO = 3
+
+#: Entes que pararam de entregar o DAIR no segundo mês do exercício.
+_ENTES_DEFASADOS = frozenset({5, 11})
+
+#: Entes cujo CRP venceu há mais de meio ano — irregularidade instalada, e não
+#: renovação em curso. Sem um caso assim o filtro correspondente não teria o
+#: que excluir em nenhum teste.
+_ENTES_CRP_ANTIGO = frozenset({2, 9})
+
+#: Entes que migraram para o RGPS: continuam no CRP, que é do ente federativo,
+#: mas não têm RPPS. São 3.411 no país, e contá-los como RPPS inflava todo
+#: denominador nacional.
+_ENTES_SEM_RPPS = frozenset({7, 13, 19})
+
+_ULTIMO_DIA = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30,
+               7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
+
+
+def _fundo(segmento, n):
+    """Identificação e nome de um fundo do catálogo compartilhado."""
+    codigo = "{:03d}{:011d}".format(n + 1, abs(hash(segmento)) % 10**11)
+    return codigo, "{} — fundo exemplo {}".format(segmento, n + 1)
+
+
 #: Descrições exatamente como a API as devolve — o painel casa por texto.
 _HIPOTESES = [
     ("Projeção da Taxa de Juros Real para o Exercício", "5.38"),
@@ -119,7 +160,8 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
     tabelas: Dict[str, List[Dict[str, Any]]] = {
         nome: [] for nome in (
             "RPPS_REGIME_PREVIDENCIARIO", "RPPS_CRP", "RPPS_ALIQUOTA", "DIPR",
-            "DAIR_CARTEIRA", "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
+            "DAIR_CARTEIRA", "DAIR_IDENTIFICACAO",
+            "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
             "DRAA_FLUXO_ATUARIAL", "DRAA_VALORES_COMPROMISSOS",
             "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO")
     }
@@ -130,20 +172,35 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         segregado = rnd.random() < 0.38
         patrimonio = porte * 1e9
 
+        # Quem migrou para o RGPS tem duas vigências: o RPPS antigo e o regime
+        # atual. É a mais recente que vale.
+        sem_rpps = indice in _ENTES_SEM_RPPS
         tabelas["RPPS_REGIME_PREVIDENCIARIO"].append(dict(
             ident, tp_regime="RPPS", dt_inicio="1991-05-21 03:00:00.000",
             dt_fim=None, no_tipo_legislacao="LEI", nr_legislacao=str(1000 + indice)))
+        if sem_rpps:
+            tabelas["RPPS_REGIME_PREVIDENCIARIO"].append(dict(
+                ident, tp_regime="RGPS", dt_inicio="2015-03-10 03:00:00.000",
+                dt_fim=None, no_tipo_legislacao="LEI",
+                nr_legislacao=str(2000 + indice)))
 
         # CRP: o endpoint devolve o histórico. Três emissões por ente, e a
         # situação da mais recente é o que o painel deve ler.
+        crp_antigo = indice in _ENTES_CRP_ANTIGO
         for anos_atras in (2, 1, 0):
-            vencido = anos_atras == 0 and rnd.random() > 0.82
-            judicial = anos_atras == 0 and rnd.random() > 0.94
+            vencido = anos_atras == 0 and (crp_antigo or rnd.random() > 0.82)
+            judicial = anos_atras == 0 and not crp_antigo and rnd.random() > 0.94
             emissao = "{}-{:02d}-{:02d}".format(
                 ANO - anos_atras, rnd.randint(1, 12), rnd.randint(1, 28))
-            validade = "{}-{:02d}-{:02d}".format(
-                ANO - anos_atras + (0 if vencido else 1),
-                rnd.randint(1, 12), rnd.randint(1, 28))
+            if anos_atras == 0 and crp_antigo:
+                # Emitido no começo do exercício e vencido logo depois: em
+                # setembro já são meses de irregularidade, não atraso de papel.
+                emissao = "{}-01-15".format(ANO)
+                validade = "{}-02-10".format(ANO)
+            else:
+                validade = "{}-{:02d}-{:02d}".format(
+                    ANO - anos_atras + (0 if vencido else 1),
+                    rnd.randint(1, 12), rnd.randint(1, 28))
             tabelas["RPPS_CRP"].append(dict(
                 ident, nr_crp="{:06d}-{:06d}".format(indice + 1, rnd.randint(1, 999999)),
                 dt_emissao=emissao, dt_validade=validade,
@@ -185,28 +242,58 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                     no_orgao="Prefeitura", id_rubrica=id_rub, no_rubrica=sigla,
                     te_rubrica=sigla, vl_rubrica="{:.2f}".format(base * fator)))
 
+        # Os fundos são compartilhados entre os entes, como na realidade: os
+        # mesmos BB e SICREDI aparecem em centenas de carteiras. Sem esse
+        # compartilhamento não há consenso sobre o tamanho de cada fundo, e a
+        # régua de lançamento impossível não teria contra o que comparar.
         for segmento, limite, fatia in _SEGMENTOS:
             valor_segmento = patrimonio * fatia * rnd.uniform(0.85, 1.15)
             ativos = 1 if segmento == "Disponibilidades Financeiras" else rnd.randint(2, 4)
             for n in range(ativos):
                 valor = valor_segmento / ativos
+                fundo_id, fundo_nome = _fundo(segmento, n)
+                # Conta e caixa não têm PL; fundo tem, e é sempre maior que a
+                # posição de um cotista só.
+                fundo_pl = (None if segmento == "Disponibilidades Financeiras"
+                            else max(_PL_FUNDO, valor * rnd.uniform(8, 300)))
+                cotas = valor / _COTA
                 registro = dict(
                     ident, dt_ano=ANO, dt_mes_bimestre=MES_DAIR,
                     no_segmento=segmento, no_tipo_ativo="Tipo exemplo",
-                    pc_cmn=limite, id_ativo="{}/{}".format(indice, n),
-                    no_fundo="{} — fundo exemplo {}".format(segmento, n + 1),
-                    qt_rpps="1.0000000000",
-                    vl_atual_ativo="{:.10f}".format(valor),
+                    pc_cmn=limite, id_ativo=fundo_id, no_fundo=fundo_nome,
+                    qt_rpps="{:.10f}".format(cotas),
+                    vl_atual_ativo="{:.10f}".format(_COTA),
                     vl_total_atual="{:.2f}".format(valor),
                     pc_rpps="{:.2f}".format(valor / patrimonio * 100),
-                    vl_patrimonio=None,
+                    vl_patrimonio="{:.2f}".format(fundo_pl) if fundo_pl else None,
                     pc_patrimonio="{:.2f}".format(rnd.uniform(0.4, 16.0)))
+                # Um lançamento envenenado, reproduzindo o caso de Santo
+                # Afonso/MT: a cota digitada com a vírgula seis casas à direita.
+                if indice == _ENTE_ENVENENADO and segmento == "Renda Variável" and n == 0:
+                    registro["vl_atual_ativo"] = "{:.10f}".format(_COTA * 1e6)
+                    registro["vl_total_atual"] = "{:.2f}".format(valor * 1e6)
+                    registro["pc_patrimonio"] = "1611016.66"
                 if nivel_a:
                     registro["ds_plano"] = (
                         "TAXA DE ADMINISTRAÇÃO" if n == 0 and rnd.random() < 0.12
                         else ("FINANCEIRO" if segregado and rnd.random() < 0.3
                               else "PREVIDENCIARIO"))
                 tabelas["DAIR_CARTEIRA"].append(registro)
+
+        # DAIR_IDENTIFICACAO: o cabeçalho mensal da declaração. É dele que sai a
+        # defasagem — quem parou de entregar não some da base, fica com a última
+        # posição envelhecendo.
+        ultimo_mes = 2 if indice in _ENTES_DEFASADOS else MES_DAIR
+        for mes in range(1, ultimo_mes + 1):
+            tabelas["DAIR_IDENTIFICACAO"].append(dict(
+                ident, dt_ano=ANO, dt_mes=mes,
+                dt_posicao="{}-{:02d}-{:02d} 03:00:00.000".format(
+                    ANO, mes, _ULTIMO_DIA[mes]),
+                dt_envio="{}-{:02d}-15 10:00:00.000".format(
+                    ANO + (1 if mes == 12 else 0), 1 if mes == 12 else mes + 1),
+                te_finalidade="ENCERRAMENTO_MES", te_justificativa=None,
+                te_motivo_retificacao=None, te_descricao_retificacao=None,
+                te_justicativa_retificacao=None))
 
         # DRAA_ESTATISTICA: uma linha por grupo populacional, contagem por sexo.
         for tipo, fator in (("Servidores", 138), ("Aposentados", 47),

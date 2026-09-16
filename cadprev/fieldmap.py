@@ -143,6 +143,19 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
         _c("orgao", "no_orgao", obrigatorio=False),
         _c("envio", "dt_envio", tipo="data", obrigatorio=False),
     ),
+    "DAIR_IDENTIFICACAO": _IDENT + (
+        _c("ano", "dt_ano", tipo="inteiro"),
+        _c("mes", "dt_mes", tipo="inteiro",
+           nota="mensal, ao contrário da carteira, que vem por bimestre"),
+        _c("posicao", "dt_posicao", tipo="data",
+           nota="data a que o demonstrativo se refere; é dela que sai a "
+                "defasagem de quem parou de declarar"),
+        _c("envio", "dt_envio", tipo="data", obrigatorio=False,
+           nota="quando chegou; comparada à posição, dá o atraso de entrega"),
+        _c("finalidade", "te_finalidade", obrigatorio=False),
+        _c("motivo_retificacao", "te_motivo_retificacao", obrigatorio=False),
+    ),
+
     "DAIR_CARTEIRA": _IDENT + (
         _c("ano", "dt_ano", tipo="inteiro"),
         _c("mes", "dt_mes_bimestre", tipo="inteiro"),

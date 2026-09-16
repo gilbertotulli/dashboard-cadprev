@@ -25,7 +25,7 @@ direção inequívoca são marcados; os demais aparecem sem juízo de valor.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import AbstractSet, Any, Dict, List, Mapping, Optional, Sequence
 
 from . import grupos
 
@@ -270,8 +270,33 @@ def montar(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
     #: as mesmas linhas independentemente de quem está selecionado.
     segmentos = sorted({s for d in indicadores.values() for s in d["alocacao"]})
 
+    return {
+        "indicadores": [
+            {"chave": i.chave, "rotulo": i.rotulo, "unidade": i.unidade,
+             "direcao": i.direcao, "nota": i.nota, "fonte": i.fonte}
+            for i in INDICADORES
+        ],
+        "rotulos_porte": ROTULOS_PORTE,
+        "segmentos": segmentos,
+        "grupos": resumir_grupos(indicadores, segmentos),
+        "rpps": indicadores,
+    }
+
+
+def resumir_grupos(indicadores: Mapping[str, Mapping[str, Any]],
+                   segmentos: Sequence[str],
+                   fora: Optional[AbstractSet[str]] = None) -> Dict[str, Any]:
+    """Estatísticas de cada grupo de referência.
+
+    ``fora`` retira RPPS do cálculo das medianas sem tirá-los do índice: as
+    chaves de filtro do painel mudam com quem o leitor compara, não quem ele
+    pode selecionar.
+    """
+    fora = fora or frozenset()
+    elegiveis = {c: d for c, d in indicadores.items() if c not in fora}
+
     def _grupo(filtro) -> Dict[str, Any]:
-        membros = [d for d in indicadores.values() if filtro(d)]
+        membros = [d for d in elegiveis.values() if filtro(d)]
         estatisticas = {}
         for indicador in INDICADORES:
             valores = [m["valores"].get(indicador.chave) for m in membros]
@@ -294,23 +319,13 @@ def montar(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
 
     regioes = {r: _grupo(lambda d, r=r: d["regiao"] == r)
                for r in grupos.ORDEM_REGIOES
-               if any(d["regiao"] == r for d in indicadores.values())}
+               if any(d["regiao"] == r for d in elegiveis.values())}
     portes = {p: _grupo(lambda d, p=p: d["porte"] == p)
               for _, p, _ in FAIXAS_PORTE
-              if any(d["porte"] == p for d in indicadores.values())}
+              if any(d["porte"] == p for d in elegiveis.values())}
 
     return {
-        "indicadores": [
-            {"chave": i.chave, "rotulo": i.rotulo, "unidade": i.unidade,
-             "direcao": i.direcao, "nota": i.nota, "fonte": i.fonte}
-            for i in INDICADORES
-        ],
-        "rotulos_porte": ROTULOS_PORTE,
-        "segmentos": segmentos,
-        "grupos": {
-            "brasil": _grupo(lambda d: True),
-            "regiao": regioes,
-            "porte": portes,
-        },
-        "rpps": indicadores,
+        "brasil": _grupo(lambda d: True),
+        "regiao": regioes,
+        "porte": portes,
     }

@@ -11,7 +11,8 @@
 
   var D = "data/";
   var estado = { meta: null, entes: [], cnpj: null, aba: "panorama", cache: {},
-                 referencia: "brasil", referenciaCnpj: null };
+                 referencia: "brasil", referenciaCnpj: null,
+                 filtros: null, chaves: null };
   var conteudo = document.getElementById("conteudo");
 
   // ------------------------------------------------------------ utilidades
@@ -33,6 +34,13 @@
 
   var num = Charts.num, reais = Charts.reais;
 
+  /* Sem abreviar. Nos achados de qualidade o algarismo é a prova: "R$ 36,6 mi"
+   * esconde justamente que a cota foi digitada como 36.640.481,00. */
+  function reaisExatos(v) {
+    if (v === null || v === undefined || isNaN(v)) return "—";
+    return (v < 0 ? "\u2212" : "") + "R$ " + num(Math.abs(v), 2);
+  }
+
   function pct(v, casas) { return v === null || v === undefined ? "—" : num(v, casas === undefined ? 1 : casas) + "%"; }
 
   function data(iso) {
@@ -49,6 +57,32 @@
 
   var MESES = ["jan", "fev", "mar", "abr", "mai", "jun",
     "jul", "ago", "set", "out", "nov", "dez"];
+
+  /* Os agregados nacionais vêm pré-calculados numa variante por combinação de
+   * chaves. Refazer as somas aqui duplicaria em JavaScript a aritmética que o
+   * Python já faz sob teste — e é assim que duas telas passam a discordar. */
+  function nacional(caminho) {
+    return buscar(caminho).then(function (j) {
+      var v = j.variantes || {};
+      return v[estado.filtros] || v[(estado.chaves && estado.chaves.padrao)] ||
+        v[Object.keys(v)[0]] || {};
+    });
+  }
+
+  /* O índice por RPPS é único; só as estatísticas de grupo mudam com as chaves,
+   * porque filtrar quem entra na mediana é diferente de filtrar quem pode ser
+   * selecionado. A cópia rasa evita mexer no que está em cache. */
+  function comparativos() {
+    return buscar("benchmark.json").then(function (b) {
+      var v = (b.grupos && b.grupos.variantes) || {};
+      var escolhido = v[estado.filtros] ||
+        v[(estado.chaves && estado.chaves.padrao)] || v[Object.keys(v)[0]];
+      var copia = {};
+      Object.keys(b).forEach(function (k) { copia[k] = b[k]; });
+      copia.grupos = escolhido || b.grupos;
+      return copia;
+    });
+  }
 
   function buscar(caminho) {
     if (estado.cache[caminho]) return Promise.resolve(estado.cache[caminho]);
@@ -123,7 +157,7 @@
   // ------------------------------------------------------------- aba 1
 
   function abaPanorama() {
-    return buscar("panorama.json").then(function (p) {
+    return nacional("panorama.json").then(function (p) {
       if (!p.disponivel) {
         return [vazio("Panorama indisponível",
           "Falta ingerir <code>RPPS_CRP</code>. Rode " +
@@ -206,7 +240,7 @@
   // ------------------------------------------------------------- aba 4 nacional
 
   function abaCarteiraNacional() {
-    return buscar("carteira-nacional.json").then(function (c) {
+    return nacional("carteira-nacional.json").then(function (c) {
       if (!c.disponivel) {
         return [vazio("Carteira indisponível",
           "Falta ingerir <code>DAIR_CARTEIRA</code>. Rode " +
@@ -334,7 +368,8 @@
 
     return h("div", { class: "ficha-topo" }, [
       h("div", {}, [
-        h("div", { class: "nm", texto: e.ente || "—" }),
+        h("div", { class: "nm" },
+          [e.ente || "—"].concat(marcasDoEnte(e.cnpj))),
         h("div", {
           class: "id", texto: "CNPJ " + cnpjFormatado(e.cnpj) + " · " + (e.uf || "—") +
             " · " + rotuloEsfera(e.esfera) + " · " + (e.regiao || "—")
@@ -342,6 +377,33 @@
       ]),
       selo
     ]);
+  }
+
+  /* Rótulos curtos para as marcas de qualidade deste ente. Ficam ao lado do
+   * nome, e não num rodapé de página, porque quem abre uma ficha precisa saber
+   * antes de ler os números — não depois. */
+  var ROTULO_MARCA = {
+    posicao_impossivel: { texto: "lançamento impossível", grave: true },
+    dair_defasado: { texto: "DAIR defasado", grave: false },
+    crp_nao_valido: { texto: "CRP não-válido há meses", grave: false }
+  };
+
+  function marcasDoEnte(cnpj) {
+    var registro = null;
+    for (var i = 0; i < estado.entes.length; i++) {
+      if (estado.entes[i].cnpj === cnpj) { registro = estado.entes[i]; break; }
+    }
+    if (!registro || !registro.marcas || !registro.marcas.length) return [];
+    return registro.marcas.map(function (m) {
+      var r = ROTULO_MARCA[m];
+      if (!r) return null;
+      var no = h("a", {
+        class: "marca-ente" + (r.grave ? " grave" : ""),
+        href: "#/qualidade", texto: r.texto,
+        title: "O que isso significa está na aba Qualidade."
+      });
+      return no;
+    }).filter(Boolean);
   }
 
   function rotuloEsfera(chave) {
@@ -514,6 +576,15 @@
             onclick: function () { irParaAba("carteira", null); }
           })
         ]),
+        c.excluidas ? h("div", { class: "aviso-linha" }, [
+          h("span", { class: "ico", texto: "⚠" }),
+          h("span", { html:
+            "Este patrimônio não inclui " + num(c.excluidas, 0) +
+            (c.excluidas > 1 ? " lançamentos que a própria base contradiz"
+                             : " lançamento que a própria base contradiz") +
+            ", no valor declarado de " + reaisExatos(c.valor_excluido) + ". " +
+            "<a href=\"#/qualidade\">Ver a evidência</a>." })
+        ]) : null,
         h("div", { class: "kpis" }, [
           kpi("Patrimônio da carteira", reais(c.total), c.ativos + " ativos declarados"),
           kpi("Segmentos fora do limite", num(c.fora_do_limite, 0),
@@ -673,7 +744,7 @@
 
   function abaComparativo() {
     if (!estado.cnpj) return Promise.resolve([semEnte("Comparativo")]);
-    return Promise.all([carregarEnte(), buscar("benchmark.json")])
+    return Promise.all([carregarEnte(), comparativos()])
       .then(function (r) {
         var e = r[0], b = r[1];
         var meu = b.rpps[estado.cnpj];
@@ -969,6 +1040,56 @@
             "Quando um recorte não pode ser derivado da API, a tela diz isso em vez de estimar.",
             "Os números são pré-agregados na ingestão; a API não é consultada a cada clique."
           ].map(function (t) { return h("li", { texto: t }); }))),
+        cartao("As chaves do topo e o que elas recortam", null, null, [
+          h("p", {
+            texto: "As estatísticas nacionais dependem de quem entra na conta, " +
+              "e essa escolha é sua. As chaves no topo das telas nacionais " +
+              "recortam o universo; a URL carrega o recorte, então um link " +
+              "compartilhado mostra ao destinatário exatamente o que você viu."
+          }),
+          h("p", {
+            texto: "A primeira chave já vem ligada, e é a única assim. O CRP é " +
+              "emitido ao ente federativo, não ao fundo, então a base cobre os " +
+              "5.596 entes do país — e só cerca de 2.100 mantêm RPPS. Contar " +
+              "todos como RPPS não é um recorte possível: é um erro de " +
+              "denominador, e por isso o padrão o corrige."
+          }),
+          h("p", {
+            texto: "As outras três desligadas medem a atualidade do dado, não a " +
+              "sua correção. Um RPPS que entregou o último DAIR há cinco meses " +
+              "não errou nada: apenas descreve uma situação mais antiga. Se " +
+              "isso desqualifica o número depende da pergunta que você está " +
+              "fazendo, e quem decide é quem pergunta."
+          })
+        ]),
+        cartao("Erros de cadastro e o que o painel faz com eles", null, null, [
+          h("p", {
+            texto: "A fonte tem erros de digitação, e um só deles chegou a " +
+              "responder por 88% do patrimônio nacional: uma cota lançada a R$ " +
+              "36.640.481,00 quando vale R$ 36,64. Nenhum corte estatístico " +
+              "separa isso de um RPPS grande — o maior do país é legitimamente " +
+              "milhares de vezes maior que o menor."
+          }),
+          h("p", {
+            texto: "A régua, então, não é estatística: é aritmética. Cada linha " +
+              "da carteira traz a posição do RPPS e o patrimônio do fundo em que " +
+              "ela está aplicada, e o mesmo fundo aparece na carteira de " +
+              "centenas de RPPS. Quando uma posição excede em mais de dez vezes " +
+              "a maior declaração já feita para aquele fundo, ela é impossível, " +
+              "e sai de todas as somas — inclusive da ficha do próprio ente."
+          }),
+          h("p", {
+            texto: "O valor não é corrigido. Dividir por um milhão daria o " +
+              "número certo e seria inventá-lo: o painel reapresenta o que a " +
+              "fonte diz, e quando não pode reapresentar, omite e explica. Cada " +
+              "exclusão aparece nomeada na aba Qualidade, com a evidência ao " +
+              "lado, para que quem pode corrigir na fonte corrija."
+          }),
+          h("p", { class: "nota",
+            texto: "A margem de dez vezes é grosseira de propósito. Entre uma " +
+              "vez e mil vezes ela devolve exatamente as mesmas linhas, o que " +
+              "mostra que o resultado não vem do parâmetro escolhido." })
+        ]),
         cartao("Como o comparativo funciona", null, null, [
           h("p", {
             texto: "Os indicadores são normalizados por tamanho — percentuais e " +
@@ -1062,11 +1183,177 @@
 
   // ------------------------------------------------------------- roteamento
 
+  // -------------------------------------------------- aba: qualidade
+
+  function abaQualidade() {
+    return Promise.all([buscar("qualidade.json"), buscar("filtros.json")])
+      .then(function (r) {
+        var q = r[0], f = r[1];
+        var nos = [
+          h("h2", { texto: "Qualidade do cadastro" }),
+          h("p", { class: "intro", html:
+            "O que está nesta página não é opinião sobre gestão: é o que a " +
+            "própria base do CADPREV contradiz. Está aqui para que quem pode " +
+            "corrigir na fonte encontre o caso com a evidência ao lado — e " +
+            "para que ninguém leia um número sem saber o que ele carrega." })
+        ];
+
+        nos.push(h("h3", { texto: "Lançamentos impossíveis" }));
+        nos.push(h("p", { class: "nota", html:
+          "Uma posição não pode ser maior que o fundo em que está aplicada. " +
+          "Quando a linha excede em mais de dez vezes a maior declaração já " +
+          "feita para aquele fundo, ela sai de <b>todas</b> as somas do " +
+          "painel — inclusive com as chaves desligadas. O valor não é " +
+          "corrigido: dividir por um milhão daria o número certo e seria " +
+          "inventá-lo." }));
+
+        if (!q.achados.length) {
+          nos.push(vazio("Nenhum lançamento impossível",
+            "Nesta carga, nenhuma posição excede o fundo em que está aplicada."));
+        }
+        q.achados.forEach(function (a) {
+          nos.push(h("div", { class: "achado" }, [
+            h("h4", {}, [
+              document.createTextNode((a.ente || a.cnpj) + " · " + (a.uf || "—")),
+              h("span", { class: "marca-ente grave", texto: "excluído da soma" })
+            ]),
+            h("p", { class: "onde", texto: a.fundo || "fundo não identificado" }),
+            h("dl", {}, [
+              h("dt", { texto: "Posição declarada" }),
+              h("dd", { class: "forte", texto: reaisExatos(a.posicao) }),
+              h("dt", { texto: "Maior patrimônio já declarado para o fundo" }),
+              h("dd", { texto: reaisExatos(a.maior_pl_declarado) }),
+              h("dt", { texto: "Quantas vezes o fundo inteiro" }),
+              h("dd", { class: "forte", texto: num(a.vezes, 1) + "×" }),
+              h("dt", { texto: "Valor da cota, como declarado" }),
+              h("dd", { class: "forte", texto: reaisExatos(a.valor_unitario) }),
+              h("dt", { texto: "Quantidade de cotas" }),
+              h("dd", { texto: num(a.quantidade_cotas, 4) })
+            ])
+          ]));
+        });
+
+        nos.push(h("h3", { texto: "Atualidade do dado" }));
+        nos.push(h("p", { class: "nota", html:
+          "Estes não são erros: são juízos sobre o quanto o dado ainda " +
+          "descreve a situação de hoje. Por isso viram chave no topo da " +
+          "página, ligada por quem lê, e não exclusão automática." }));
+
+        var linhas = f.filtros.map(function (x) {
+          return { rotulo: x.situacao || x.rotulo, valor: f.atingidos[x.chave] };
+        });
+        nos.push(tabela([{ t: "Situação" }, { t: "Entes", n: true }],
+          linhas.map(function (l) {
+            return h("tr", {}, [
+              h("td", { texto: l.rotulo }),
+              h("td", { class: "n", texto: num(l.valor, 0) })
+            ]);
+          })));
+
+        nos.push(h("p", { class: "nota", texto:
+          "Situação apurada em " + data(q.referencia) + "." }));
+        return nos;
+      });
+  }
+
   var ABAS = {
     panorama: abaPanorama, ficha: abaFicha, caixa: abaCaixa,
     carteira: abaCarteiraEnte, atuaria: abaAtuaria,
-    comparativo: abaComparativo, ajuda: abaAjuda
+    comparativo: abaComparativo, qualidade: abaQualidade,
+    ajuda: abaAjuda
   };
+
+  // ------------------------------------------------- chaves do universo
+
+  /* As chaves só valem para as telas que somam o país. Na ficha de um RPPS não
+   * há universo a recortar: deixá-las visíveis e inertes convidaria a clicar e
+   * a não entender por que nada mudou. */
+  function abaEhNacional() {
+    if (estado.aba === "panorama") return true;
+    if (estado.aba === "carteira" && !estado.cnpj) return true;
+    return estado.aba === "comparativo" && !!estado.cnpj;
+  }
+
+  function montarChaves() {
+    var caixa = document.getElementById("chaves");
+    if (!caixa || !estado.chaves) return;
+    caixa.textContent = "";
+    estado.chaves.filtros.forEach(function (f, i) {
+      var atingidos = estado.chaves.atingidos[f.chave];
+      var entrada = h("input", { type: "checkbox" });
+      entrada.checked = estado.filtros.charAt(i) === "1";
+      entrada.disabled = f.disponivel === false;
+      entrada.addEventListener("change", function () {
+        var bits = estado.filtros.split("");
+        bits[i] = entrada.checked ? "1" : "0";
+        estado.filtros = bits.join("");
+        guardarFiltros();
+        atualizarEfeito();
+        render();
+      });
+      /* Sem a fonte no banco, "−0" afirmaria que ninguém está atrasado quando o
+       * que houve foi não ter como saber. A chave fica inerte e diz o porquê. */
+      var sem = f.disponivel === false;
+      caixa.appendChild(h("label", {
+        class: "chave" + (sem ? " inerte" : ""),
+        title: sem ? "Depende de " + f.fonte + ", que não está no banco local."
+                   : f.nota
+      }, [
+        entrada,
+        document.createTextNode(f.rotulo),
+        h("span", { class: "quantos",
+                    texto: sem ? "sem dado" : "−" + num(atingidos || 0, 0) })
+      ]));
+    });
+  }
+
+  function atualizarEfeito() {
+    var alvo = document.getElementById("efeito-filtros");
+    if (!alvo || !estado.chaves) return;
+    var ligadas = estado.chaves.filtros.filter(function (f, i) {
+      return estado.filtros.charAt(i) === "1";
+    });
+    var texto = ligadas.length
+      ? "Fora das estatísticas: " + ligadas.map(function (f) {
+          return f.situacao || f.rotulo;
+        }).join("; ") + "."
+      : "Nenhum recorte: todos os entes da base entram nas estatísticas.";
+    alvo.textContent = "";
+    alvo.appendChild(h("span", { html:
+      texto + " Os lançamentos que a própria base contradiz saem sempre — " +
+      "<a href=\"#/qualidade\">ver quais</a>." }));
+  }
+
+  function atualizarBarraFiltros() {
+    var barra = document.getElementById("filtros");
+    if (barra) barra.hidden = !(estado.chaves && abaEhNacional());
+  }
+
+  var GUARDA = "cadprev:filtros";
+
+  function guardarFiltros() {
+    try { localStorage.setItem(GUARDA, estado.filtros); } catch (e) { /* modo privado */ }
+    var base = (location.hash || "").split("?")[0] || "#/panorama";
+    var alvo = base + (estado.filtros === estado.chaves.padrao
+      ? "" : "?f=" + estado.filtros);
+    if (alvo !== location.hash) {
+      history.replaceState(null, "", alvo);
+    }
+  }
+
+  function filtrosIniciais(chaves) {
+    var daUrl = (location.hash || "").split("?")[1];
+    var m = daUrl && daUrl.match(/f=([01]+)/);
+    var guardado = null;
+    try { guardado = localStorage.getItem(GUARDA); } catch (e) { /* modo privado */ }
+    var candidato = (m && m[1]) || guardado || chaves.padrao;
+    if (candidato.length !== chaves.padrao.length || !/^[01]+$/.test(candidato)) {
+      candidato = chaves.padrao;
+    }
+    return candidato.split("").map(function (bit, i) {
+      return chaves.filtros[i] && chaves.filtros[i].disponivel === false ? "0" : bit;
+    }).join("");
+  }
 
   var pendentes = [];
   function depoisDeMontar(fn) { pendentes.push(fn); return null; }
@@ -1091,6 +1378,7 @@
         "e recarregue a página."));
     });
 
+    atualizarBarraFiltros();
     document.querySelectorAll("nav.abas a").forEach(function (a) {
       if (a.dataset.aba === estado.aba) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
@@ -1099,7 +1387,8 @@
   }
 
   function lerRota() {
-    var partes = (location.hash || "#/panorama").replace(/^#\/?/, "").split("/");
+    var bruto = (location.hash || "#/panorama").split("?")[0];
+    var partes = bruto.replace(/^#\/?/, "").split("/");
     if (partes[0] === "ente" && partes[1]) {
       estado.cnpj = partes[1];
       estado.aba = partes[2] || "ficha";
@@ -1110,15 +1399,24 @@
     if (!ABAS[estado.aba]) estado.aba = "panorama";
   }
 
+  /* As chaves viajam na URL para que um link compartilhado mostre ao
+   * destinatário exatamente o recorte de quem mandou. */
+  function comChaves(hash) {
+    return estado.chaves && estado.filtros !== estado.chaves.padrao
+      ? hash + "?f=" + estado.filtros : hash;
+  }
+
   function irParaEnte(cnpj) {
     var aba = ["ficha", "caixa", "carteira", "atuaria", "comparativo"].indexOf(estado.aba) >= 0
       ? estado.aba : "ficha";
-    location.hash = "#/ente/" + cnpj + "/" + aba;
+    location.hash = comChaves("#/ente/" + cnpj + "/" + aba);
   }
 
   function irParaAba(aba, cnpj) {
-    location.hash = cnpj === null && ["ficha", "caixa", "carteira", "atuaria", "comparativo"].indexOf(aba) >= 0
-      ? "#/" + aba + "/todos" : (estado.cnpj ? "#/ente/" + estado.cnpj + "/" + aba : "#/" + aba);
+    location.hash = comChaves(
+      cnpj === null && ["ficha", "caixa", "carteira", "atuaria", "comparativo"].indexOf(aba) >= 0
+        ? "#/" + aba + "/todos"
+        : (estado.cnpj ? "#/ente/" + estado.cnpj + "/" + aba : "#/" + aba));
   }
 
   document.querySelectorAll("nav.abas a").forEach(function (a) {
@@ -1199,18 +1497,28 @@
 
     Promise.all([
       buscar("meta.json").catch(function () { return null; }),
-      buscar("entes.json").catch(function () { return []; })
+      buscar("entes.json").catch(function () { return []; }),
+      buscar("filtros.json").catch(function () { return null; })
     ]).then(function (r) {
       estado.meta = r[0];
       estado.entes = r[1] || [];
+      estado.chaves = r[2];
+      if (estado.chaves) {
+        estado.filtros = filtrosIniciais(estado.chaves);
+        montarChaves();
+        atualizarEfeito();
+      }
 
       if (estado.meta && estado.meta.origem === "demonstracao") {
         document.getElementById("banner").hidden = false;
       }
       var origem = document.getElementById("rodape-origem");
       if (estado.meta) {
+        var comRpps = estado.meta.com_rpps;
         origem.textContent = "Dados ingeridos em " + data(estado.meta.gerado_em) +
-          " · " + num(estado.meta.entes, 0) + " RPPS no banco local · origem: " +
+          " · " + num(estado.meta.entes, 0) + " entes federativos na base" +
+          (comRpps ? ", " + num(comRpps, 0) + " com RPPS vigente" : "") +
+          " · origem: " +
           (estado.meta.origem === "demonstracao" ? "conjunto de demonstração" : "API do CADPREV") + ".";
       } else {
         origem.textContent = "Nenhum conjunto de dados construído ainda.";

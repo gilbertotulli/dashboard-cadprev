@@ -23,9 +23,9 @@ import os
 import unicodedata
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional
+from typing import AbstractSet, Any, Dict, List, Mapping, Optional
 
-from . import benchmark, codigos, fundos, grupos
+from . import benchmark, codigos, fundos, grupos, qualidade
 from .store import Store
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -58,12 +58,25 @@ def _pct(parte: float, total: float) -> float:
 # ---------------------------------------------------------------------------
 
 def montar_entes(store: Store) -> Dict[str, Dict[str, Any]]:
-    """Índice de RPPS, com os grupos já resolvidos.
+    """Índice de entes federativos, com os grupos e o regime já resolvidos.
 
     A união é feita sobre todas as tabelas ingeridas porque nenhuma delas é
-    garantidamente completa: um RPPS pode aparecer no CRP e não no DAIR, ou o
+    garantidamente completa: um ente pode aparecer no CRP e não no DAIR, ou o
     contrário, e sumir do índice por isso seria perder o ente.
+
+    Ente federativo não é sinônimo de RPPS, e tratá-los como sinônimo foi um
+    erro caro deste projeto. O ``RPPS_CRP`` cobre o país inteiro — 5.596 entes,
+    que é praticamente 5.570 municípios mais 26 estados mais o Distrito Federal
+    —, porque o certificado é do ente, não do fundo. Só 2.132 deles mantêm RPPS
+    vigente; 3.411 migraram para o RGPS. Contar os 5.596 como RPPS inflava todo
+    denominador nacional em quase três vezes.
+
+    Quem decide é o ``RPPS_REGIME_PREVIDENCIARIO``, pela vigência mais recente.
+    Onde ele não alcança, declarar carteira de investimentos é prova suficiente
+    de que há RPPS: quem não tem fundo não tem o que aplicar.
     """
+    regimes = _regime_vigente(store)
+    com_carteira = _entes_com_carteira(store)
     entes: Dict[str, Dict[str, Any]] = {}
     for tabela in store.tabelas():
         if tabela == "execucao":
@@ -79,15 +92,152 @@ def montar_entes(store: Store) -> Dict[str, Dict[str, Any]]:
                 continue
             registro = {"cnpj": cnpj, "ente": linha["ente"]}
             registro.update(grupos.classificar(linha["uf"], linha["ente"]))
+            regime = regimes.get(cnpj)
+            registro["regime"] = regime
+            registro["tem_rpps"] = (
+                regime in _REGIMES_COM_RPPS if regime else cnpj in com_carteira)
             entes[cnpj] = registro
     return entes
+
+
+#: Como o endpoint de regime nomeia as situações em que existe RPPS. "Em
+#: extinção" continua sendo RPPS: tem massa, tem patrimônio e tem obrigação de
+#: declarar — só não admite novos segurados.
+_REGIMES_COM_RPPS = {"rpps", "rpps em extincao", "rpps em extinção"}
+
+
+def _regime_vigente(store: Store) -> Dict[str, str]:
+    """Regime previdenciário de cada ente, pela vigência mais recente."""
+    if not store.tem_tabela("RPPS_REGIME_PREVIDENCIARIO"):
+        return {}
+    linhas = store.consultar("""
+        SELECT r.cnpj_ente, r.regime
+          FROM rpps_regime_previdenciario r
+          JOIN (SELECT cnpj_ente, MAX(COALESCE(inicio, '')) AS quando
+                  FROM rpps_regime_previdenciario GROUP BY cnpj_ente) u
+            ON u.cnpj_ente = r.cnpj_ente
+           AND u.quando = COALESCE(r.inicio, '')
+         GROUP BY r.cnpj_ente
+    """)
+    return {l["cnpj_ente"]: _normalizar_situacao(l["regime"]) for l in linhas}
+
+
+def _entes_com_carteira(store: Store) -> set:
+    """Quem declarou carteira — prova de que há fundo, mesmo sem regime."""
+    if not store.tem_tabela("DAIR_CARTEIRA"):
+        return set()
+    return {l["cnpj_ente"] for l in store.consultar(
+        "SELECT DISTINCT cnpj_ente FROM dair_carteira")}
+
+
+# ---------------------------------------------------------------------------
+# Qualidade do cadastro
+# ---------------------------------------------------------------------------
+
+def montar_qualidade(store: Store, entes: Mapping[str, Dict[str, Any]],
+                     hoje: Optional[str] = None) -> Dict[str, Any]:
+    """Tudo o que a própria base contradiz, com a evidência ao lado.
+
+    Separa dois tipos de achado, porque merecem tratamentos diferentes. O
+    lançamento impossível é aritmética: a posição excede o fundo em que está
+    aplicada, e sai da soma sempre — publicar um número já provado falso não é
+    transparência, é propagação. Os demais são juízos sobre a atualidade do
+    dado, e por isso viram chave que o leitor liga e desliga.
+    """
+    hoje = hoje or _hoje()
+    linhas_fora, achados = _achados_da_carteira(store)
+    marcas: Dict[str, Dict[str, Any]] = defaultdict(dict)
+
+    for achado in achados:
+        if achado["cnpj"]:
+            marcas[achado["cnpj"]][qualidade.MARCA_POSICAO] = True
+
+    for cnpj, meses in _defasagem_do_dair(store, hoje).items():
+        if meses is None or meses > qualidade.MESES_DAIR:
+            marcas[cnpj][qualidade.MARCA_DAIR] = meses
+
+    for cnpj, meses in _defasagem_do_crp(store, hoje).items():
+        if meses is not None and meses > qualidade.MESES_CRP:
+            marcas[cnpj][qualidade.MARCA_CRP] = meses
+
+    return {
+        "referencia": hoje,
+        "linhas_excluidas": linhas_fora,
+        "achados": achados,
+        "marcas": {c: m for c, m in marcas.items() if c in entes},
+    }
+
+
+#: Colunas de que a régua depende. São opcionais no mapa de campos, então um
+#: banco antigo pode não tê-las — e aí não há régua a aplicar, em vez de haver
+#: uma régua que não marca nada.
+_COLUNAS_DA_REGUA = ("identificacao_ativo", "valor_total", "pl_fundo")
+
+
+def _achados_da_carteira(store: Store):
+    """Aplica a régua de impossibilidade sobre a carteira ingerida."""
+    if not store.tem_tabela("DAIR_CARTEIRA"):
+        return set(), []
+    if not all(_tem_coluna(store, "dair_carteira", c) for c in _COLUNAS_DA_REGUA):
+        return set(), []
+    opcionais = [c for c in ("nome_ativo", "valor_unitario", "quantidade_cotas")
+                 if _tem_coluna(store, "dair_carteira", c)]
+    colunas = ", ".join(("rowid AS rowid", "cnpj_ente") +
+                        _COLUNAS_DA_REGUA + tuple(opcionais))
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT {} FROM dair_carteira".format(colunas))]
+    marcas, achados = qualidade.achados_da_carteira(linhas)
+    return {linhas[i]["rowid"] for i in marcas}, achados
+
+
+def _defasagem_do_dair(store: Store, hoje: str) -> Dict[str, Optional[int]]:
+    """Meses entre a posição do último DAIR de cada ente e hoje.
+
+    ``None`` marca quem não declarou nada no exercício ingerido — situação pior
+    que atraso, e que por isso não pode virar zero.
+    """
+    if not store.tem_tabela("DAIR_IDENTIFICACAO"):
+        return {}
+    linhas = store.consultar(
+        "SELECT cnpj_ente, MAX(posicao) AS ultima FROM dair_identificacao "
+        "GROUP BY cnpj_ente")
+    return {l["cnpj_ente"]: qualidade.meses_entre(l["ultima"], hoje)
+            for l in linhas}
+
+
+def _defasagem_do_crp(store: Store, hoje: str) -> Dict[str, Optional[int]]:
+    """Meses desde o vencimento, para quem está sem CRP válido.
+
+    Quem tem CRP válido não entra no resultado: não há defasagem a medir.
+    """
+    if not store.tem_tabela("RPPS_CRP"):
+        return {}
+    linhas = store.consultar("""
+        SELECT c.cnpj_ente, c.validade, c.campo_situacao, c.campo_tipo
+          FROM rpps_crp c
+          JOIN (SELECT cnpj_ente, MAX(COALESCE(emissao, '') || '|' ||
+                       COALESCE(numero_crp, '')) AS marca
+                  FROM rpps_crp GROUP BY cnpj_ente) u
+            ON u.cnpj_ente = c.cnpj_ente
+           AND u.marca = COALESCE(c.emissao, '') || '|' || COALESCE(c.numero_crp, '')
+         GROUP BY c.cnpj_ente
+    """)
+    fora: Dict[str, Optional[int]] = {}
+    for linha in linhas:
+        leitura = _ler_crp(linha["campo_situacao"], linha["campo_tipo"],
+                           linha["validade"], hoje)
+        if leitura["valido"]:
+            continue
+        fora[linha["cnpj_ente"]] = qualidade.meses_entre(linha["validade"], hoje)
+    return fora
 
 
 # ---------------------------------------------------------------------------
 # Aba 1 — Panorama
 # ---------------------------------------------------------------------------
 
-def montar_panorama(store: Store, entes: Mapping[str, Dict[str, Any]]) -> Dict[str, Any]:
+def montar_panorama(store: Store, entes: Mapping[str, Dict[str, Any]],
+                    fora: Optional[AbstractSet[str]] = None) -> Dict[str, Any]:
     """Situação do CRP por região, com os extremos de atraso.
 
     O endpoint devolve o **histórico** de certificados, não a posição atual: um
@@ -117,7 +267,10 @@ def montar_panorama(store: Store, entes: Mapping[str, Dict[str, Any]]) -> Dict[s
     vencidos: List[Dict[str, Any]] = []
     total = valido = judicial = 0
 
+    fora = fora or frozenset()
     for linha in linhas:
+        if linha["cnpj_ente"] in fora:
+            continue
         ente = entes.get(linha["cnpj_ente"], {})
         regiao = ente.get("regiao") or "Não classificado"
         leitura = _ler_crp(linha["campo_situacao"], linha["campo_tipo"],
@@ -221,7 +374,10 @@ def _dias_desde(validade: Optional[str], hoje: str) -> Optional[int]:
 # ---------------------------------------------------------------------------
 
 def montar_carteira_nacional(store: Store,
-                             entes: Mapping[str, Dict[str, Any]]) -> Dict[str, Any]:
+                             entes: Mapping[str, Dict[str, Any]],
+                             fora: Optional[AbstractSet[str]] = None,
+                             linhas_fora: Optional[AbstractSet[int]] = None
+                             ) -> Dict[str, Any]:
     """Agregado nacional da carteira, com os recortes por grupo.
 
     Os dois rankings usam regras diferentes de propósito. O dos maiores é
@@ -236,10 +392,14 @@ def montar_carteira_nacional(store: Store,
     nivel = execucao.get("nivel") or fundos.NIVEL_B
 
     segregacao = _mapa_segregacao(store)
+    colunas = ("cnpj_ente, segmento, valor_total, limite_cmn, plano"
+               if _tem_coluna(store, "dair_carteira", "plano")
+               else "cnpj_ente, segmento, valor_total, limite_cmn")
+    fora = fora or frozenset()
+    linhas_fora = linhas_fora or frozenset()
     linhas = [dict(linha) for linha in store.consultar(
-        "SELECT cnpj_ente, segmento, valor_total, limite_cmn, plano "
-        "FROM dair_carteira" if _tem_coluna(store, "dair_carteira", "plano")
-        else "SELECT cnpj_ente, segmento, valor_total, limite_cmn FROM dair_carteira")]
+        "SELECT rowid AS rowid, {} FROM dair_carteira".format(colunas))
+        if linha["rowid"] not in linhas_fora and linha["cnpj_ente"] not in fora]
 
     total = sum(linha.get("valor_total") or 0.0 for linha in linhas)
 
@@ -325,7 +485,8 @@ def _mapa_segregacao(store: Store) -> Dict[str, Optional[bool]]:
 # Abas 2, 3, 4 e 5 — um arquivo por RPPS
 # ---------------------------------------------------------------------------
 
-def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any]) -> Dict[str, Any]:
+def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
+                linhas_fora: Optional[AbstractSet[int]] = None) -> Dict[str, Any]:
     """Tudo que o painel mostra sobre um RPPS, num arquivo só.
 
     Um arquivo por ente, e não um endpoint por clique: cada ficha tem alguns
@@ -345,7 +506,7 @@ def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any]) -> Dict[str, A
         ordem="exercicio DESC")
 
     ficha["caixa"] = _montar_caixa(store, cnpj)
-    ficha["carteira"] = _montar_carteira_ente(store, cnpj)
+    ficha["carteira"] = _montar_carteira_ente(store, cnpj, linhas_fora)
     ficha["atuaria"] = _montar_atuaria(store, cnpj)
     return ficha
 
@@ -506,14 +667,25 @@ def _montar_caixa(store: Store, cnpj: str) -> Dict[str, Any]:
     }
 
 
-def _montar_carteira_ente(store: Store, cnpj: str) -> Dict[str, Any]:
-    """Alocação por segmento contra o limite legal, e as maiores posições."""
-    colunas = ("segmento, tipo_ativo, nome_ativo, limite_cmn, valor_total,"
-               " perc_recursos, pl_fundo, perc_pl_fundo")
+def _montar_carteira_ente(store: Store, cnpj: str,
+                          linhas_fora: Optional[AbstractSet[int]] = None
+                          ) -> Dict[str, Any]:
+    """Alocação por segmento contra o limite legal, e as maiores posições.
+
+    A linha que a base contradiz sai daqui pelo mesmo motivo que sai do total
+    nacional: um painel que exclui um lançamento da soma do país e o mantém na
+    ficha do ente publica dois números incompatíveis sobre o mesmo fato.
+    """
+    colunas = ("rowid AS rowid, segmento, tipo_ativo, nome_ativo, limite_cmn,"
+               " valor_total, perc_recursos, pl_fundo, perc_pl_fundo")
     linhas = _varios(store, "dair_carteira", colunas, cnpj,
                      ordem="valor_total DESC", limite=5000)
+    linhas_fora = linhas_fora or frozenset()
+    excluidas = [l for l in linhas if l["rowid"] in linhas_fora]
+    linhas = [l for l in linhas if l["rowid"] not in linhas_fora]
     if not linhas:
-        return {"disponivel": False}
+        return {"disponivel": False,
+                "excluidas": len(excluidas)} if excluidas else {"disponivel": False}
 
     total = sum(linha.get("valor_total") or 0.0 for linha in linhas)
     por_segmento: Dict[str, Dict[str, Any]] = {}
@@ -553,6 +725,9 @@ def _montar_carteira_ente(store: Store, cnpj: str) -> Dict[str, Any]:
         "fora_do_limite": sum(1 for s in segmentos if s["excede"]),
         "concentracao_pl": len(concentrados),
         "maior_posicao": posicoes[0]["perc_carteira"] if posicoes else 0.0,
+        "excluidas": len(excluidas),
+        "valor_excluido": round(sum(l.get("valor_total") or 0.0
+                                    for l in excluidas), 2),
     }
 
 
@@ -740,17 +915,30 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
             "origem 'api'.".format(origens[0]))
 
     entes = montar_entes(store)
-    panorama = montar_panorama(store, entes)
-    carteira = montar_carteira_nacional(store, entes)
+    qual = montar_qualidade(store, entes)
+    linhas_fora = qual["linhas_excluidas"]
+    marcas = qual["marcas"]
+
+    # Uma variante por combinação de chaves. São dezesseis agregados pequenos:
+    # pré-calcular sai mais barato que reimplementar as somas em JavaScript, e
+    # garante que o número da tela vem do mesmo código que os testes cobrem.
+    panoramas, carteiras = {}, {}
+    for combinacao in qualidade.combinacoes():
+        fora = qualidade.entes_fora(entes, marcas, combinacao)
+        panoramas[combinacao] = montar_panorama(store, entes, fora)
+        carteiras[combinacao] = montar_carteira_nacional(
+            store, entes, fora, linhas_fora)
 
     gerados = [
-        _gravar("panorama.json", panorama, dir_saida),
-        _gravar("carteira-nacional.json", carteira, dir_saida),
+        _gravar("panorama.json", {"variantes": panoramas}, dir_saida),
+        _gravar("carteira-nacional.json", {"variantes": carteiras}, dir_saida),
     ]
 
     indice = sorted(
         ({"cnpj": dados["cnpj"], "ente": dados["ente"], "uf": dados["uf"],
-          "esfera": dados["esfera"], "regiao": dados["regiao"]}
+          "esfera": dados["esfera"], "regiao": dados["regiao"],
+          "tem_rpps": bool(dados.get("tem_rpps")),
+          "marcas": sorted(marcas.get(dados["cnpj"], {}))}
          for dados in entes.values()),
         key=lambda d: (d["uf"] or "", d["ente"] or ""))
     gerados.append(_gravar("entes.json", indice, dir_saida))
@@ -758,18 +946,73 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     escolhidos = list(entes.items())[:limite_entes] if limite_entes else list(entes.items())
     fichas = {}
     for cnpj, dados in escolhidos:
-        ficha = montar_ente(store, cnpj, dados)
+        ficha = montar_ente(store, cnpj, dados, linhas_fora)
         fichas[cnpj] = ficha
         _gravar(os.path.join("ente", cnpj + ".json"), ficha, dir_saida)
 
-    gerados.append(_gravar("benchmark.json", benchmark.montar(fichas), dir_saida))
+    comparativo = benchmark.montar(fichas)
+    comparativo["grupos"] = {
+        "variantes": {
+            combinacao: benchmark.resumir_grupos(
+                comparativo["rpps"], comparativo["segmentos"],
+                qualidade.entes_fora(entes, marcas, combinacao))
+            for combinacao in qualidade.combinacoes()
+        }
+    }
+    gerados.append(_gravar("benchmark.json", comparativo, dir_saida))
+
+    # Uma chave sem a fonte que a alimenta não pode aparecer como "não exclui
+    # ninguém": isso afirma que ninguém está atrasado quando o que houve foi
+    # não ter como saber. A interface a desliga e diz o que falta.
+    fontes = {
+        "somente_rpps": "RPPS_REGIME_PREVIDENCIARIO",
+        "sem_lancamento_impossivel": "DAIR_CARTEIRA",
+        "sem_dair_defasado": "DAIR_IDENTIFICACAO",
+        "sem_crp_vencido": "RPPS_CRP",
+    }
+    def _tem_base(chave: str) -> bool:
+        # O recorte por RPPS vigente sobrevive sem o endpoint de regime:
+        # declarar carteira já prova que há fundo. Os outros três não têm
+        # substituto — ou a fonte está no banco, ou a chave não sabe nada.
+        if chave == "somente_rpps":
+            return (store.tem_tabela("RPPS_REGIME_PREVIDENCIARIO") or
+                    store.tem_tabela("DAIR_CARTEIRA"))
+        return store.tem_tabela(fontes[chave])
+
+    gerados.append(_gravar("filtros.json", {
+        "filtros": [dict(f.como_dicionario(), fonte=fontes[f.chave],
+                         disponivel=_tem_base(f.chave))
+                    for f in qualidade.FILTROS],
+        "padrao": qualidade.chave_padrao(),
+        "atingidos": {
+            f.chave: len(qualidade.entes_fora(
+                entes, marcas,
+                "".join("1" if g is f else "0" for g in qualidade.FILTROS)))
+            for f in qualidade.FILTROS
+        },
+    }, dir_saida))
+
+    gerados.append(_gravar("qualidade.json", {
+        "referencia": qual["referencia"],
+        "achados": [dict(a, ente=(entes.get(a["cnpj"]) or {}).get("ente"),
+                         uf=(entes.get(a["cnpj"]) or {}).get("uf"))
+                    for a in qual["achados"]],
+        "linhas_excluidas": len(linhas_fora),
+        "entes_marcados": {
+            marca: sum(1 for m in marcas.values() if marca in m)
+            for marca in (qualidade.MARCA_POSICAO, qualidade.MARCA_DAIR,
+                          qualidade.MARCA_CRP)
+        },
+        "rotulos": dict(qualidade.ROTULOS, **qualidade.ROTULOS_ENTE),
+    }, dir_saida))
 
     meta = {
         "origem": store.origem_unica() or origem,
         "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "entes": len(entes),
+        "com_rpps": sum(1 for d in entes.values() if d.get("tem_rpps")),
         "fichas": len(escolhidos),
-        "nivel_fundo": carteira.get("nivel"),
+        "nivel_fundo": carteiras[qualidade.chave_padrao()].get("nivel"),
         "capitais_conhecidas": grupos.cobertura_capitais(),
         "execucoes": store.resumo(),
     }

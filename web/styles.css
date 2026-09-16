@@ -278,3 +278,65 @@ table.dados td.n.ruim{color:var(--crit);font-weight:500}
   font-size:.83rem;color:var(--ink-2);line-height:1.5;
 }
 .aviso-linha .ico{color:var(--warn);flex:none;font-size:.95rem;line-height:1.4}
+
+/* ---------- barra de chaves do universo nacional ----------
+ *
+ * Fica logo abaixo das abas e acima do conteúdo porque muda o significado de
+ * todo número da tela: um denominador escondido no rodapé seria uma armadilha.
+ * Só aparece nas telas nacionais — nas fichas de um RPPS não há universo a
+ * recortar, e uma chave inerte convida a clicar e não entender o que mudou.
+ */
+.filtros{background:var(--surface-2);border-bottom:1px solid var(--rule)}
+.filtros .wrap{padding-block:11px}
+.filtros .rotulo{
+  display:block;font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--muted);margin-bottom:7px;
+}
+.filtros .chaves{display:flex;flex-wrap:wrap;gap:7px}
+.chave{
+  display:inline-flex;align-items:center;gap:7px;cursor:pointer;
+  font-size:.82rem;color:var(--ink-2);background:var(--surface);
+  border:1px solid var(--rule-strong);border-radius:999px;padding:5px 12px 5px 9px;
+  line-height:1.3;
+}
+.chave:hover{border-color:var(--muted)}
+.chave input{margin:0;accent-color:var(--accent);width:14px;height:14px;flex:none}
+.chave:has(input:checked){
+  background:var(--accent-soft);border-color:var(--accent);color:var(--accent-ink);
+  font-weight:500;
+}
+.chave input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.chave .quantos{color:var(--muted);font-variant-numeric:tabular-nums}
+.chave:has(input:checked) .quantos{color:var(--accent-ink);opacity:.8}
+.filtros .efeito{
+  margin:8px 0 0;font-size:.78rem;color:var(--muted);
+}
+.filtros .efeito b{color:var(--ink-2);font-weight:500}
+.filtros .efeito a{color:var(--accent-ink)}
+
+/* ---------- qualidade ---------- */
+.achado{
+  border:1px solid var(--rule-strong);border-left:3px solid var(--crit);
+  border-radius:8px;background:var(--surface);padding:14px 16px;margin-bottom:12px;
+}
+.achado h4{margin:0 0 3px;font-size:.98rem}
+.achado .onde{font-size:.8rem;color:var(--muted);margin:0 0 10px}
+.achado dl{
+  display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:0;
+  font-size:.84rem;
+}
+.achado dt{color:var(--muted)}
+.achado dd{margin:0;font-variant-numeric:tabular-nums}
+.achado dd.forte{color:var(--crit);font-weight:500}
+.marca-ente{
+  display:inline-block;font-size:.72rem;padding:2px 8px;border-radius:999px;
+  background:var(--surface-2);border:1px solid var(--rule-strong);color:var(--ink-2);
+  margin-left:8px;vertical-align:middle;
+}
+.marca-ente.grave{border-color:var(--crit);color:var(--crit)}
+@media (max-width:520px){
+  .achado dl{grid-template-columns:1fr}
+  .achado dt{margin-top:6px}
+}
+.chave.inerte{opacity:.5;cursor:not-allowed}
+.chave.inerte .quantos{font-style:italic}

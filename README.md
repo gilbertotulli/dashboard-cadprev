@@ -47,17 +47,18 @@ python -m cadprev serve
 | `build` | pré-agrega tudo nos JSON que o painel lê |
 | `serve` | serve `web/` localmente |
 | `status` | o que já foi ingerido, quando e com quais filtros |
-| `endpoints` | o catálogo dos 22 recursos da API |
+| `endpoints` | o catálogo dos 39 recursos da API |
 
 ## Como está montado
 
 ```
 cadprev/        ingestão e agregação (Python, sem dependências)
-  endpoints.py    catálogo dos 22 recursos da API
+  endpoints.py    catálogo dos 39 recursos da API
   fieldmap.py     ⚠ mapeamento campo lógico → chave real da API
   client.py       GET paginado, com repetição e modo offline
   store.py        SQLite + procedência de cada ingestão
   fundos.py       separação por natureza do fundo (Níveis A e B)
+  qualidade.py    o que a própria base contradiz, e as chaves de recorte
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
 web/            painel estático (HTML, CSS e JS, sem build)
@@ -179,13 +180,70 @@ Grupos com menos de três RPPS não geram estatística, e verde e vermelho apare
 só nos indicadores de direção inequívoca — mais renda fixa não é melhor nem pior
 por si. Faixas de porte, por segurados: até 1.000, de 1.000 a 10.000, acima disso.
 
+## Qualidade do cadastro
+
+A fonte tem erros de digitação, e eles não são pequenos: em 15/09/2026, uma
+única linha respondia por **88,49%** do patrimônio nacional. O RPPS de Santo
+Afonso/MT declarou a cota de um fundo a R$ 36.640.481,00 quando ela vale
+R$ 36,640481 — vírgula seis casas fora do lugar —, e o painel somava
+R$ 3,57 trilhões onde há R$ 411 bilhões.
+
+Filtrar isso por "valor muito alto" seria arbitrário: o maior RPPS do país é
+legitimamente milhares de vezes maior que o menor, e nenhum corte estatístico
+separa um estado grande de um erro de vírgula. A régua, então, é aritmética.
+
+Cada linha da carteira traz a posição do RPPS **e** o patrimônio líquido do
+fundo em que ela está aplicada, e o mesmo fundo aparece na carteira de centenas
+de RPPS. Quando a posição excede em mais de dez vezes a maior declaração já
+feita para aquele fundo, ela é impossível e sai de todas as somas — do total
+nacional e da ficha do próprio ente, porque excluir de um e manter no outro
+publicaria dois números incompatíveis sobre o mesmo fato.
+
+Três decisões deliberadas:
+
+- **A margem é grosseira de propósito.** Entre uma vez e mil vezes ela devolve
+  exatamente as mesmas linhas. Se o resultado mudasse com o parâmetro, quem
+  estaria decidindo seria a régua, e não a evidência.
+- **O campo de PL é ruidoso, e a régua respeita isso.** O mesmo fundo aparece
+  com PL declarado entre R$ 0,01 e R$ 4,42 bilhões. Divergir do consenso, por
+  isso, não é sinal de erro — é o estado normal do campo. A referência é a
+  *maior* declaração crível, não a mediana.
+- **O valor não é corrigido.** Dividir por um milhão daria o número certo e
+  seria inventá-lo. A linha é omitida e o caso aparece nomeado na aba
+  **Qualidade**, com a evidência ao lado, para quem puder corrigir na fonte.
+
+### As chaves do topo
+
+As estatísticas nacionais dependem de quem entra na conta. Quatro chaves
+recortam o universo, e a URL carrega o recorte — um link compartilhado mostra ao
+destinatário o mesmo que o remetente viu.
+
+| Chave | Padrão | O que exclui |
+|---|---|---|
+| Somente entes com RPPS vigente | **ligada** | os entes cujo regime vigente é o RGPS |
+| Excluir RPPS com lançamento impossível | desligada | o ente inteiro, não só a linha |
+| Excluir DAIR defasado há mais de 3 meses | desligada | quem parou de declarar |
+| Excluir CRP não-válido há mais de 6 meses | desligada | irregularidade instalada |
+
+A primeira vem ligada porque não é recorte, é correção de denominador. O CRP é
+emitido ao **ente federativo**, não ao fundo, então `RPPS_CRP` cobre os 5.596
+entes do país — praticamente 5.570 municípios mais 26 estados mais o DF. Só
+2.132 mantêm RPPS vigente e 37 estão em extinção; 3.411 migraram para o RGPS.
+Tratar ente federativo como sinônimo de RPPS, como este projeto fazia, inflava
+todo denominador nacional em quase três vezes.
+
+As outras três medem a atualidade do dado, não a sua correção. Quem entregou o
+último DAIR há cinco meses não errou nada — apenas descreve uma situação mais
+antiga. Se isso desqualifica o número depende da pergunta, e quem decide é quem
+pergunta.
+
 ## O que ainda falta
 
 - **A projeção atuarial ano a ano.** `DRAA_FLUXO_ATUARIAL` não é série temporal —
   dá totais projetados, não a curva. A curva está nos arquivos de dados abertos da
   SPREV. Há, porém, uma série temporal ainda não consumida na API:
   `DRAA_PLANO_AMORTIZACAO`, com saldo e amortização ano a ano.
-- **Endpoints sem mapa de campos.** Onze dos 39 têm mapa; `python -m cadprev
+- **Endpoints sem mapa de campos.** Doze dos 39 têm mapa; `python -m cadprev
   endpoints` marca quais. Governança, credenciamento e notificações do DAIR e do
   DRAA abririam telas novas.
 - **Histórico.** A ingestão é por competência; comparar exercícios depende de
@@ -207,7 +265,7 @@ pipeline inteiro sobre as amostras sintéticas.
 ## Documentação
 
 - [`docs/api-cadprev.md`](docs/api-cadprev.md) — catálogo técnico da API: contrato,
-  paginação, parâmetros e os 22 endpoints por família
+  paginação, parâmetros e os 39 endpoints por família
 - [`docs/anteprojeto-painel-cadprev.html`](docs/anteprojeto-painel-cadprev.html) —
   anteprojeto visual que originou o painel
 

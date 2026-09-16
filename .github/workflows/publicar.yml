@@ -125,6 +125,12 @@ jobs:
           python -m cadprev ingest DAIR_CARTEIRA \
             $FILTRO_UF --ano "$ANO" --mes "$MES" 2>&1 | tee ingest.log || true
 
+          # O cabeçalho do DAIR é mensal e pequeno — treze mil linhas no ano
+          # inteiro. Vem sem --mes de propósito: é da série completa que sai a
+          # data do último demonstrativo de cada ente, e portanto a defasagem.
+          python -m cadprev ingest DAIR_IDENTIFICACAO \
+            $FILTRO_UF --ano "$ANO" 2>&1 | tee -a ingest.log || true
+
           python -m cadprev ingest RPPS_CRP RPPS_REGIME_PREVIDENCIARIO \
             RPPS_ALIQUOTA $FILTRO_UF 2>&1 | tee -a ingest.log || true
 

@@ -40,13 +40,18 @@ class TestPipeline(unittest.TestCase):
         with open(os.path.join(self.saida, nome), encoding="utf-8") as fh:
             return json.load(fh)
 
+    def _nacional(self, nome):
+        """O agregado nacional na combinação de chaves que abre por padrão."""
+        from cadprev import qualidade
+        return self._json(nome)["variantes"][qualidade.chave_padrao()]
+
     def test_ingestao_sem_erros(self):
         self.assertEqual(self.resultado["erros"], [])
         self.assertTrue(all(r["linhas"] > 0 for r in self.resultado["ok"]))
 
     def test_demo_roda_em_nivel_b(self):
         """O padrão reflete o que se sabe da API hoje: sem plano do ativo."""
-        carteira = self._json("carteira-nacional.json")
+        carteira = self._nacional("carteira-nacional.json")
         self.assertEqual(carteira["nivel"], fundos.NIVEL_B)
 
     def test_meta_declara_a_origem(self):
@@ -57,7 +62,7 @@ class TestPipeline(unittest.TestCase):
     def test_crp_vencido_nao_conta_como_valido(self):
         """Regressão: 'VÁLIDO' e 'VENCIDO' começam com a mesma letra, e um
         prefixo contava todo certificado vencido como regular."""
-        panorama = self._json("panorama.json")
+        panorama = self._nacional("panorama.json")
         self.assertLess(panorama["kpis"]["perc_valido"], 100.0)
         self.assertTrue(panorama["vencidos_ha_mais_tempo"])
         for item in panorama["vencidos_ha_mais_tempo"]:
@@ -82,8 +87,8 @@ class TestPipeline(unittest.TestCase):
     def test_crp_usa_a_emissao_mais_recente(self):
         """O endpoint devolve o histórico; contar linhas cruas trataria cada
         renovação como um RPPS diferente."""
-        panorama = self._json("panorama.json")
-        entes = self._json("entes.json")
+        panorama = self._nacional("panorama.json")
+        entes = [e for e in self._json("entes.json") if e["tem_rpps"]]
         self.assertEqual(panorama["kpis"]["entes"], len(entes))
 
     def test_bases_de_calculo_fora_do_caixa(self):
@@ -106,12 +111,12 @@ class TestPipeline(unittest.TestCase):
         self.assertAlmostEqual(movimentado, bruto - bases, places=0)
 
     def test_vencidos_ordenados_do_maior_atraso(self):
-        vencidos = self._json("panorama.json")["vencidos_ha_mais_tempo"]
+        vencidos = self._nacional("panorama.json")["vencidos_ha_mais_tempo"]
         dias = [v["dias"] for v in vencidos]
         self.assertEqual(dias, sorted(dias, reverse=True))
 
     def test_ranking_dos_menores_exclui_zerados(self):
-        carteira = self._json("carteira-nacional.json")
+        carteira = self._nacional("carteira-nacional.json")
         for item in carteira["menores"]:
             self.assertGreater(item["valor"], 0)
         self.assertLessEqual(carteira["menores"][0]["valor"],
@@ -119,14 +124,14 @@ class TestPipeline(unittest.TestCase):
 
     def test_recortes_somam_o_total(self):
         """Cada corte por grupo tem de fechar com o patrimônio total."""
-        carteira = self._json("carteira-nacional.json")
+        carteira = self._nacional("carteira-nacional.json")
         for chave in ("por_fundo", "por_segmento", "por_esfera", "por_regiao"):
             soma = sum(item["valor"] for item in carteira[chave])
             self.assertAlmostEqual(soma, carteira["total"], places=0,
                                    msg="{} não fecha com o total".format(chave))
 
     def test_esferas_e_regioes_reconhecidas(self):
-        carteira = self._json("carteira-nacional.json")
+        carteira = self._nacional("carteira-nacional.json")
         rotulos = {item["rotulo"] for item in carteira["por_esfera"]}
         self.assertIn("Estaduais", rotulos)
         self.assertIn("Capitais", rotulos)
@@ -192,20 +197,71 @@ class TestPipeline(unittest.TestCase):
             ingest.ingerir(cliente, store, "DAIR_CARTEIRA")
             self.assertEqual(store.contar("DAIR_CARTEIRA"), antes)
 
+    # ------------------------------------------------ qualidade e filtros
 
-class TestClienteOffline(unittest.TestCase):
+    def test_lancamento_impossivel_sai_de_todas_as_somas(self):
+        """Excluir do total nacional e manter na ficha do ente publicaria dois
+        números incompatíveis sobre o mesmo fato."""
+        q = self._json("qualidade.json")
+        self.assertEqual(len(q["achados"]), 1)
+        achado = q["achados"][0]
+        ficha = self._json(os.path.join("ente", achado["cnpj"] + ".json"))
+        carteira = ficha["carteira"]
+        self.assertEqual(carteira["excluidas"], 1)
+        self.assertAlmostEqual(carteira["valor_excluido"], achado["posicao"], places=2)
+        # o que sobrou não contém mais o valor impossível
+        self.assertLess(carteira["total"], achado["posicao"] / 1000)
+        nacional = self._nacional("carteira-nacional.json")
+        self.assertLess(nacional["total"], achado["posicao"])
 
-    def test_amostra_ausente_explica_o_que_fazer(self):
-        from cadprev.client import Cliente, ErroDaAPI
-        cliente = Cliente(fixtures=tempfile.mkdtemp())
-        with self.assertRaises(ErroDaAPI) as ctx:
-            list(cliente.registros("RPPS_CRP"))
-        self.assertIn("inspect", str(ctx.exception))
+    def test_achado_traz_a_evidencia_e_nao_o_conserto(self):
+        achado = self._json("qualidade.json")["achados"][0]
+        for campo in ("fundo", "posicao", "maior_pl_declarado", "vezes",
+                      "valor_unitario", "quantidade_cotas", "ente", "uf"):
+            self.assertIn(campo, achado)
+        self.assertGreater(achado["vezes"], 10)
+        self.assertNotIn("posicao_corrigida", achado)
 
-    def test_endpoint_desconhecido(self):
-        from cadprev import endpoints
-        with self.assertRaises(KeyError):
-            endpoints.get("NAO_EXISTE")
+    def test_ente_sem_rpps_nao_conta_como_rpps(self):
+        """O CRP é do ente federativo: a base cobre quem migrou para o RGPS."""
+        indice = self._json("entes.json")
+        sem_rpps = [e for e in indice if not e["tem_rpps"]]
+        self.assertTrue(sem_rpps, "o demo precisa conter entes sem RPPS")
+        meta = self._json("meta.json")
+        self.assertEqual(meta["com_rpps"], len(indice) - len(sem_rpps))
+        self.assertLess(meta["com_rpps"], meta["entes"])
+
+    def test_todas_as_combinacoes_de_chaves_existem(self):
+        from cadprev import qualidade
+        esperadas = set(qualidade.combinacoes())
+        for arquivo in ("panorama.json", "carteira-nacional.json"):
+            self.assertEqual(set(self._json(arquivo)["variantes"]), esperadas)
+        self.assertEqual(
+            set(self._json("benchmark.json")["grupos"]["variantes"]), esperadas)
+
+    def test_cada_chave_encolhe_o_universo(self):
+        """Uma chave que não muda nada é uma chave que engana."""
+        from cadprev import qualidade
+        variantes = self._json("panorama.json")["variantes"]
+        nenhuma = "0" * len(qualidade.FILTROS)
+        base = variantes[nenhuma]["kpis"]["entes"]
+        filtros = self._json("filtros.json")
+        for i, filtro in enumerate(qualidade.FILTROS):
+            if not filtros["atingidos"][filtro.chave]:
+                continue
+            chave = "".join("1" if j == i else "0"
+                            for j in range(len(qualidade.FILTROS)))
+            self.assertLess(variantes[chave]["kpis"]["entes"], base,
+                            "a chave {} não excluiu ninguém".format(filtro.chave))
+
+    def test_chaves_do_ente_marcam_quem_deve(self):
+        indice = {e["cnpj"]: e for e in self._json("entes.json")}
+        q = self._json("qualidade.json")
+        alvo = q["achados"][0]["cnpj"]
+        self.assertIn("posicao_impossivel", indice[alvo]["marcas"])
+        marcados = sum(1 for e in indice.values()
+                       if "dair_defasado" in e["marcas"])
+        self.assertEqual(marcados, q["entes_marcados"]["dair_defasado"])
 
 
 if __name__ == "__main__":
@@ -339,3 +395,58 @@ class TestIngestaoAtomica(unittest.TestCase):
             self.assertEqual(store.contar("RPPS_CRP"), 1)
             self.assertEqual(store.consultar("SELECT ente FROM rpps_crp")[0]["ente"],
                              "Novo")
+
+
+
+
+class TestClienteOffline(unittest.TestCase):
+
+    def test_amostra_ausente_explica_o_que_fazer(self):
+        from cadprev.client import Cliente, ErroDaAPI
+        cliente = Cliente(fixtures=tempfile.mkdtemp())
+        with self.assertRaises(ErroDaAPI) as ctx:
+            list(cliente.registros("RPPS_CRP"))
+        self.assertIn("inspect", str(ctx.exception))
+
+    def test_endpoint_desconhecido(self):
+        from cadprev import endpoints
+        with self.assertRaises(KeyError):
+            endpoints.get("NAO_EXISTE")
+
+
+class TestChaveSemFonte(unittest.TestCase):
+    """Uma chave cuja fonte não está no banco não pode dizer "−0".
+
+    Zero afirma que ninguém está atrasado. A verdade, quando falta o endpoint,
+    é que não há como saber — e as duas coisas levam a leituras opostas.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp(prefix="cadprev-chaves-")
+        self.fixtures = os.path.join(self.dir, "fx")
+        demo.escrever(self.fixtures)
+        self.banco = os.path.join(self.dir, "t.sqlite3")
+        self.saida = os.path.join(self.dir, "data")
+        from cadprev import ingest
+        cliente = Cliente(fixtures=self.fixtures, pausa=0)
+        with Store(self.banco) as store:
+            # De propósito sem DAIR_IDENTIFICACAO.
+            ingest.ingerir_varios(cliente, store, [
+                "RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA"])
+            build.construir(store, dir_saida=self.saida, origem="demonstracao")
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_chave_sem_endpoint_fica_indisponivel(self):
+        with open(os.path.join(self.saida, "filtros.json"), encoding="utf-8") as fh:
+            filtros = {f["chave"]: f for f in json.load(fh)["filtros"]}
+        self.assertFalse(filtros["sem_dair_defasado"]["disponivel"])
+        self.assertEqual(filtros["sem_dair_defasado"]["fonte"], "DAIR_IDENTIFICACAO")
+        for chave in ("somente_rpps", "sem_lancamento_impossivel", "sem_crp_vencido"):
+            self.assertTrue(filtros[chave]["disponivel"], chave)
+
+    def test_a_regua_continua_valendo_sem_os_outros_endpoints(self):
+        """A exclusão do lançamento impossível não depende de DAIR nem de CRP."""
+        with open(os.path.join(self.saida, "qualidade.json"), encoding="utf-8") as fh:
+            self.assertEqual(len(json.load(fh)["achados"]), 1)
