@@ -123,6 +123,15 @@ a este projeto.
 repartição / taxa de administração — o Nível A que o projeto declarava
 impossível a partir do CADPREV — e a comparação entre fontes.
 
+### Situação em 17/09/2026
+
+As fases 1, 2, 4 e 5 estão implantadas. A fase 3 depende de semanas de medição
+acumulada e não pode ser antecipada sem desfazer o próprio motivo dela existir.
+
+**Fase 6, a próxima — DCA.** Trazer o Anexo I-AB e confrontar a provisão
+matemática contábil com a avaliação atuarial do DRAA, respeitando a defasagem de
+um exercício entre os dois. Uma requisição por ente e por ano.
+
 ## Bases ainda a estudar
 
 Sondadas em 17/09/2026, com o que já se sabe e o que falta descobrir.
@@ -142,7 +151,18 @@ para Vitória em 2025:
 É o **passivo atuarial reconhecido na contabilidade**, separado pelos mesmos dois
 fundos, e cruza diretamente com `DRAA_VALORES_COMPROMISSOS`. Divergência entre o
 que o atuário avaliou e o que o contador registrou é achado de primeira ordem.
-Prioridade alta.
+
+Custo medido: o Anexo I-AB inteiro vem em **uma requisição por ente e por
+exercício** — 161 linhas para Vitória, das quais 9 são de provisão matemática.
+Para os 1.821 RPPS dá cerca de vinte e cinco minutos por exercício, uma vez por
+ano. É o melhor retorno por requisição das quatro bases restantes.
+
+O alinhamento temporal pede atenção: o DCA fecha em 31/12 do exercício e o DRAA
+do exercício N descreve a posição de N−1. Comparar o DRAA de 2026 com o DCA de
+2026 confrontaria avaliações de datas diferentes; o par correto é o DRAA de N com
+o DCA de N−1, e a tela precisa dizer isso.
+
+Prioridade alta — é a próxima a entrar.
 
 ### RGF — Relatório de Gestão Fiscal
 
@@ -162,13 +182,28 @@ decidir. Prioridade média, esforço maior que o aparente.
 
 ### MSC — Matriz de Saldos Contábeis
 
-`/msc_patrimonial` e `/msc_orcamentaria`, mensal. A sondagem de 17/09/2026 voltou
-vazia com os parâmetros tentados: `an_referencia`, `me_referencia`,
-`co_tipo_matriz`, `id_ente`, `classe_conta`, `co_tipo_valor`. A combinação
-correta ainda não foi descoberta — o próximo passo é ler os metadados em PDF que
-o CKAN publica. É a base mais granular das quatro e a mais cara: mensal, por
-conta do PCASP, por ente. Prioridade baixa até que o DCA esteja consumido, já que
-o DCA é o mesmo plano de contas consolidado no ano.
+`/msc_patrimonial` e `/msc_orcamentaria`, mensal. A primeira sondagem voltou
+vazia; o parâmetro que faltava era **`id_tv`** (tipo de valor), e não
+`co_tipo_valor`. A combinação que responde é:
+
+```
+/msc_patrimonial?an_referencia=2025&me_referencia=12&id_ente=3205309
+                &co_tipo_matriz=MSCC&classe_conta=1&id_tv=period_change
+```
+
+Devolve 1.128 linhas só para a classe 1 de um município num mês, com
+`conta_contabil` no PCASP, `poder_orgao`, `natureza_conta` e `valor`.
+
+E é justamente por responder que dá para calcular o custo: `classe_conta` é
+obrigatório, então são oito requisições por ente e por mês de referência —
+1.821 RPPS dão cerca de **catorze mil requisições por mês de referência**, mais
+de três horas. Para o ano, quarenta horas.
+
+**A MSC é dominada pelo DCA** para o que este painel precisa. As contas que
+interessam — provisões matemáticas e investimentos — estão no DCA consolidadas
+no exercício, a uma requisição por ente. A MSC só se justifica se aparecer uma
+pergunta que exija granularidade mensal, e nenhuma das perguntas atuais exige.
+Prioridade baixa, agora por medida e não por desconhecimento.
 
 ### Fora do escopo
 
