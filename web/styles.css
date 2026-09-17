@@ -177,6 +177,9 @@ table.dados{width:100%;border-collapse:collapse;font-size:.85rem}
 /* Tabela de muitas colunas rola no próprio contêiner; sem isso ela
    comprime e os valores quebram em três linhas no telefone. */
 table.dados.larga{min-width:560px}
+/* Sete ou mais colunas não cabem em 560px sem quebrar valores no meio. A
+   tabela passa da largura da tela e rola — .rolar existe para isso. */
+table.dados.larga.extra{min-width:900px}
 table.dados th{
   text-align:left;font-family:"IBM Plex Mono",monospace;font-weight:500;
   font-size:.64rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
@@ -185,6 +188,14 @@ table.dados th{
 table.dados td{padding:9px 8px 9px 0;border-bottom:1px solid var(--rule);color:var(--ink-2)}
 table.dados th.n,table.dados td.n{text-align:right;padding-right:0}
 table.dados td.n{font-variant-numeric:tabular-nums;color:var(--ink)}
+/* Valor que quebra no meio deixa de ser um valor: "R$ 911,2" numa linha e
+   "mi" na seguinte lê-se como dois números. Com nowrap a tabela passa da
+   largura disponível e rola, que é o comportamento certo. */
+table.dados td.n,table.dados th.n{white-space:nowrap}
+/* Numa tabela de muitas colunas os cabeçalhos numéricos encostam uns nos
+   outros e viram uma palavra só. A folga vale só aqui porque nas tabelas de
+   duas ou três colunas ela desperdiçaria largura. */
+table.dados.extra th.n,table.dados.extra td.n{padding-left:22px}
 table.dados tr:last-child td{border-bottom:none}
 table.dados tr.clicavel{cursor:pointer}
 table.dados tr.clicavel:hover td{background:var(--surface-2)}

@@ -209,10 +209,36 @@ def _achados_da_carteira(store: Store):
                  if _tem_coluna(store, "dair_carteira", c)]
     colunas = ", ".join(("rowid AS rowid", "cnpj_ente") +
                         _COLUNAS_DA_REGUA + tuple(opcionais))
-    linhas = [dict(l) for l in store.consultar(
-        "SELECT {} FROM dair_carteira".format(colunas))]
-    marcas, achados = qualidade.achados_da_carteira(linhas)
-    return {linhas[i]["rowid"] for i in marcas}, achados
+    tem_data = all(_tem_coluna(store, "dair_carteira", c) for c in ("ano", "mes"))
+    consulta = "SELECT {}{} FROM dair_carteira".format(
+        colunas, ", ano, mes" if tem_data else "")
+    linhas = [dict(l) for l in store.consultar(consulta)]
+
+    # Uma competência por vez. A régua compara a posição contra a MAIOR
+    # declaração crível do mesmo fundo, e esse consenso é de um mês: misturar
+    # junho com agosto mudaria o teto de um fundo por causa de quem entrou ou
+    # saiu dele no intervalo, não por causa do erro que a régua procura.
+    grupos: Dict[tuple, List[Dict[str, Any]]] = {}
+    for linha in linhas:
+        grupos.setdefault((linha.get("ano"), linha.get("mes")), []).append(linha)
+
+    fora: set = set()
+    achados: List[Dict[str, Any]] = []
+    vistos: set = set()
+    for _, do_mes in sorted(grupos.items(), key=lambda kv: kv[0], reverse=True):
+        marcas, do_grupo = qualidade.achados_da_carteira(do_mes)
+        fora |= {do_mes[i]["rowid"] for i in marcas}
+        for achado in do_grupo:
+            # O mesmo erro repetido mês a mês é um erro, não vários — e o
+            # valor muda de um mês para o outro, então a chave não pode incluí-lo.
+            # Como o laço vai da competência mais recente para trás, o achado
+            # que fica é o da posição publicada hoje.
+            chave = (achado.get("cnpj"), achado.get("fundo"))
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            achados.append(achado)
+    return fora, achados
 
 
 def _defasagem_do_dair(store: Store, hoje: str) -> Dict[str, Optional[int]]:
@@ -404,12 +430,13 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
     Uma divergência isolada não diz nada sem a distribuição ao lado: 4% parece
     muito até se saber que setenta por cento dos RPPS ficam abaixo de cinco.
 
-    Conta também quem não pôde ser confrontado, e por quê. São duas razões
+    Conta também quem não pôde ser confrontado, e por quê. São três razões
     distintas e nenhuma delas é divergência: o ente que entregou o Anexo 04 sem
-    o saldo das aplicações, e o que declarou saldo de um fundo e omitiu o de
-    outro que movimenta receita.
+    o saldo das aplicações, o que declarou saldo de um fundo e omitiu o de outro
+    que movimenta receita, e o que declarou saldo negativo — descoberto bancário
+    ou reclassificação contábil, que é número legítimo e não é carteira.
     """
-    desvios, sem_saldo, parcial, com_anexo = [], 0, 0, 0
+    desvios, sem_saldo, parcial, negativo, com_anexo = [], 0, 0, 0, 0
     for ficha in fichas.values():
         contabil = ficha.get("contabil") or {}
         if not contabil.get("disponivel"):
@@ -417,6 +444,8 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
         com_anexo += 1
         if not contabil.get("com_saldo"):
             sem_saldo += 1
+        elif contabil.get("saldo_negativo"):
+            negativo += 1
         elif not contabil.get("saldo_completo"):
             parcial += 1
         confronto = contabil.get("confronto")
@@ -424,7 +453,8 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
             desvios.append(abs(confronto["perc"]))
     if not desvios:
         return {"disponivel": False, "com_anexo": com_anexo,
-                "sem_saldo": sem_saldo, "saldo_parcial": parcial}
+                "sem_saldo": sem_saldo, "saldo_parcial": parcial,
+                "saldo_negativo": negativo}
     desvios.sort()
 
     def _faixa(limite):
@@ -438,6 +468,7 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
         "com_anexo": com_anexo,
         "sem_saldo": sem_saldo,
         "saldo_parcial": parcial,
+        "saldo_negativo": negativo,
         "confrontados": len(desvios),
         "mediana": round(mediana, 2),
         "ate_1": _faixa(1.0),
@@ -797,9 +828,18 @@ def montar_carteira_nacional(store: Store,
                else "cnpj_ente, segmento, valor_total, limite_cmn")
     fora = fora or frozenset()
     linhas_fora = linhas_fora or frozenset()
-    linhas = [dict(linha) for linha in store.consultar(
-        "SELECT rowid AS rowid, {} FROM dair_carteira".format(colunas))
-        if linha["rowid"] not in linhas_fora and linha["cnpj_ente"] not in fora]
+    # A competência mais recente, e só ela: com duas no banco o patrimônio
+    # nacional dobraria sem que um centavo tivesse sido aplicado.
+    if competencia.get("ano") is not None:
+        cru = store.consultar(
+            "SELECT rowid AS rowid, {} FROM dair_carteira "
+            "WHERE ano = ? AND mes = ?".format(colunas),
+            (competencia["ano"], competencia["mes"]))
+    else:
+        cru = store.consultar(
+            "SELECT rowid AS rowid, {} FROM dair_carteira".format(colunas))
+    linhas = [dict(linha) for linha in cru
+              if linha["rowid"] not in linhas_fora and linha["cnpj_ente"] not in fora]
 
     total = sum(linha.get("valor_total") or 0.0 for linha in linhas)
 
@@ -1019,6 +1059,7 @@ def _montar_contabil(store: Store, cnpj: str,
     por_conta = {(l["coluna"], l["cod_conta"]): l["valor"] for l in do_periodo}
 
     fundos, investido, caixa, com_saldo = [], 0.0, 0.0, False
+    negativo = False
     for chave, rotulo, cod_inv, cod_caixa, cod_rec, cod_desp in _FUNDOS_DO_RREO:
         inv = por_conta.get((_COLUNA_SALDO, cod_inv))
         cx = por_conta.get((_COLUNA_SALDO, cod_caixa))
@@ -1030,6 +1071,15 @@ def _montar_contabil(store: Store, cnpj: str,
             com_saldo = True
             investido += inv or 0.0
             caixa += cx or 0.0
+        # Saldo negativo não é carteira. Em 17/09/2026, 154 dos 1.432 entes
+        # confrontáveis traziam ao menos uma conta de saldo negativa — quase
+        # todas de caixa, que é onde cabe um descoberto bancário ou uma
+        # reclassificação contábil. Somá-la à carteira e dividir por esse total
+        # produz divergência a partir de um denominador que pode ser negativo:
+        # Igarassu/PE aparecia com −130% contra o CADPREV. O número existe e é
+        # declarado; o que não existe é a comparação.
+        if (inv is not None and inv < 0) or (cx is not None and cx < 0):
+            negativo = True
         fundos.append({
             "chave": chave, "rotulo": rotulo,
             "investimentos": inv, "caixa": cx,
@@ -1050,7 +1100,7 @@ def _montar_contabil(store: Store, cnpj: str,
     # carteira inteira do CADPREV: Doutor Maurício Cardoso/RS declarava só os
     # setenta e cinco mil da taxa de administração, e o painel anunciava 99,8%
     # de divergência contra os quarenta e sete milhões da carteira.
-    completo = com_saldo and all(
+    completo = com_saldo and not negativo and all(
         fundo["investimentos"] is not None or fundo["caixa"] is not None
         for fundo in fundos
         if fundo["receitas"] is not None or fundo["despesas"] is not None)
@@ -1069,6 +1119,7 @@ def _montar_contabil(store: Store, cnpj: str,
         "demonstrativo": do_periodo[0].get("demonstrativo"),
         "fundos": fundos,
         "com_saldo": com_saldo,
+        "saldo_negativo": negativo,
         "saldo_completo": completo,
         "investimentos": round(investido, 2) if com_saldo else None,
         "caixa": round(caixa, 2) if com_saldo else None,
@@ -1562,6 +1613,20 @@ MARGEM_DO_LIMITE = 0.05
 NORMA_DOS_INVESTIMENTOS = "Resolução CMN 5.272/2025"
 
 
+def _da_competencia_recente(linhas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Só as linhas da competência mais recente do conjunto.
+
+    A mesma disciplina de ``_do_ultimo_envio`` no DRAA: a fonte pode devolver
+    várias versões da mesma coisa, e o painel escolhe uma em vez de somar.
+    """
+    competencias = [(l.get("ano"), l.get("mes")) for l in linhas
+                    if l.get("ano") is not None and l.get("mes") is not None]
+    if not competencias:
+        return linhas
+    recente = max(competencias)
+    return [l for l in linhas if (l.get("ano"), l.get("mes")) == recente]
+
+
 def _competencias_do_dair(store: Store) -> Dict[str, Any]:
     """A que mês a carteira se refere — pergunta que a tela não respondia.
 
@@ -1618,8 +1683,13 @@ def _montar_carteira_ente(store: Store, cnpj: str,
     colunas = ("rowid AS rowid, ano, mes, segmento, tipo_ativo, nome_ativo,"
                " limite_cmn, valor_total, perc_recursos, pl_fundo, perc_pl_fundo")
     linhas = _varios(store, "dair_carteira", colunas, cnpj,
-                     ordem="valor_total DESC", limite=5000)
+                     ordem="valor_total DESC", limite=40000)
     linhas_fora = linhas_fora or frozenset()
+    # Uma competência por vez. O DAIR é mensal e a base pode guardar várias —
+    # a tela detalhada existe justamente para comparar uma com a outra. Somar
+    # junho com agosto contaria o mesmo dinheiro duas vezes, e o total do país
+    # cresceria a cada competência ingerida sem que nada tivesse sido aplicado.
+    linhas = _da_competencia_recente(linhas)
     excluidas = [l for l in linhas if l["rowid"] in linhas_fora]
     linhas = [l for l in linhas if l["rowid"] not in linhas_fora]
     if not linhas:
@@ -1728,6 +1798,121 @@ def _montar_carteira_ente(store: Store, cnpj: str,
         "competencia": ("{:04d}-{:02d}".format(linhas[0]["ano"], linhas[0]["mes"])
                         if linhas[0].get("ano") and linhas[0].get("mes") else None),
     }
+
+
+def montar_carteira_detalhe(store: Store, cnpj: str,
+                            linhas_fora: Optional[AbstractSet[int]] = None
+                            ) -> Dict[str, Any]:
+    """A carteira inteira, ativo a ativo, em cada competência que a base tem.
+
+    Arquivo próprio, carregado só quando alguém abre a tela detalhada: a ficha
+    do ente tem poucos KB porque mostra as dez maiores posições, e um RPPS
+    grande declara centenas de ativos. Juntar tudo num arquivo só faria toda
+    visita pagar o custo de uma tela que poucas visitas abrem.
+
+    Uma competência por bloco, sem somar entre elas: a posição de junho e a de
+    agosto são fotos do mesmo patrimônio em momentos diferentes, e somá-las
+    contaria o mesmo dinheiro duas vezes. O que dá para fazer — e a tela faz —
+    é olhar uma de cada vez e comparar os totais.
+    """
+    colunas = ("rowid AS rowid, ano, mes, segmento, tipo_ativo, nome_ativo,"
+               " identificacao_ativo, limite_cmn, quantidade_cotas,"
+               " valor_unitario, valor_total, perc_recursos, pl_fundo,"
+               " perc_pl_fundo")
+    linhas = _varios(store, "dair_carteira", colunas, cnpj,
+                     ordem="ano DESC, mes DESC, valor_total DESC", limite=40000)
+    if not linhas:
+        return {"disponivel": False}
+    linhas_fora = linhas_fora or frozenset()
+
+    por_competencia: Dict[tuple, List[Dict[str, Any]]] = {}
+    for linha in linhas:
+        por_competencia.setdefault((linha.get("ano"), linha.get("mes")), []).append(linha)
+
+    competencias = []
+    for (ano, mes), do_mes in sorted(por_competencia.items(),
+                                     key=lambda kv: kv[0], reverse=True):
+        validas = [l for l in do_mes if l["rowid"] not in linhas_fora]
+        excluidas = [l for l in do_mes if l["rowid"] in linhas_fora]
+        if not validas:
+            continue
+        total = sum(l.get("valor_total") or 0.0 for l in validas)
+        da_fonte = not excluidas and all(
+            l.get("perc_recursos") is not None for l in validas)
+
+        def _perc(linha) -> float:
+            if da_fonte:
+                return linha.get("perc_recursos") or 0.0
+            return _pct(linha.get("valor_total") or 0.0, total)
+
+        por_segmento: Dict[str, Dict[str, Any]] = {}
+        por_classe: Dict[tuple, Dict[str, Any]] = {}
+        itens = []
+        for linha in validas:
+            segmento = (linha.get("segmento") or "Não informado").strip()
+            classe = (linha.get("tipo_ativo") or "Não informada").strip()
+            perc = _perc(linha)
+            valor = linha.get("valor_total") or 0.0
+
+            alvo = por_segmento.setdefault(segmento, {
+                "rotulo": segmento, "valor": 0.0, "perc": 0.0, "ativos": 0})
+            alvo["valor"] += valor
+            alvo["perc"] += perc
+            alvo["ativos"] += 1
+
+            item = por_classe.setdefault((segmento, classe), {
+                "segmento": segmento, "rotulo": classe, "valor": 0.0,
+                "perc": 0.0, "ativos": 0, "limite": linha.get("limite_cmn")})
+            item["valor"] += valor
+            item["perc"] += perc
+            item["ativos"] += 1
+            if item["limite"] is None:
+                item["limite"] = linha.get("limite_cmn")
+
+            itens.append({
+                "nome": linha.get("nome_ativo") or classe or "—",
+                "identificacao": linha.get("identificacao_ativo"),
+                "segmento": segmento,
+                "classe": classe,
+                "cotas": linha.get("quantidade_cotas"),
+                "valor_unitario": linha.get("valor_unitario"),
+                "valor": round(valor, 2),
+                "perc": round(perc, 2),
+                "pl_fundo": linha.get("pl_fundo"),
+                "perc_pl_fundo": linha.get("perc_pl_fundo"),
+            })
+
+        segmentos = [
+            dict(d, valor=round(d["valor"], 2), perc=round(d["perc"], 2))
+            for d in sorted(por_segmento.values(),
+                            key=lambda x: x["valor"], reverse=True)]
+        classes = []
+        for dados in sorted(por_classe.values(), key=lambda c: c["valor"], reverse=True):
+            perc = round(dados["perc"], 2)
+            limite = dados["limite"]
+            classes.append(dict(
+                dados, valor=round(dados["valor"], 2), perc=perc,
+                excede=bool(limite is not None and perc > limite + MARGEM_DO_LIMITE),
+                folga=(round(limite - perc, 2) if limite is not None else None)))
+
+        competencias.append({
+            "ano": ano, "mes": mes,
+            "competencia": ("{:04d}-{:02d}".format(ano, mes)
+                            if ano and mes else None),
+            "total": round(total, 2),
+            "ativos": len(validas),
+            "percentual_da_fonte": da_fonte,
+            "excluidas": len(excluidas),
+            "valor_excluido": round(sum(l.get("valor_total") or 0.0
+                                        for l in excluidas), 2),
+            "segmentos": segmentos,
+            "classes": classes,
+            "itens": itens,
+        })
+
+    if not competencias:
+        return {"disponivel": False}
+    return {"disponivel": True, "cnpj": cnpj, "competencias": competencias}
 
 
 def _montar_atuaria(store: Store, cnpj: str) -> Dict[str, Any]:
@@ -1929,8 +2114,14 @@ def _resumir_custeio(custeio: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # Orquestração
 # ---------------------------------------------------------------------------
 
+#: Sufixos dos arquivos auxiliares de um ente, além da própria ficha. Existem
+#: aqui para que a limpeza de órfãos saiba a que CNPJ cada arquivo pertence —
+#: sem isso ela apagaria o detalhe da carteira logo depois de gravá-lo.
+_SUFIXOS_DO_ENTE = ("-carteira",)
+
+
 def _limpar_fichas_orfas(dir_saida: str, mantidos: AbstractSet[str]) -> int:
-    """Apaga fichas de entes que esta construção não gerou."""
+    """Apaga arquivos de entes que esta construção não gerou."""
     pasta = os.path.join(dir_saida, "ente")
     if not os.path.isdir(pasta):
         return 0
@@ -1938,7 +2129,12 @@ def _limpar_fichas_orfas(dir_saida: str, mantidos: AbstractSet[str]) -> int:
     for nome in os.listdir(pasta):
         if not nome.endswith(".json"):
             continue
-        if nome[:-5] in mantidos:
+        base = nome[:-5]
+        for sufixo in _SUFIXOS_DO_ENTE:
+            if base.endswith(sufixo):
+                base = base[:-len(sufixo)]
+                break
+        if base in mantidos:
             continue
         os.remove(os.path.join(pasta, nome))
         apagadas += 1
@@ -2010,6 +2206,12 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
         ficha = montar_ente(store, cnpj, dados, linhas_fora)
         fichas[cnpj] = ficha
         _gravar(os.path.join("ente", cnpj + ".json"), ficha, dir_saida)
+        # A carteira ativo a ativo vai em arquivo separado: quem só abre a
+        # ficha não paga o custo de centenas de linhas que não vai ver.
+        detalhe = montar_carteira_detalhe(store, cnpj, linhas_fora)
+        if detalhe.get("disponivel"):
+            _gravar(os.path.join("ente", cnpj + "-carteira.json"),
+                    detalhe, dir_saida)
 
     # Ficha de ente que saiu da base continuaria sendo servida: o índice não a
     # lista mais, mas o arquivo responde a quem tiver o link antigo — e responde

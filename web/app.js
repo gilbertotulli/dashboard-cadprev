@@ -13,7 +13,10 @@
   var estado = { meta: null, entes: [], cnpj: null, aba: "panorama", cache: {},
                  referencia: "brasil", selecao: [], selecaoUf: "",
                  selecaoAberta: false,
-                 filtros: null, chaves: null };
+                 filtros: null, chaves: null,
+                 // Competência escolhida na carteira detalhada. Nula = a mais
+                 // recente que o ente tem.
+                 competencia: null };
   var conteudo = document.getElementById("conteudo");
 
   // ------------------------------------------------------------ utilidades
@@ -204,8 +207,13 @@
                        texto: c.t });
     }))]);
     var tbody = h("tbody", {}, linhas);
+    /* `larga` aceita `true` para o mínimo de 560px e "extra" para tabelas de
+     * sete ou mais colunas, que no mínimo padrão espremem números a ponto de
+     * quebrar "R$ 911,2 mi" em duas linhas. */
+    var classe = "dados" + (larga === "extra" ? " larga extra"
+                            : (larga ? " larga" : ""));
     return h("div", { class: "rolar" },
-      [h("table", { class: "dados" + (larga ? " larga" : "") }, [thead, tbody])]);
+      [h("table", { class: classe }, [thead, tbody])]);
   }
 
   function vazio(titulo, texto, extra) {
@@ -745,6 +753,10 @@
         cabecalhoEnte(e),
         h("div", { class: "contexto" }, [
           h("span", { class: "pilula" }, ["Ente ", h("b", { texto: e.ente })]),
+          h("button", {
+            class: "link limpar", texto: "ver carteira completa, ativo a ativo",
+            onclick: function () { irParaAba("carteira-detalhe", estado.cnpj); }
+          }),
           h("button", {
             class: "link limpar", texto: "ver o agregado nacional",
             onclick: function () { irParaAba("carteira", null); }
@@ -2094,7 +2106,18 @@
           ]), true))
     ];
 
-    if (!c.confronto && c.com_saldo && !c.saldo_completo) {
+    if (c.saldo_negativo) {
+      nos.push(h("div", { class: "aviso-linha" }, [
+        h("span", { class: "ico", texto: "\u26a0" }),
+        h("span", { texto:
+          "Uma das contas de saldo deste ente é negativa — descoberto bancário " +
+          "ou reclassificação contábil. É número declarado e legítimo, mas não " +
+          "é carteira: somá-lo e comparar com o CADPREV produziria uma " +
+          "divergência calculada sobre um total negativo." })
+      ]));
+    }
+
+    if (!c.confronto && c.com_saldo && !c.saldo_negativo && !c.saldo_completo) {
       nos.push(h("div", { class: "aviso-linha" }, [
         h("span", { class: "ico", texto: "\u26a0" }),
         h("span", { texto:
@@ -2350,23 +2373,28 @@
               dv.perc_ate_5 >= 50 ? "bom" : ""),
             kpi("Acima de 5%", num(dv.acima_5, 0), "vale conferir na fonte",
               dv.acima_5 ? "ruim" : "bom"),
-            kpi("Sem confronto possível", num(dv.sem_saldo + dv.saldo_parcial, 0),
+            kpi("Sem confronto possível",
+              num(dv.sem_saldo + dv.saldo_parcial + (dv.saldo_negativo || 0), 0),
               "de " + num(dv.com_anexo, 0) + " com Anexo 04")
           ]));
           nos.push(tabela([{ t: "Situação" }, { t: "Entes", n: true }], [
             ["Entregaram o Anexo 04 sem o saldo das aplicações", dv.sem_saldo],
             ["Declararam saldo de um fundo e omitiram o de outro", dv.saldo_parcial],
+            ["Declararam saldo negativo em alguma conta", dv.saldo_negativo || 0],
             ["Confrontáveis com a carteira do CADPREV", dv.confrontados]
           ].map(function (l) {
             return h("tr", {}, [
               h("td", { texto: l[0] }),
               h("td", { class: "n", texto: num(l[1], 0) })
             ]);
-          }), true));
+          }).concat([
+            linhaTotal("Entes com Anexo 04 no banco", [num(dv.com_anexo, 0)])
+          ]), true));
           nos.push(h("p", { class: "nota", texto:
-            "Ausência de saldo não é saldo zero, e soma parcial não é soma. Os " +
-            "dois casos saem do confronto em vez de virar divergência: tratá-los " +
-            "como zero acusaria um em cada seis RPPS de uma diferença que a " +
+            "Ausência de saldo não é saldo zero, soma parcial não é soma e " +
+            "saldo negativo não é carteira. Os três casos saem do confronto em " +
+            "vez de virar divergência: tratá-los como número comparável " +
+            "acusaria um em cada quatro RPPS de uma diferença que a " +
             "fonte nunca declarou." }));
         }
 
@@ -2687,11 +2715,177 @@
     });
   }
 
+  /* ------------------------------------------- carteira, tela detalhada
+   *
+   * A aba Carteira responde "como está a carteira": alocação, enquadramento e
+   * as maiores posições. Esta tela responde outra pergunta — "o que exatamente
+   * há nela" —, e por isso mostra todos os ativos, os totais de cada segmento e
+   * de cada classe, e permite trocar de competência.
+   *
+   * Vem em arquivo próprio, carregado só aqui: um RPPS grande declara centenas
+   * de ativos, e fazer toda visita à ficha pagar por isso seria cobrar de
+   * muitos o custo de poucos.
+   */
+  function abaCarteiraDetalhe() {
+    if (!estado.cnpj) return Promise.resolve([semEnte("Carteira detalhada")]);
+    return Promise.all([
+      carregarEnte(),
+      buscar("ente/" + estado.cnpj + "-carteira.json").catch(function () { return null; })
+    ]).then(function (r) {
+      var e = r[0], d = r[1];
+      if (!d || !d.disponivel || !(d.competencias || []).length) {
+        return [h("h2", { class: "secao", texto: "Carteira detalhada" }),
+                cabecalhoEnte(e), semDado("carteira", "DAIR_CARTEIRA")];
+      }
+
+      var quais = d.competencias;
+      var escolhida = quais.filter(function (c) {
+        return c.competencia === estado.competencia;
+      })[0] || quais[0];
+      var norma = (estado.meta || {}).norma_dos_investimentos || "norma vigente";
+
+      var seletor = h("div", { class: "opcoes" }, quais.map(function (c) {
+        var botao = h("button", {
+          class: "opcao" + (c === escolhida ? " on" : "")
+        }, [
+          h("div", { class: "t", texto: competencia(c.competencia) || "—" }),
+          h("div", { class: "n", texto: num(c.ativos, 0) + " ativos · " + reais(c.total) })
+        ]);
+        botao.addEventListener("click", function () {
+          estado.competencia = c.competencia;
+          render();
+        });
+        return botao;
+      }));
+
+      /* Variação contra a competência anterior: é a pergunta que ter três meses
+       * na tela levanta, e a única que não se responde olhando uma de cada vez. */
+      var indice = quais.indexOf(escolhida);
+      var anterior = quais[indice + 1];
+      var variacao = (anterior && anterior.total)
+        ? (escolhida.total - anterior.total) / anterior.total * 100 : null;
+
+      var nos = [
+        h("h2", { class: "secao", texto: "Carteira detalhada" }),
+        cabecalhoEnte(e),
+        h("div", { class: "contexto" }, [
+          h("span", { class: "pilula" }, ["Ente ", h("b", { texto: e.ente })]),
+          h("button", {
+            class: "link limpar", texto: "voltar à visão da carteira",
+            onclick: function () { irParaAba("carteira", estado.cnpj); }
+          })
+        ]),
+        h("p", { class: "intro", texto:
+          "Todos os ativos declarados no DAIR, com os totais de cada segmento e " +
+          "de cada classe. Cada competência é uma posição fechada — elas não se " +
+          "somam, comparam-se." }),
+        cartao("Competência", "DAIR_CARTEIRA",
+          quais.length > 1
+            ? "As " + quais.length + " competências que a base guarda"
+            : "A única competência na base",
+          seletor),
+        h("div", { class: "kpis" }, [
+          kpi("Patrimônio da carteira", reais(escolhida.total),
+            "posição de " + (competencia(escolhida.competencia) || "—")),
+          kpi("Ativos declarados", num(escolhida.ativos, 0),
+            escolhida.segmentos.length + " segmentos · " +
+            escolhida.classes.length + " classes"),
+          kpi("Variação sobre a competência anterior",
+            variacao === null ? "—" : (variacao >= 0 ? "+" : "−") +
+              pct(Math.abs(variacao), 2),
+            anterior ? "contra " + competencia(anterior.competencia)
+                     : "sem competência anterior na base"),
+          kpi("Maior posição isolada",
+            escolhida.itens.length ? pct(escolhida.itens[0].perc, 2) : "—",
+            escolhida.itens.length ? escolhida.itens[0].nome : "")
+        ])
+      ];
+
+      if (escolhida.excluidas) {
+        nos.push(h("div", { class: "aviso-linha" }, [
+          h("span", { class: "ico", texto: "\u26a0" }),
+          h("span", { html:
+            num(escolhida.excluidas, 0) + " lançamento(s) desta competência " +
+            "ficaram fora do total: a própria base os contradiz, no valor " +
+            "declarado de " + reaisExatos(escolhida.valor_excluido) + ". " +
+            "<a href=\"#/qualidade\">Ver a evidência</a>." })
+        ]));
+      }
+
+      nos.push(h("div", { class: "grade duas" }, [
+        cartao("Total por segmento", "DAIR_CARTEIRA",
+          "Posição de " + (competencia(escolhida.competencia) || "—"),
+          tabela([{ t: "Segmento" }, { t: "Ativos", n: true },
+                  { t: "Valor", n: true }, { t: "% dos recursos", n: true }],
+            escolhida.segmentos.map(function (x) {
+              return h("tr", {}, [
+                h("td", { texto: x.rotulo }),
+                h("td", { class: "n", texto: num(x.ativos, 0) }),
+                h("td", { class: "n", texto: reais(x.valor) }),
+                h("td", { class: "n", texto: pct(x.perc, 2) })
+              ]);
+            }).concat([
+              linhaTotal("Total", [num(escolhida.ativos, 0), reais(escolhida.total),
+                pct(escolhida.segmentos.reduce(function (a, x) { return a + x.perc; }, 0), 2)])
+            ]))),
+        cartao("Total por classe de ativo", "DAIR_CARTEIRA · pc_cmn",
+          "Cada classe contra o teto dela (" + norma + ")",
+          tabela([{ t: "Classe" }, { t: "Valor", n: true },
+                  { t: "%", n: true }, { t: "Teto", n: true }],
+            escolhida.classes.map(function (x) {
+              return h("tr", {}, [
+                h("td", { texto: classeCurta(x.rotulo), title: x.rotulo }),
+                h("td", { class: "n", texto: reais(x.valor) }),
+                h("td", { class: "n" + (x.excede ? " ruim" : ""), texto: pct(x.perc, 2) }),
+                h("td", { class: "n", texto: x.limite === null ||
+                          x.limite === undefined ? "sem teto" : pct(x.limite, 0) })
+              ]);
+            }).concat([
+              linhaTotal("Total", [reais(escolhida.total),
+                pct(escolhida.classes.reduce(function (a, x) { return a + x.perc; }, 0), 2), ""])
+            ])))
+      ]));
+
+      nos.push(cartao("Todos os ativos", "DAIR_CARTEIRA",
+        num(escolhida.ativos, 0) + " ativos na posição de " +
+        (competencia(escolhida.competencia) || "—") +
+        " · quantidade × valor unitário tem de bater com o valor total" +
+        (escolhida.percentual_da_fonte ? "" :
+          " · percentual recalculado sobre o total corrigido"),
+        tabela([{ t: "Ativo" }, { t: "Classe" }, { t: "Quantidade", n: true },
+                { t: "Valor unitário", n: true }, { t: "Valor total", n: true },
+                { t: "% dos recursos", n: true }, { t: "% do PL do fundo", n: true }],
+          escolhida.itens.map(function (i) {
+            return h("tr", {}, [
+              h("td", {}, [
+                h("div", { texto: i.nome }),
+                h("div", { class: "nota", texto: i.segmento || "" })
+              ]),
+              h("td", { texto: classeCurta(i.classe), title: i.classe || "" }),
+              h("td", { class: "n", texto: i.cotas === null || i.cotas === undefined
+                        ? "—" : num(i.cotas, 4) }),
+              h("td", { class: "n", texto: i.valor_unitario === null ||
+                        i.valor_unitario === undefined
+                          ? "—" : reaisExatos(i.valor_unitario) }),
+              h("td", { class: "n", texto: reais(i.valor) }),
+              h("td", { class: "n", texto: pct(i.perc, 2) }),
+              h("td", { class: "n " + ((i.perc_pl_fundo || 0) > 10 ? "alerta" : ""),
+                        texto: pct(i.perc_pl_fundo) })
+            ]);
+          }).concat([
+            linhaTotal("Total da carteira", ["", "", "", reais(escolhida.total),
+              pct(escolhida.itens.reduce(function (a, i) { return a + i.perc; }, 0), 2), ""])
+          ]), "extra")));
+      return nos;
+    });
+  }
+
   var ABAS = {
     panorama: abaPanorama, ficha: abaFicha, caixa: abaCaixa,
     carteira: abaCarteiraEnte, atuaria: abaAtuaria,
     comparativo: abaComparativo, conformidade: abaConformidade,
     militares: abaMilitares, qualidade: abaQualidade,
+    "carteira-detalhe": abaCarteiraDetalhe,
     ajuda: abaAjuda
   };
 
@@ -2824,6 +3018,7 @@
     var bruto = (location.hash || "#/panorama").split("?")[0];
     var partes = bruto.replace(/^#\/?/, "").split("/");
     if (partes[0] === "ente" && partes[1]) {
+      if (estado.cnpj && estado.cnpj !== partes[1]) estado.competencia = null;
       estado.cnpj = partes[1];
       estado.aba = partes[2] || "ficha";
     } else {
@@ -2841,6 +3036,9 @@
   }
 
   function irParaEnte(cnpj) {
+    // A competência escolhida é do ente que estava aberto; carregá-la noutro
+    // mostraria um mês que ele talvez não tenha.
+    estado.competencia = null;
     var aba = ["ficha", "caixa", "carteira", "atuaria", "comparativo"].indexOf(estado.aba) >= 0
       ? estado.aba : "ficha";
     location.hash = comChaves("#/ente/" + cnpj + "/" + aba);

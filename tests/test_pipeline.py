@@ -321,8 +321,21 @@ class TestPipeline(unittest.TestCase):
         """Patrimônio sem competência é valor sem data."""
         nacional = self._nacional("carteira-nacional.json")
         self.assertTrue(nacional["competencia"])
-        self.assertFalse(nacional["varias"],
-                         "somar competências diferentes conta o mesmo dinheiro duas vezes")
+        # A base guarda várias competências — a tela detalhada compara meses —
+        # e o agregado usa exatamente uma. Somá-las contaria o mesmo dinheiro
+        # duas vezes e o patrimônio do país cresceria a cada carga.
+        self.assertTrue(nacional["varias"],
+                        "o demo precisa de mais de uma competência no banco")
+        detalhe = self._json(os.path.join(
+            "ente", self._json("entes.json")[0]["cnpj"] + "-carteira.json"))
+        self.assertGreater(len(detalhe["competencias"]), 1)
+        recente = detalhe["competencias"][0]
+        self.assertEqual(recente["competencia"], nacional["competencia"])
+        soma_de_tudo = sum(c["total"] for c in detalhe["competencias"])
+        ficha = self._json(os.path.join(
+            "ente", self._json("entes.json")[0]["cnpj"] + ".json"))["carteira"]
+        self.assertAlmostEqual(ficha["total"], recente["total"], places=2)
+        self.assertLess(ficha["total"], soma_de_tudo)
         self.assertEqual(self._json("meta.json")["competencia_dair"],
                          nacional["competencia"])
         for ente in self._json("entes.json"):
@@ -859,21 +872,45 @@ class TestComposicaoContabil(unittest.TestCase):
             c = ficha.get("contabil") or {}
             if not c.get("disponivel") or not c.get("com_saldo"):
                 continue
-            if c.get("saldo_completo"):
-                continue
+            if c.get("saldo_completo") or c.get("saldo_negativo"):
+                continue  # o saldo negativo é outro caso, com teste próprio
             achou = True
             self.assertIsNone(c.get("confronto"))
             self.assertTrue(any(f["recursos"] is None and f["receitas"] is not None
                                 for f in c["fundos"]))
         self.assertTrue(achou, "o demo precisa conter um ente com saldo parcial")
 
+    def test_saldo_negativo_sai_do_confronto(self):
+        """Descoberto bancário é número legítimo e não é carteira.
+
+        Em 17/09/2026, 154 dos 1.432 entes confrontáveis traziam ao menos uma
+        conta de saldo negativa — quase todas de caixa. Somá-la à carteira e
+        dividir por esse total produz divergência calculada sobre denominador
+        negativo: Igarassu/PE aparecia com −130% contra o CADPREV.
+        """
+        achou = False
+        for ente in self._fichas():
+            contabil = ente.get("contabil") or {}
+            if not contabil.get("saldo_negativo"):
+                continue
+            achou = True
+            self.assertIsNone(contabil.get("confronto"),
+                              "saldo negativo não pode virar divergência")
+            self.assertTrue(any((f.get("investimentos") or 0) < 0
+                                or (f.get("caixa") or 0) < 0
+                                for f in contabil["fundos"]))
+        self.assertTrue(achou, "o demo precisa de um ente com saldo negativo")
+
     def test_distribuicao_nacional_da_divergencia(self):
         with open(os.path.join(self.saida, "qualidade.json"), encoding="utf-8") as fh:
             dv = json.load(fh)["divergencia_entre_fontes"]
         self.assertTrue(dv["disponivel"])
+        # As três razões de não confrontar, mais os confrontados, fecham o
+        # universo. Uma razão que não aparecesse aqui viraria divergência.
         self.assertEqual(
             dv["com_anexo"],
-            dv["sem_saldo"] + dv["saldo_parcial"] + dv["confrontados"])
+            dv["sem_saldo"] + dv["saldo_parcial"] + dv["saldo_negativo"]
+            + dv["confrontados"])
         self.assertLessEqual(dv["ate_1"], dv["ate_5"])
         self.assertEqual(dv["ate_5"] + dv["acima_5"], dv["confrontados"])
 

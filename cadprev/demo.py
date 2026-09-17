@@ -34,6 +34,11 @@ DIR_DEMO = os.path.join(RAIZ, "fixtures", "demo")
 ANO = 2026
 MES_DAIR = 8
 
+#: As competências do DAIR que a amostra traz. Mais de uma de propósito: a tela
+#: detalhada da carteira compara meses, e é com várias no banco que se prova que
+#: os agregados nacionais escolhem uma em vez de somar todas.
+_COMPETENCIAS_DO_DAIR = (MES_DAIR, MES_DAIR - 1, MES_DAIR - 2)
+
 _ENTES = [
     # (uf, nome, esfera esperada, porte relativo)
     ("SP", "Governo do Estado de São Paulo", 240.0),
@@ -346,47 +351,57 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
             fatias.append((segmento, classe, teto, peso))
         soma = sum(f[3] for f in fatias) or 1.0
 
-        for ordem, (segmento, classe, teto, peso) in enumerate(fatias):
-            valor_classe = patrimonio * peso / soma
-            ativos = 1 if segmento == "Disponibilidades Financeiras" else rnd.randint(1, 3)
-            for n in range(ativos):
-                valor = valor_classe / ativos
-                fundo_id, fundo_nome = _fundo(segmento, ordem * 4 + n)
-                # Conta e caixa não têm PL; fundo tem, e é sempre maior que a
-                # posição de um cotista só.
-                fundo_pl = (None if segmento == "Disponibilidades Financeiras"
-                            else max(_PL_FUNDO, valor * rnd.uniform(8, 300)))
-                cotas = valor / _COTA
-                registro = dict(
-                    ident, dt_ano=ANO, dt_mes_bimestre=MES_DAIR,
-                    no_segmento=segmento,
-                    no_tipo_ativo=classe or "Conta corrente",
-                    pc_cmn=teto, id_ativo=fundo_id, no_fundo=fundo_nome,
-                    qt_rpps="{:.10f}".format(cotas),
-                    vl_atual_ativo="{:.10f}".format(_COTA),
-                    vl_total_atual="{:.2f}".format(valor),
-                    pc_rpps="{:.2f}".format(peso / soma / ativos * 100),
-                    vl_patrimonio="{:.2f}".format(fundo_pl) if fundo_pl else None,
-                    pc_patrimonio="{:.2f}".format(rnd.uniform(0.4, 16.0)))
-                # Um lançamento envenenado, reproduzindo o caso de Santo
-                # Afonso/MT: a cota digitada com a vírgula seis casas à direita.
-                # A menor classe da carteira de um município pequeno: é assim
-                # que o caso real se parece — R$ 3,16 tri saídos de uma posição
-                # de poucos milhões. Numa classe grande a posição envenenada
-                # passaria de 9e13 reais, ponto em que o float64 deixa de
-                # representar centavos e o demo passa a testar a aritmética da
-                # linguagem em vez da regra do painel.
-                if (indice == _ENTE_ENVENENADO
-                        and segmento == "Empréstimos Consignados" and n == 0):
-                    registro["vl_atual_ativo"] = "{:.10f}".format(_COTA * 1e6)
-                    registro["vl_total_atual"] = "{:.2f}".format(valor * 1e6)
-                    registro["pc_patrimonio"] = "1611016.66"
-                if nivel_a:
-                    registro["ds_plano"] = (
-                        "TAXA DE ADMINISTRAÇÃO" if n == 0 and rnd.random() < 0.12
-                        else ("FINANCEIRO" if segregado and rnd.random() < 0.3
-                              else "PREVIDENCIARIO"))
-                tabelas["DAIR_CARTEIRA"].append(registro)
+        # Três competências, como a base real passa a ter quando a tela
+        # detalhada permite comparar meses. É esta amostra que garante que os
+        # agregados nacionais não somem competências: com três no banco, um
+        # total que somasse meses daria quase o triplo do patrimônio real.
+        for competencia in _COMPETENCIAS_DO_DAIR:
+            if indice in _ENTES_DEFASADOS and competencia > 2:
+                continue  # quem parou de entregar não tem as últimas
+            # A carteira se move de um mês para o outro; o que não muda é a
+            # identidade quantidade × cota = valor total.
+            deriva = 1.0 + (competencia - MES_DAIR) * 0.012
+            for ordem, (segmento, classe, teto, peso) in enumerate(fatias):
+                valor_classe = patrimonio * peso / soma * deriva
+                ativos = (1 if segmento == "Disponibilidades Financeiras"
+                          else rnd.randint(1, 3))
+                for n in range(ativos):
+                    valor = valor_classe / ativos
+                    fundo_id, fundo_nome = _fundo(segmento, ordem * 4 + n)
+                    # Conta e caixa não têm PL; fundo tem, e é sempre maior que
+                    # a posição de um cotista só.
+                    fundo_pl = (None if segmento == "Disponibilidades Financeiras"
+                                else max(_PL_FUNDO, valor * rnd.uniform(8, 300)))
+                    cotas = valor / _COTA
+                    registro = dict(
+                        ident, dt_ano=ANO, dt_mes_bimestre=competencia,
+                        no_segmento=segmento,
+                        no_tipo_ativo=classe or "Conta corrente",
+                        pc_cmn=teto, id_ativo=fundo_id, no_fundo=fundo_nome,
+                        qt_rpps="{:.10f}".format(cotas),
+                        vl_atual_ativo="{:.10f}".format(_COTA),
+                        vl_total_atual="{:.2f}".format(valor),
+                        pc_rpps="{:.2f}".format(peso / soma / ativos * 100),
+                        vl_patrimonio="{:.2f}".format(fundo_pl) if fundo_pl else None,
+                        pc_patrimonio="{:.2f}".format(rnd.uniform(0.4, 16.0)))
+                    # Um lançamento envenenado, reproduzindo o caso de Santo
+                    # Afonso/MT: a cota digitada com a vírgula seis casas à
+                    # direita, na menor classe da carteira de um município
+                    # pequeno. Numa classe grande a posição envenenada passaria
+                    # de 9e13 reais, ponto em que o float64 deixa de representar
+                    # centavos e o demo passa a testar a aritmética da linguagem
+                    # em vez da regra do painel.
+                    if (indice == _ENTE_ENVENENADO
+                            and segmento == "Empréstimos Consignados" and n == 0):
+                        registro["vl_atual_ativo"] = "{:.10f}".format(_COTA * 1e6)
+                        registro["vl_total_atual"] = "{:.2f}".format(valor * 1e6)
+                        registro["pc_patrimonio"] = "1611016.66"
+                    if nivel_a:
+                        registro["ds_plano"] = (
+                            "TAXA DE ADMINISTRAÇÃO" if n == 0 and rnd.random() < 0.12
+                            else ("FINANCEIRO" if segregado and rnd.random() < 0.3
+                                  else "PREVIDENCIARIO"))
+                    tabelas["DAIR_CARTEIRA"].append(registro)
 
         # DAIR_IDENTIFICACAO: o cabeçalho mensal da declaração. É dele que sai a
         # defasagem — quem parou de entregar não some da base, fica com a última
@@ -737,8 +752,12 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
     patrimônio, e uma amostra em que elas não conversam não testaria esse
     confronto — testaria só que a tela desenha.
     """
+    # Só a competência mais recente: o Anexo 04 é uma posição, não um acumulado,
+    # e somar meses daria um patrimônio que nenhuma das duas fontes declara.
     carteira: Dict[str, float] = {}
     for registro in tabelas["DAIR_CARTEIRA"]:
+        if registro["dt_mes_bimestre"] != MES_DAIR:
+            continue
         carteira[registro["nr_cnpj_entidade"]] = carteira.get(
             registro["nr_cnpj_entidade"], 0.0) + float(registro["vl_total_atual"])
 
@@ -754,6 +773,12 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
         # diferença de cem por cento que a fonte nunca declarou.
         sem_saldo = n == 4
         saldo_parcial = n == 6
+        # Um terceiro caso que também não é divergência: o caixa negativo.
+        # Descoberto bancário ou reclassificação contábil — número legítimo,
+        # declarado, e que não é carteira. Somá-lo e dividir por esse total
+        # produzia divergência a partir de denominador negativo em 154 dos
+        # 1.432 entes confrontáveis da base nacional.
+        caixa_negativo = n == 8
         # Uma diferença pequena entre as fontes é o esperado: datas de posição e
         # critérios distintos. Um ente foge da faixa para que a tela tenha o que
         # sinalizar.
@@ -771,7 +796,8 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
             ]
             if not omite_saldo:
                 valores = [("SALDO ATUAL", cod_inv, recursos * 0.98),
-                           ("SALDO ATUAL", cod_caixa, recursos * 0.02)] + valores
+                           ("SALDO ATUAL", cod_caixa,
+                            recursos * (-0.06 if caixa_negativo else 0.02))] + valores
             for coluna, cod, valor in valores:
                 linhas.append(dict(base, coluna=coluna, cod_conta=cod,
                                    conta=cod, valor=round(valor, 2)))
