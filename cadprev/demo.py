@@ -102,6 +102,51 @@ _ENTE_ENVENENADO = 3
 #: Entes que pararam de entregar o DAIR no segundo mês do exercício.
 _ENTES_DEFASADOS = frozenset({5, 11})
 
+#: Entes que reenviaram o DRAA: a API devolve as duas versões convivendo, e
+#: somá-las dobraria o saldo devedor. Em 17/09/2026 isso atingia 176 dos 1.652
+#: entes com plano de amortização.
+_ENTES_REENVIARAM = frozenset({1, 6, 17})
+
+#: A submissão que foi substituída — anterior à válida, e que não pode entrar
+#: em nenhuma soma.
+_ENVIO_SUBSTITUIDO = "{}-03-30 09:00:00.000".format(ANO)
+
+#: Entes com notificação da SPREV. O conjunto real é estreito: em 17/09/2026,
+#: 770 itens em 222 entes, todos sobre segregação de massa.
+_ENTES_NOTIFICADOS = frozenset({0, 4, 12, 20})
+
+#: Ente cujo pagamento não cobre os juros nos primeiros anos, de modo que o
+#: saldo devedor cresce em vez de amortizar.
+_ENTES_SALDO_CRESCENTE = frozenset({0})
+
+#: Situações, com as grafias que a fonte usa — inclusive "pendencia" sem acento.
+_NOTIFICACOES = (
+    ("Consistência - Segregação da Massa",
+     "Resposta analisada. Item sem pendencia"),
+    ("Alteração de Segregação de Massa - Parecer Prévio",
+     "Notificacao respondida fora do prazo. Situacao irregular."),
+    ("Implantação Segregação da Massa - Estudo Técnico",
+     "Notificacao emitida. Aguardando resposta"),
+)
+
+#: Itens de fluxo comparados entre projetado e executado.
+_FLUXOS_COMPARADOS = (
+    (190000, "TOTAL DAS RECEITAS COM CONTRIBUIÇÕES E COMPENSAÇÃO", 1.0),
+    (109001, "Base de Cálculo da Contribuição Normal", 2.4),
+    (240000, "TOTAL DAS DESPESAS COM BENEFÍCIOS DO PLANO", 1.45),
+    (215001, "Plano de Amortização do Déficit Atuarial", 0.32),
+)
+
+
+def _versoes(reenviou, envio_valido):
+    """As submissões de um exercício: a substituída, quando houve, e a válida."""
+    if reenviou:
+        return ((_ENVIO_SUBSTITUIDO,
+                 "Substituída Antes da Recepção dos Arquivos Digitalizados"),
+                (envio_valido, "Documentos Digitalizados"))
+    return ((envio_valido, "Documentos Digitalizados"),)
+
+
 #: Entes cujo CRP venceu há mais de meio ano — irregularidade instalada, e não
 #: renovação em curso. Sem um caso assim o filtro correspondente não teria o
 #: que excluir em nenhum teste.
@@ -163,7 +208,9 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
             "DAIR_CARTEIRA", "DAIR_IDENTIFICACAO",
             "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
             "DRAA_FLUXO_ATUARIAL", "DRAA_VALORES_COMPROMISSOS",
-            "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO")
+            "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO",
+            "DRAA_ENCAMINHAMENTO", "DRAA_NOTIFICACAO",
+            "DRAA_COMPARATIVO_RECEITA", "DRAA_PLANO_AMORTIZACAO")
     }
 
     for indice, (uf, nome, porte) in enumerate(entes):
@@ -369,6 +416,71 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 vl_aliquota=aliquota, vl_contribuicao_esperada=folha * 12 * aliquota / 100,
                 vl_aliquota_definida=aliquota,
                 vl_contribuicao_definida=folha * 12 * aliquota / 100))
+
+        # --- encaminhamento do DRAA, com reenvio para alguns ---
+        envio_valido = "{}-04-{:02d} 10:12:00.000".format(ANO, rnd.randint(3, 28))
+        reenviou = indice in _ENTES_REENVIARAM
+        if reenviou:
+            tabelas["DRAA_ENCAMINHAMENTO"].append(dict(
+                ident, dt_exercicio=ANO, dt_envio=_ENVIO_SUBSTITUIDO,
+                te_situacao="Substituída Antes da Recepção dos Arquivos Digitalizados"))
+        tabelas["DRAA_ENCAMINHAMENTO"].append(dict(
+            ident, dt_exercicio=ANO, dt_envio=envio_valido,
+            te_situacao="Documentos Digitalizados"))
+
+        # --- notificações da SPREV, nos três estados que a fonte usa ---
+        if indice in _ENTES_NOTIFICADOS:
+            for n, (item, situacao) in enumerate(_NOTIFICACOES):
+                tabelas["DRAA_NOTIFICACAO"].append(dict(
+                    ident, nr_notificacao="{:06d}.{:02d}/{}".format(
+                        90000 + indice, n + 1, ANO - 1),
+                    no_tipo_documento="DRAA", no_item_analise=item,
+                    no_situacao_item_analise=situacao,
+                    dt_notificao="{}-03-{:02d} 03:00:00.000".format(ANO - 1, 5 + n),
+                    dt_preclusao="{}-04-{:02d} 03:00:00.000".format(ANO - 1, 5 + n),
+                    dt_resposta=None, nr_prazo_resposta=30))
+
+        # --- projetado contra executado; a diferença é projetado menos
+        # executado, como na fonte, e não o contrário ---
+        for codigo, descricao, base in _FLUXOS_COMPARADOS:
+            projetado = receitas * base
+            executado = projetado * rnd.uniform(0.55, 1.35)
+            for quando, situacao in _versoes(reenviou, envio_valido):
+                tabelas["DRAA_COMPARATIVO_RECEITA"].append(dict(
+                    ident, dt_exercicio=ANO, dt_exercicio_inicial=ANO - 11,
+                    tp_plano="Previdenciário", tp_massa="Civil",
+                    nr_fluxo=codigo, no_fluxo=descricao,
+                    vl_projetado="{:.2f}".format(projetado),
+                    vl_executado="{:.2f}".format(executado),
+                    vl_diferenca="{:.2f}".format(projetado - executado),
+                    dt_envio=quando, te_situacao=situacao))
+
+        # --- plano de amortização ano a ano; o primeiro ente da lista paga
+        # menos que os juros, e por isso vê o saldo crescer ---
+        saldo = patrimonio * 0.9
+        taxa = 5.49
+        paga_pouco = indice in _ENTES_SALDO_CRESCENTE
+        for passo, ano_projetado in enumerate(range(ANO, ANO + 30)):
+            juros = saldo * taxa / 100
+            pagamento = juros * (0.7 if paga_pouco and passo < 4 else 1.0
+                                 ) + saldo * 0.02 * (passo + 1) / 30
+            amortizacao = pagamento - juros
+            saldo_final = max(0.0, saldo - amortizacao)
+            for quando, situacao in _versoes(reenviou, envio_valido):
+                tabelas["DRAA_PLANO_AMORTIZACAO"].append(dict(
+                    ident, dt_exercicio=ANO, tp_plano="Previdenciário",
+                    tp_massa="Civil", dt_ano=ano_projetado, tx_juros=taxa,
+                    vl_saldo_inicial="{:.2f}".format(saldo),
+                    vl_juros="{:.2f}".format(juros),
+                    vl_amortizacao="{:.2f}".format(amortizacao),
+                    vl_pagamentos="{:.2f}".format(pagamento),
+                    vl_aporte="{:.2f}".format(saldo * 0.001),
+                    vl_saldo_final="{:.2f}".format(saldo_final),
+                    vl_base_calculo="{:.2f}".format(folha * 12),
+                    vl_aliquotas=taxa, dt_envio=quando, te_situacao=situacao))
+            saldo = saldo_final
+            if saldo <= 0:
+                break
 
     return tabelas
 def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:

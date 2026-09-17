@@ -382,3 +382,12 @@ table.dados td.n.ruim{color:var(--crit);font-weight:500}
 .resumo-selecao{
   margin:10px 0 0;font-size:.8rem;color:var(--ink-2);font-weight:500;
 }
+
+/* ---------- selos de situação das notificações ---------- */
+.selo-estado{
+  display:inline-block;font-size:.72rem;padding:2px 9px;border-radius:999px;
+  border:1px solid var(--rule-strong);color:var(--ink-2);white-space:nowrap;
+}
+.selo-estado.irregular{border-color:var(--crit);color:var(--crit);font-weight:500}
+.selo-estado.em_curso{border-color:var(--warn);color:var(--ink-2)}
+.selo-estado.encerrado{border-color:var(--ok);color:var(--ok-ink)}

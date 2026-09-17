@@ -450,3 +450,125 @@ class TestChaveSemFonte(unittest.TestCase):
         """A exclusão do lançamento impossível não depende de DAIR nem de CRP."""
         with open(os.path.join(self.saida, "qualidade.json"), encoding="utf-8") as fh:
             self.assertEqual(len(json.load(fh)["achados"]), 1)
+
+
+class TestNovasFontesDoDRAA(unittest.TestCase):
+    """Notificação, encaminhamento, amortização e projetado contra executado."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.mkdtemp(prefix="cadprev-draa-")
+        fixtures = os.path.join(cls.dir, "fx")
+        demo.escrever(fixtures)
+        from cadprev import ingest
+        cls.banco = os.path.join(cls.dir, "t.sqlite3")
+        cls.saida = os.path.join(cls.dir, "data")
+        cliente = Cliente(fixtures=fixtures, pausa=0)
+        with Store(cls.banco) as store:
+            ingest.ingerir_varios(cliente, store, [
+                "RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA",
+                "DRAA_NOTIFICACAO", "DRAA_ENCAMINHAMENTO",
+                "DRAA_COMPARATIVO_RECEITA", "DRAA_PLANO_AMORTIZACAO"])
+            build.construir(store, dir_saida=cls.saida, origem="demonstracao")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def _ficha(self, cnpj):
+        with open(os.path.join(self.saida, "ente", cnpj + ".json"),
+                  encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def _entes(self):
+        with open(os.path.join(self.saida, "entes.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_reenvio_nao_dobra_o_plano_de_amortizacao(self):
+        """A API devolve a versão substituída junto da válida.
+
+        Somá-las dobraria o saldo devedor de um em cada dez RPPS e desenharia
+        duas curvas como se fossem uma.
+        """
+        vistos = 0
+        for ente in self._entes():
+            amort = self._ficha(ente["cnpj"]).get("amortizacao") or {}
+            if not amort.get("disponivel"):
+                continue
+            vistos += 1
+            anos = [a["ano"] for a in amort["anos"]]
+            self.assertEqual(len(anos), len(set(anos)),
+                             "anos repetidos em " + ente["ente"])
+        self.assertTrue(vistos, "o demo precisa gerar plano de amortização")
+
+    def test_reenvio_nao_dobra_o_comparativo(self):
+        for ente in self._entes():
+            pe = self._ficha(ente["cnpj"]).get("projetado_executado") or {}
+            if not pe.get("disponivel"):
+                continue
+            codigos = [i["codigo"] for i in pe["itens"]]
+            self.assertEqual(len(codigos), len(set(codigos)))
+
+    def test_diferenca_e_projetado_menos_executado(self):
+        """O sinal da fonte, conferido: 79.986 linhas nacionais fecham assim, e
+        nenhuma fecha no sentido inverso."""
+        achou = False
+        for ente in self._entes():
+            pe = self._ficha(ente["cnpj"]).get("projetado_executado") or {}
+            if not pe.get("disponivel"):
+                continue
+            achou = True
+            self.assertEqual(pe["conferencia_falhou"], 0)
+            for item in pe["itens"]:
+                self.assertAlmostEqual(
+                    item["projetado"] - item["executado"], item["diferenca"],
+                    places=2)
+        self.assertTrue(achou)
+
+    def test_saldo_crescente_aparece(self):
+        """Pagamento que não cobre os juros faz o saldo subir — e isso não
+        aparece em nenhum total, só na curva."""
+        crescentes = 0
+        for ente in self._entes():
+            amort = self._ficha(ente["cnpj"]).get("amortizacao") or {}
+            if amort.get("disponivel") and any(
+                    (a["amortizacao"] or 0) < 0 for a in amort["anos"]):
+                crescentes += 1
+        self.assertTrue(crescentes)
+
+    def test_notificacao_classificada_pelas_palavras_da_fonte(self):
+        from cadprev import build as b
+        self.assertEqual(
+            b._classificar_notificacao("Notificacao respondida fora do prazo. "
+                                       "Situacao irregular."), "irregular")
+        self.assertEqual(
+            b._classificar_notificacao("Resposta analisada. Item sem pendencia"),
+            "encerrado")
+        self.assertEqual(
+            b._classificar_notificacao("Notificacao cancelada"), "encerrado")
+        self.assertEqual(
+            b._classificar_notificacao("Notificacao emitida. Aguardando resposta"),
+            "em_curso")
+        self.assertEqual(b._classificar_notificacao(None), "em_curso")
+
+    def test_conformidade_nacional_conta_os_estados(self):
+        with open(os.path.join(self.saida, "conformidade.json"),
+                  encoding="utf-8") as fh:
+            variantes = json.load(fh)["variantes"]
+        from cadprev import qualidade
+        c = variantes[qualidade.chave_padrao()]
+        self.assertTrue(c["disponivel"])
+        self.assertTrue(c["entes_notificados"])
+        self.assertEqual(
+            c["itens"],
+            sum(i["irregular"] + i["em_curso"] + i["encerrado"]
+                for i in c["por_item"]))
+
+    def test_ficha_orfa_e_removida(self):
+        """Uma carga menor não pode deixar no ar a ficha de quem saiu da base."""
+        orfa = os.path.join(self.saida, "ente", "99999999999999.json")
+        with open(orfa, "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        with Store(self.banco) as store:
+            build.construir(store, dir_saida=self.saida, origem="demonstracao")
+        self.assertFalse(os.path.exists(orfa))

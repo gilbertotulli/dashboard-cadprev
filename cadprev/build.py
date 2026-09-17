@@ -370,6 +370,76 @@ def _dias_desde(validade: Optional[str], hoje: str) -> Optional[int]:
 
 
 # ---------------------------------------------------------------------------
+# Conformidade — o que o regulador registrou
+# ---------------------------------------------------------------------------
+
+def montar_conformidade_nacional(store: Store,
+                                 entes: Mapping[str, Dict[str, Any]],
+                                 fora: Optional[AbstractSet[str]] = None,
+                                 hoje: Optional[str] = None) -> Dict[str, Any]:
+    """Notificações da SPREV e entrega do DRAA, no agregado.
+
+    O universo destas notificações é estreito e isso precisa ficar dito: em
+    17/09/2026 eram 770 itens em 222 entes, **todos** sobre segregação de massa.
+    Não é um retrato da conformidade geral dos RPPS — é o histórico de um tema
+    específico, que por acaso é um dos mais consequentes.
+    """
+    if not store.tem_tabela("DRAA_NOTIFICACAO"):
+        return {"disponivel": False}
+    hoje = hoje or _hoje()
+    fora = fora or frozenset()
+
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT DISTINCT cnpj_ente, numero, item_analise, situacao_item, "
+        "notificacao, preclusao, resposta, prazo_resposta FROM draa_notificacao")]
+    linhas = [l for l in linhas if l["cnpj_ente"] not in fora]
+
+    por_item: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: {"irregular": 0, "em_curso": 0, "encerrado": 0})
+    estado_do_ente: Dict[str, Dict[str, int]] = defaultdict(
+        lambda: {"irregular": 0, "em_curso": 0, "encerrado": 0})
+    for linha in linhas:
+        estado = _classificar_notificacao(linha.get("situacao_item"))
+        por_item[(linha.get("item_analise") or "Não informado").strip()][estado] += 1
+        estado_do_ente[linha["cnpj_ente"]][estado] += 1
+
+    irregulares = sorted(
+        ({"cnpj": cnpj, "ente": (entes.get(cnpj) or {}).get("ente") or cnpj,
+          "uf": (entes.get(cnpj) or {}).get("uf"), "itens": dados["irregular"]}
+         for cnpj, dados in estado_do_ente.items() if dados["irregular"]),
+        key=lambda d: (-d["itens"], d["ente"] or ""))
+
+    entregas = {}
+    if store.tem_tabela("DRAA_ENCAMINHAMENTO"):
+        for linha in store.consultar(
+                "SELECT cnpj_ente, MAX(exercicio) AS ultimo "
+                "FROM draa_encaminhamento GROUP BY cnpj_ente"):
+            if linha["cnpj_ente"] not in fora:
+                entregas[linha["cnpj_ente"]] = linha["ultimo"]
+    ultimo_exercicio = max(entregas.values()) if entregas else None
+
+    return {
+        "disponivel": True,
+        "referencia": hoje,
+        "escopo": "Notificações da SPREV sobre o DRAA. Em 17/09/2026 o conjunto "
+                  "inteiro tratava de segregação de massa.",
+        "entes_notificados": len(estado_do_ente),
+        "entes_com_irregular": len(irregulares),
+        "itens": len(linhas),
+        "por_item": [
+            dict(rotulo=rotulo, total=sum(dados.values()), **dados)
+            for rotulo, dados in sorted(por_item.items(),
+                                        key=lambda kv: -sum(kv[1].values()))
+        ],
+        "com_irregular": irregulares[:15],
+        "ultimo_exercicio_entregue": ultimo_exercicio,
+        "entregaram_ultimo": sum(1 for v in entregas.values()
+                                 if v == ultimo_exercicio),
+        "com_encaminhamento": len(entregas),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Aba 4 — Carteira, visão nacional
 # ---------------------------------------------------------------------------
 
@@ -508,7 +578,224 @@ def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
     ficha["caixa"] = _montar_caixa(store, cnpj)
     ficha["carteira"] = _montar_carteira_ente(store, cnpj, linhas_fora)
     ficha["atuaria"] = _montar_atuaria(store, cnpj)
+    ficha["amortizacao"] = _montar_amortizacao(store, cnpj)
+    ficha["projetado_executado"] = _montar_projetado_executado(store, cnpj)
+    ficha["conformidade"] = _montar_conformidade(store, cnpj)
     return ficha
+
+
+def _do_ultimo_envio(linhas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Só as linhas da submissão mais recente do exercício.
+
+    O DRAA pode ser reenviado, e a API devolve todas as versões convivendo: a
+    substituída ("Substituída Antes da Recepção dos Arquivos Digitalizados"),
+    a retificada e a válida, com o mesmo exercício e o mesmo ano projetado. Em
+    17/09/2026 isso atingia 176 dos 1.652 entes com plano de amortização e 219
+    dos 1.890 com comparativo de receita — somar as versões dobraria o saldo
+    devedor de um em cada dez RPPS, e o gráfico desenharia duas curvas como se
+    fossem uma.
+
+    A regra é a mesma já usada no CRP: a emissão mais recente é a posição.
+    """
+    envios = [l.get("envio") for l in linhas if l.get("envio")]
+    if not envios:
+        return linhas
+    ultimo = max(envios)
+    return [l for l in linhas if l.get("envio") == ultimo]
+
+
+#: Vocabulário observado em 17/09/2026, nas 770 notificações da base nacional.
+#: A fonte escreve "pendencia" e "pendência", por isso a comparação é sem acento.
+_SITUACAO_IRREGULAR = "irregular"
+_SITUACAO_ENCERRADA = ("sem pendencia", "sem pendencias", "cancelada")
+
+
+def _classificar_notificacao(situacao: Optional[str]) -> str:
+    """Em que estado a SPREV deixou o item: irregular, encerrado ou em curso.
+
+    Quem classifica é a fonte, não o painel. Ela escreve "Situacao irregular"
+    com todas as letras em quatro das nove situações que usa, e escreve
+    "Item sem pendencia" ou "Notificacao cancelada" quando encerrou. Derivar
+    irregularidade por conta própria — comparando a data de preclusão com hoje,
+    por exemplo — produziria uma acusação que o regulador não fez.
+
+    O que sobra fica em curso: respondida, aguardando resposta, em análise. Sem
+    situação declarada também é "em curso", porque afirmar encerramento sem
+    respaldo é o erro mais caro dos três.
+    """
+    termo = _normalizar_situacao(situacao)
+    if _SITUACAO_IRREGULAR in termo:
+        return "irregular"
+    if any(marca in termo for marca in _SITUACAO_ENCERRADA):
+        return "encerrado"
+    return "em_curso"
+
+
+def _montar_conformidade(store: Store, cnpj: str,
+                         hoje: Optional[str] = None) -> Dict[str, Any]:
+    """O que a SPREV apontou sobre este ente, e o que segue em aberto.
+
+    Não é análise do painel: é o que o regulador registrou, com o prazo que
+    ele mesmo deu. O painel só separa o que ainda corre do que já encerrou.
+    """
+    if not store.tem_tabela("DRAA_NOTIFICACAO"):
+        return {"disponivel": False}
+    hoje = hoje or _hoje()
+    linhas = _varios(
+        store, "draa_notificacao",
+        "numero, tipo_documento, item_analise, situacao_item, notificacao, "
+        "preclusao, resposta, prazo_resposta", cnpj,
+        ordem="notificacao DESC", limite=400)
+    entregas = _varios(store, "draa_encaminhamento",
+                       "exercicio, envio, situacao", cnpj,
+                       ordem="exercicio DESC, envio DESC", limite=30)
+    if not linhas:
+        return {"disponivel": True, "itens": [], "total": 0,
+                "irregular": 0, "em_curso": 0, "encerrado": 0,
+                "entregas": entregas}
+
+    # A fonte repete notificações: 46 das 770 linhas nacionais de 17/09/2026
+    # são cópias exatas em todas as colunas. Exibi-las duas vezes sugeriria dois
+    # apontamentos onde há um, e inflaria a contagem de irregulares.
+    vistas, unicas = set(), []
+    for l in linhas:
+        assinatura = tuple(l.get(c) for c in (
+            "numero", "item_analise", "situacao_item", "notificacao",
+            "preclusao", "resposta", "prazo_resposta"))
+        if assinatura in vistas:
+            continue
+        vistas.add(assinatura)
+        unicas.append(l)
+    linhas = unicas
+
+    itens = [{
+        "numero": l.get("numero"),
+        "documento": l.get("tipo_documento"),
+        "item": l.get("item_analise"),
+        "situacao": l.get("situacao_item"),
+        "estado": _classificar_notificacao(l.get("situacao_item")),
+        "notificacao": l.get("notificacao"),
+        "preclusao": l.get("preclusao"),
+        "resposta": l.get("resposta"),
+        "prazo_dias": l.get("prazo_resposta"),
+    } for l in linhas]
+
+    contagem = {estado: sum(1 for i in itens if i["estado"] == estado)
+                for estado in ("irregular", "em_curso", "encerrado")}
+    return dict({
+        "disponivel": True,
+        "referencia": hoje,
+        "itens": itens[:60],
+        "total": len(itens),
+        "entregas": entregas,
+    }, **contagem)
+
+
+def _montar_amortizacao(store: Store, cnpj: str) -> Dict[str, Any]:
+    """O plano de amortização ano a ano — a única série temporal da API.
+
+    O DRAA_FLUXO_ATUARIAL dá totais projetados, não a curva. Este endpoint dá a
+    curva: saldo devedor, juros, amortização e aporte de cada ano até a
+    quitação. É com ele que se vê se o plano de fato zera o déficit, e quando.
+    """
+    if not store.tem_tabela("DRAA_PLANO_AMORTIZACAO"):
+        return {"disponivel": False}
+    linhas = _varios(
+        store, "draa_plano_amortizacao",
+        "exercicio, plano, massa, ano, saldo_inicial, juros, amortizacao, "
+        "pagamentos, aporte, saldo_final, taxa_juros, envio", cnpj,
+        ordem="exercicio DESC, ano", limite=600)
+    if not linhas:
+        return {"disponivel": False}
+
+    # Uma avaliação por vez, e uma submissão por avaliação.
+    exercicio = max(l["exercicio"] for l in linhas if l.get("exercicio"))
+    serie = _do_ultimo_envio([l for l in linhas if l.get("exercicio") == exercicio])
+    serie.sort(key=lambda l: l.get("ano") or 0)
+
+    anos = [{
+        "ano": l.get("ano"),
+        "saldo_inicial": l.get("saldo_inicial"),
+        "juros": l.get("juros"),
+        "amortizacao": l.get("amortizacao"),
+        "pagamentos": l.get("pagamentos"),
+        "aporte": l.get("aporte"),
+        "saldo_final": l.get("saldo_final"),
+    } for l in serie]
+
+    quitacao = next((a["ano"] for a in anos
+                     if (a["saldo_final"] or 0) <= 0.005), None)
+    return {
+        "disponivel": True,
+        "exercicio": exercicio,
+        "plano": serie[0].get("plano"),
+        "taxa_juros": serie[0].get("taxa_juros"),
+        "anos": anos,
+        "primeiro_ano": anos[0]["ano"] if anos else None,
+        "ultimo_ano": anos[-1]["ano"] if anos else None,
+        "saldo_inicial": anos[0]["saldo_inicial"] if anos else None,
+        "ano_quitacao": quitacao,
+        "total_juros": round(sum(a["juros"] or 0.0 for a in anos), 2),
+        "total_amortizacao": round(sum(a["amortizacao"] or 0.0 for a in anos), 2),
+        "total_aporte": round(sum(a["aporte"] or 0.0 for a in anos), 2),
+    }
+
+
+def _montar_projetado_executado(store: Store, cnpj: str) -> Dict[str, Any]:
+    """O que o atuário projetou contra o que o RPPS executou.
+
+    A diferença vem calculada da fonte. O painel confere a conta em vez de
+    refazê-la: divergir do que a fonte publica é, ele próprio, um achado.
+    """
+    if not store.tem_tabela("DRAA_COMPARATIVO_RECEITA"):
+        return {"disponivel": False}
+    linhas = _varios(
+        store, "draa_comparativo_receita",
+        "exercicio, exercicio_inicial, codigo_fluxo, fluxo, projetado, "
+        "executado, diferenca, envio", cnpj,
+        ordem="exercicio DESC", limite=400)
+    if not linhas:
+        return {"disponivel": False}
+
+    exercicio = max(l["exercicio"] for l in linhas if l.get("exercicio"))
+    do_exercicio = _do_ultimo_envio(
+        [l for l in linhas if l.get("exercicio") == exercicio])
+    itens = []
+    inconsistentes = 0
+    for l in do_exercicio:
+        proj, exe = l.get("projetado"), l.get("executado")
+        dif = l.get("diferenca")
+        # A conferência: a fonte define diferença como PROJETADO menos
+        # EXECUTADO, e não o contrário. Conferido contra a base nacional de
+        # 17/09/2026: nesse sentido nenhuma das 79.986 linhas destoa; no
+        # sentido inverso, 31.236 destoariam. Um sinal trocado aqui produziria
+        # trinta mil acusações falsas.
+        if proj is not None and exe is not None and dif is not None:
+            if abs((proj - exe) - dif) > max(0.02, abs(dif) * 0.0001):
+                inconsistentes += 1
+        # Item com projetado, executado e diferença todos em zero não diz nada
+        # sobre o plano — enche a tela e empurra para baixo o que diz.
+        if not any((proj, exe, dif)):
+            continue
+        itens.append({
+            "codigo": l.get("codigo_fluxo"),
+            "fluxo": l.get("fluxo"),
+            "projetado": proj,
+            "executado": exe,
+            "diferenca": dif,
+            "desvio": (round((exe - proj) / abs(proj) * 100, 1)
+                       if proj not in (None, 0) and exe is not None else None),
+        })
+    itens.sort(key=lambda i: -abs(i["diferenca"] or 0.0))
+    return {
+        "disponivel": True,
+        "exercicio": exercicio,
+        "exercicio_referencia": (do_exercicio[0].get("exercicio_inicial")
+                                 if do_exercicio else None),
+        "itens": itens[:20],
+        "diferenca_total": round(sum(i["diferenca"] or 0.0 for i in itens), 2),
+        "conferencia_falhou": inconsistentes,
+    }
 
 
 def _crp_do_ente(store: Store, cnpj: str) -> Optional[Dict[str, Any]]:
@@ -890,6 +1177,22 @@ def _resumir_custeio(custeio: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # Orquestração
 # ---------------------------------------------------------------------------
 
+def _limpar_fichas_orfas(dir_saida: str, mantidos: AbstractSet[str]) -> int:
+    """Apaga fichas de entes que esta construção não gerou."""
+    pasta = os.path.join(dir_saida, "ente")
+    if not os.path.isdir(pasta):
+        return 0
+    apagadas = 0
+    for nome in os.listdir(pasta):
+        if not nome.endswith(".json"):
+            continue
+        if nome[:-5] in mantidos:
+            continue
+        os.remove(os.path.join(pasta, nome))
+        apagadas += 1
+    return apagadas
+
+
 def construir(store: Store, dir_saida: str = DIR_SAIDA,
               origem: str = "api", limite_entes: Optional[int] = None
               ) -> Dict[str, Any]:
@@ -922,16 +1225,19 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     # Uma variante por combinação de chaves. São dezesseis agregados pequenos:
     # pré-calcular sai mais barato que reimplementar as somas em JavaScript, e
     # garante que o número da tela vem do mesmo código que os testes cobrem.
-    panoramas, carteiras = {}, {}
+    panoramas, carteiras, conformidades = {}, {}, {}
     for combinacao in qualidade.combinacoes():
         fora = qualidade.entes_fora(entes, marcas, combinacao)
         panoramas[combinacao] = montar_panorama(store, entes, fora)
         carteiras[combinacao] = montar_carteira_nacional(
             store, entes, fora, linhas_fora)
+        conformidades[combinacao] = montar_conformidade_nacional(
+            store, entes, fora)
 
     gerados = [
         _gravar("panorama.json", {"variantes": panoramas}, dir_saida),
         _gravar("carteira-nacional.json", {"variantes": carteiras}, dir_saida),
+        _gravar("conformidade.json", {"variantes": conformidades}, dir_saida),
     ]
 
     indice = sorted(
@@ -949,6 +1255,11 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
         ficha = montar_ente(store, cnpj, dados, linhas_fora)
         fichas[cnpj] = ficha
         _gravar(os.path.join("ente", cnpj + ".json"), ficha, dir_saida)
+
+    # Ficha de ente que saiu da base continuaria sendo servida: o índice não a
+    # lista mais, mas o arquivo responde a quem tiver o link antigo — e responde
+    # com números de uma carga que já não existe.
+    _limpar_fichas_orfas(dir_saida, {cnpj for cnpj, _ in escolhidos})
 
     comparativo = benchmark.montar(fichas)
     comparativo["grupos"] = {

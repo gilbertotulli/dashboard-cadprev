@@ -237,6 +237,66 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
         _c("longo_prazo", "vl_perspectiva_longo_prazo", tipo="decimal",
            obrigatorio=False),
     ),
+    # --- o que a SPREV apontou, e o que o próprio demonstrativo confronta ---
+    "DRAA_ENCAMINHAMENTO": _IDENT + (
+        _c("exercicio", "dt_exercicio", tipo="inteiro"),
+        _c("envio", "dt_envio", tipo="data",
+           nota="é daqui que sai o índice de mudança do DRAA: sem filtro por "
+                "data de alteração na API, esta é a forma barata de saber "
+                "quem reenviou desde a última carga"),
+        _c("situacao", "te_situacao", obrigatorio=False,
+           nota="Documentos Digitalizados, Substituída Antes da Recepção..."),
+    ),
+
+    "DRAA_NOTIFICACAO": _IDENT + (
+        _c("numero", "nr_notificacao"),
+        _c("tipo_documento", "no_tipo_documento", obrigatorio=False),
+        _c("item_analise", "no_item_analise", obrigatorio=False,
+           nota="o que a SPREV examinou, por exemplo "
+                "'Consistência - Segregação da Massa'"),
+        _c("situacao_item", "no_situacao_item_analise", obrigatorio=False,
+           nota="'Resposta analisada. Item sem pendencia' e congêneres; é o "
+                "que separa apontamento aberto de encerrado"),
+        _c("notificacao", "dt_notificao", "dt_notificacao", tipo="data",
+           obrigatorio=False,
+           nota="o nome vem grafado sem o 'ca' na API (dt_notificao); o "
+                "candidato correto fica listado para o dia em que corrigirem"),
+        _c("preclusao", "dt_preclusao", tipo="data", obrigatorio=False),
+        _c("resposta", "dt_resposta", tipo="data", obrigatorio=False),
+        _c("prazo_resposta", "nr_prazo_resposta", tipo="inteiro",
+           obrigatorio=False),
+    ),
+
+    "DRAA_COMPARATIVO_RECEITA": _IDENT + _PLANO_MASSA + (
+        _c("exercicio_inicial", "dt_exercicio_inicial", tipo="inteiro",
+           obrigatorio=False),
+        _c("codigo_fluxo", "nr_fluxo", tipo="inteiro", obrigatorio=False),
+        _c("fluxo", "no_fluxo", obrigatorio=False),
+        _c("projetado", "vl_projetado", tipo="decimal", obrigatorio=False),
+        _c("executado", "vl_executado", tipo="decimal", obrigatorio=False),
+        _c("diferenca", "vl_diferenca", tipo="decimal", obrigatorio=False,
+           nota="a fonte já calcula; o painel confere em vez de recalcular"),
+        _c("envio", "dt_envio", tipo="data", obrigatorio=False),
+        _c("situacao", "te_situacao", obrigatorio=False),
+    ),
+
+    "DRAA_PLANO_AMORTIZACAO": _IDENT + _PLANO_MASSA + (
+        _c("ano", "dt_ano", tipo="inteiro",
+           nota="o ano projetado, que pode estar décadas à frente do exercício "
+                "— esta é a única série temporal ano a ano da API"),
+        _c("saldo_inicial", "vl_saldo_inicial", tipo="decimal", obrigatorio=False),
+        _c("juros", "vl_juros", tipo="decimal", obrigatorio=False),
+        _c("amortizacao", "vl_amortizacao", tipo="decimal", obrigatorio=False),
+        _c("pagamentos", "vl_pagamentos", tipo="decimal", obrigatorio=False),
+        _c("aporte", "vl_aporte", tipo="decimal", obrigatorio=False),
+        _c("saldo_final", "vl_saldo_final", tipo="decimal", obrigatorio=False),
+        _c("base_calculo", "vl_base_calculo", tipo="decimal", obrigatorio=False),
+        _c("aliquotas", "vl_aliquotas", tipo="decimal", obrigatorio=False),
+        _c("taxa_juros", "tx_juros", tipo="decimal", obrigatorio=False),
+        _c("envio", "dt_envio", tipo="data", obrigatorio=False),
+        _c("situacao", "te_situacao", obrigatorio=False),
+    ),
+
     "DRAA_PLANO_CUSTEIO": _IDENT + _PLANO_MASSA + (
         _c("tipo_contribuicao", "tp_contribuicao",
            nota="Segurados Ativos, Aposentados, Pensionistas, Ente Federativo, "

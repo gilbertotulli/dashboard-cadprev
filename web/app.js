@@ -677,7 +677,15 @@
     if (!estado.cnpj) return Promise.resolve([semEnte("Atuária")]);
     return carregarEnte().then(function (e) {
       var a = e.atuaria || {};
-      if (!a.disponivel) return [cabecalhoEnte(e), semDado("atuária", "DRAA_*")];
+      // Amortização e comparativo vêm de endpoints próprios e existem mesmo
+      // quando o resultado atuarial falta. Um retorno cedo os escondia.
+      if (!a.disponivel) {
+        var soltos = cartoesDeAmortizacao(e).concat(cartaoProjetadoExecutado(e));
+        return [h("h2", { class: "secao", texto: "Situação atuarial" }),
+                cabecalhoEnte(e),
+                semDado("resultado atuarial", "DRAA_VALORES_COMPROMISSOS")
+               ].concat(soltos);
+      }
 
       var r = a.resultado || {};
       var f = a.fluxo || {};
@@ -758,6 +766,9 @@
               ]);
             }), true)));
       }
+
+      nos = nos.concat(cartoesDeAmortizacao(e));
+      nos = nos.concat(cartaoProjetadoExecutado(e));
 
       if (f.disponivel) {
         depoisDeMontar(function () {
@@ -1482,6 +1493,265 @@
 
   // ------------------------------------------------------------- roteamento
 
+  /* O plano de amortização é a única série ano a ano que a API entrega. O
+   * DRAA_FLUXO_ATUARIAL dá totais projetados; aqui há a curva, e com ela a
+   * pergunta que interessa: o saldo devedor chega a zero, e quando. */
+  function cartoesDeAmortizacao(e) {
+    var a = e.amortizacao || {};
+    if (!a.disponivel || !(a.anos || []).length) return [];
+
+    /* Milhões sempre, mesmo quando o saldo passa do bilhão: em bilhões um
+     * saldo de 1,04 bi rende marcas de eixo "1, 1, 1, 0, 0" — resolução de
+     * menos para uma curva cujo assunto é justamente descer até zero. */
+    var escala = 1e6, sufixo = " mi";
+
+    var alvo = grafico(260);
+    depoisDeMontar(function () {
+      Charts.desenhar(alvo, "linhas", {
+        altura: 260, dec: 1,
+        cada: a.anos.length > 20 ? 4 : 2,
+        unidade: sufixo,
+        rotulos: a.anos.map(function (x) { return String(x.ano); }),
+        series: [{
+          nome: "Saldo devedor", cor: "var(--s1)",
+          dados: a.anos.map(function (x) {
+            return x.saldo_final === null || x.saldo_final === undefined
+              ? null : x.saldo_final / escala;
+          })
+        }],
+        descricao: "Saldo devedor projetado ano a ano"
+      });
+    });
+
+    // Quando a amortização do ano é negativa, o pagamento não cobre os juros e
+    // o saldo cresce. É o oposto do que um plano de amortização promete, e não
+    // aparece em nenhum total — só na curva.
+    var crescendo = a.anos.filter(function (x) {
+      return (x.amortizacao || 0) < 0;
+    }).length;
+
+    var nos = [
+      h("h3", { class: "secao", texto: "Plano de amortização" }),
+      h("div", { class: "kpis" }, [
+        kpi("Saldo a amortizar", reais(a.saldo_inicial),
+          "em " + (a.primeiro_ano || "—")),
+        kpi("Quitação prevista", a.ano_quitacao ? String(a.ano_quitacao) : "não zera",
+          a.ano_quitacao ? "pelo plano vigente" : "o plano não chega a zero",
+          a.ano_quitacao ? "bom" : "ruim"),
+        kpi("Juros até a quitação", reais(a.total_juros),
+          (a.taxa_juros ? "taxa de " + pct(a.taxa_juros, 2) : "taxa não declarada")),
+        kpi("Aportes previstos", reais(a.total_aporte),
+          "além das contribuições")
+      ])
+    ];
+    if (crescendo) {
+      nos.push(h("div", { class: "aviso-linha" }, [
+        h("span", { class: "ico", texto: "\u26a0" }),
+        h("span", { texto:
+          "Em " + crescendo + (crescendo > 1 ? " anos" : " ano") +
+          " a amortização é negativa: o pagamento previsto não cobre os juros " +
+          "do período e o saldo devedor cresce." })
+      ]));
+    }
+    nos.push(cartao("Saldo devedor projetado", "DRAA_PLANO_AMORTIZACAO",
+      "Avaliação de " + (a.exercicio || "—") + " · " + a.anos.length +
+      " anos, de " + a.primeiro_ano + " a " + a.ultimo_ano,
+      alvo));
+    nos.push(cartao("Primeiros anos do plano", "DRAA_PLANO_AMORTIZACAO",
+      "Juros e amortização de cada exercício",
+      tabela([{ t: "Ano", n: true }, { t: "Saldo inicial", n: true },
+              { t: "Juros", n: true }, { t: "Amortização", n: true },
+              { t: "Saldo final", n: true }],
+        a.anos.slice(0, 12).map(function (x) {
+          return h("tr", {}, [
+            h("td", { class: "n", texto: String(x.ano) }),
+            h("td", { class: "n", texto: reais(x.saldo_inicial) }),
+            h("td", { class: "n", texto: reais(x.juros) }),
+            h("td", { class: "n" + ((x.amortizacao || 0) < 0 ? " ruim" : ""),
+                      texto: reais(x.amortizacao) }),
+            h("td", { class: "n", texto: reais(x.saldo_final) })
+          ]);
+        }), true)));
+    return nos;
+  }
+
+  /* Projetado contra executado. Sem verde e vermelho: a lista mistura receitas
+   * e despesas, e executar menos que o projetado é ruim numa e bom na outra. */
+  function cartaoProjetadoExecutado(e) {
+    var pe = e.projetado_executado || {};
+    if (!pe.disponivel || !(pe.itens || []).length) return [];
+    var nos = [];
+    if (pe.conferencia_falhou) {
+      nos.push(h("div", { class: "aviso-linha" }, [
+        h("span", { class: "ico", texto: "\u26a0" }),
+        h("span", { texto:
+          pe.conferencia_falhou + " item(ns) em que a diferença publicada não " +
+          "é o projetado menos o executado. O painel mostra o que a fonte diz, " +
+          "sem recalcular." })
+      ]));
+    }
+    nos.push(cartao("Projetado contra executado", "DRAA_COMPARATIVO_RECEITA",
+      "Avaliação de " + (pe.exercicio || "—") +
+      " · maiores diferenças em valor · a diferença é o projetado menos o executado",
+      tabela([{ t: "Item de fluxo" }, { t: "Projetado", n: true },
+              { t: "Executado", n: true }, { t: "Diferença", n: true },
+              { t: "Desvio", n: true }],
+        pe.itens.map(function (i) {
+          return h("tr", {}, [
+            h("td", { texto: i.fluxo || "—" }),
+            h("td", { class: "n", texto: reais(i.projetado) }),
+            h("td", { class: "n", texto: reais(i.executado) }),
+            h("td", { class: "n", texto: reais(i.diferenca) }),
+            h("td", { class: "n", texto: i.desvio === null ||
+                      i.desvio === undefined ? "—" : pct(i.desvio, 1) })
+          ]);
+        }), true)));
+    return nos;
+  }
+
+  // ------------------------------------------------ aba: conformidade
+
+  var ROTULO_ESTADO = {
+    irregular: "irregular", em_curso: "em curso", encerrado: "encerrado"
+  };
+
+  function seloEstado(estado) {
+    return h("span", {
+      class: "selo-estado " + estado,
+      texto: ROTULO_ESTADO[estado] || estado
+    });
+  }
+
+  function abaConformidade() {
+    if (estado.cnpj) return conformidadeDoEnte();
+    return nacional("conformidade.json").then(function (c) {
+      if (!c.disponivel) {
+        return [vazio("Conformidade indisponível",
+          "Falta ingerir <code>DRAA_NOTIFICACAO</code>. Rode " +
+          "<code>python -m cadprev ingest DRAA_NOTIFICACAO</code>.")];
+      }
+      /* Tabela, e não barra empilhada: os sete rótulos têm quarenta a cinquenta
+       * caracteres, e num gráfico só caberiam truncados. Nome cortado não
+       * comunica melhor que número inteiro. */
+      var porItem = tabela(
+        [{ t: "Item de análise" }, { t: "Irregular", n: true },
+         { t: "Em curso", n: true }, { t: "Encerrado", n: true },
+         { t: "Total", n: true }],
+        c.por_item.map(function (i) {
+          return h("tr", {}, [
+            h("td", { texto: i.rotulo }),
+            h("td", { class: "n" + (i.irregular ? " ruim" : ""),
+                      texto: num(i.irregular, 0) }),
+            h("td", { class: "n", texto: num(i.em_curso, 0) }),
+            h("td", { class: "n", texto: num(i.encerrado, 0) }),
+            h("td", { class: "n", texto: num(i.total, 0) })
+          ]);
+        }), true);
+
+      return [
+        h("h2", { class: "secao", texto: "Conformidade" }),
+        h("p", { class: "intro", texto:
+          "O que a Subsecretaria registrou sobre os demonstrativos — não o que " +
+          "este painel achou. A classificação usa as palavras da própria fonte: " +
+          "ela escreve \u201cSituacao irregular\u201d quando é o caso." }),
+        h("div", { class: "aviso-linha" }, [
+          h("span", { class: "ico", texto: "\u26a0" }),
+          h("span", { texto:
+            "Leia com o escopo em mente: " + c.escopo + " Não é um retrato da " +
+            "conformidade geral dos RPPS." })
+        ]),
+        h("div", { class: "kpis" }, [
+          kpi("RPPS notificados", num(c.entes_notificados, 0),
+            "de " + num(c.com_encaminhamento, 0) + " que já enviaram DRAA"),
+          kpi("Com item irregular", num(c.entes_com_irregular, 0),
+            "situação declarada pela SPREV",
+            c.entes_com_irregular ? "ruim" : "bom"),
+          kpi("Itens de análise", num(c.itens, 0), "no histórico inteiro"),
+          kpi("Entregaram o DRAA " + (c.ultimo_exercicio_entregue || "—"),
+            num(c.entregaram_ultimo, 0),
+            "de " + num(c.com_encaminhamento, 0) + " entes")
+        ]),
+        cartao("Itens de análise por situação", "DRAA_NOTIFICACAO",
+          "Cada linha é um tema examinado pela SPREV", porItem),
+        c.com_irregular.length
+          ? cartao("RPPS com item irregular", "DRAA_NOTIFICACAO",
+              "Clique na linha para abrir o ente",
+              tabela([{ t: "RPPS" }, { t: "Itens", n: true }],
+                c.com_irregular.map(function (e) {
+                  return linhaClicavel(e.cnpj, [
+                    h("td", {}, [e.ente, h("span", { class: "uf", texto: e.uf || "" })]),
+                    h("td", { class: "n", texto: num(e.itens, 0) })
+                  ]);
+                })))
+          : null
+      ];
+    });
+  }
+
+  function conformidadeDoEnte() {
+    return carregarEnte().then(function (e) {
+      var c = e.conformidade || {};
+      var nos = [
+        h("h2", { class: "secao", texto: "Conformidade" }),
+        cabecalhoEnte(e),
+        h("div", { class: "contexto" }, [
+          h("span", { class: "pilula" }, ["Ente ", h("b", { texto: e.ente })]),
+          h("button", {
+            class: "link limpar", texto: "ver o agregado nacional",
+            onclick: function () { irParaAba("conformidade", null); }
+          })
+        ])
+      ];
+      if (!c.disponivel) {
+        nos.push(semDado("conformidade", "DRAA_NOTIFICACAO"));
+        return nos;
+      }
+      nos.push(h("div", { class: "kpis" }, [
+        kpi("Itens irregulares", num(c.irregular || 0, 0),
+          "situação declarada pela SPREV", c.irregular ? "ruim" : "bom"),
+        kpi("Em curso", num(c.em_curso || 0, 0), "respondidos ou aguardando"),
+        kpi("Encerrados", num(c.encerrado || 0, 0), "sem pendência ou cancelados"),
+        kpi("Envios de DRAA", num((c.entregas || []).length, 0),
+          "histórico de encaminhamento")
+      ]));
+
+      nos.push(c.total
+        ? cartao("Notificações da SPREV", "DRAA_NOTIFICACAO",
+            "Ordenadas da mais recente para a mais antiga",
+            tabela([{ t: "Item de análise" }, { t: "Situação" },
+                    { t: "Notificada" }, { t: "Preclusão" }],
+              c.itens.map(function (i) {
+                return h("tr", {}, [
+                  h("td", {}, [
+                    h("div", { texto: i.item || "—" }),
+                    h("div", { class: "nota", texto: i.numero || "" })
+                  ]),
+                  h("td", {}, [seloEstado(i.estado),
+                    h("div", { class: "nota", texto: i.situacao || "" })]),
+                  h("td", { texto: data(i.notificacao) }),
+                  h("td", { texto: data(i.preclusao) })
+                ]);
+              }), true))
+        : vazio("Sem notificações registradas",
+            "A SPREV não registrou item de análise para este ente. " +
+            "O conjunto cobre apenas segregação de massa."));
+
+      if ((c.entregas || []).length) {
+        nos.push(cartao("Histórico de envio do DRAA", "DRAA_ENCAMINHAMENTO",
+          "Cada linha é uma submissão; a mais recente é a que vale",
+          tabela([{ t: "Exercício" }, { t: "Envio" }, { t: "Situação" }],
+            c.entregas.map(function (x) {
+              return h("tr", {}, [
+                h("td", { texto: String(x.exercicio || "—") }),
+                h("td", { texto: data(x.envio) }),
+                h("td", { texto: x.situacao || "—" })
+              ]);
+            }))));
+      }
+      return nos;
+    });
+  }
+
   // -------------------------------------------------- aba: qualidade
 
   function abaQualidade() {
@@ -1597,7 +1867,8 @@
   var ABAS = {
     panorama: abaPanorama, ficha: abaFicha, caixa: abaCaixa,
     carteira: abaCarteiraEnte, atuaria: abaAtuaria,
-    comparativo: abaComparativo, qualidade: abaQualidade,
+    comparativo: abaComparativo, conformidade: abaConformidade,
+    qualidade: abaQualidade,
     ajuda: abaAjuda
   };
 
@@ -1609,6 +1880,7 @@
   function abaEhNacional() {
     if (estado.aba === "panorama") return true;
     if (estado.aba === "carteira" && !estado.cnpj) return true;
+    if (estado.aba === "conformidade" && !estado.cnpj) return true;
     return estado.aba === "comparativo" && !!estado.cnpj;
   }
 

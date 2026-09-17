@@ -281,13 +281,45 @@ O que protege a base entre uma carga e outra:
   endpoint e marca os que ficaram para trás — a mistura de safras que a gravação
   transacional torna possível não pode ser invisível.
 
+## Conformidade e amortização
+
+Quatro endpoints do DRAA que o projeto não consumia entraram depois do
+levantamento de `docs/plano-novas-fontes.md`.
+
+O **plano de amortização** fecha uma lacuna que este README declarava aberta: o
+`DRAA_FLUXO_ATUARIAL` dá totais projetados, não a curva; o
+`DRAA_PLANO_AMORTIZACAO` dá saldo, juros e amortização ano a ano, até 2084 nos
+planos mais longos. Com ele a pergunta que importa fica visível: o saldo devedor
+chega a zero, e quando. Ourinhos/SP amortiza R$ 954 milhões até 2054 pagando
+R$ 1,08 bilhão de juros — mais juros que principal —, e em 2026 a amortização é
+negativa: o pagamento previsto não cobre nem os juros do ano, de modo que o saldo
+cresce. Isso não aparece em nenhum total, só na curva, e por isso a tela avisa.
+
+O **comparativo de receita** traz projetado, executado e a diferença por item de
+fluxo, calculada na fonte. A diferença é **projetado menos executado** — sentido
+conferido contra as 79.986 linhas nacionais, em que nenhuma destoa; no sentido
+inverso, 31.236 destoariam, e um sinal trocado teria produzido trinta mil
+acusações falsas.
+
+A aba **Conformidade** mostra o que a SPREV registrou, com as palavras dela: a
+fonte escreve "Situacao irregular" em quatro das nove situações que usa, e é
+essa declaração que o painel exibe — não um juízo derivado de comparar a data de
+preclusão com hoje. O escopo é estreito e a tela diz isso: em 17/09/2026 eram 724
+itens em 222 entes, todos sobre segregação de massa.
+
+Duas regras de leitura nasceram aqui:
+
+- **Uma submissão por avaliação.** O DRAA pode ser reenviado, e a API devolve as
+  versões convivendo — a substituída, a retificada e a válida, com o mesmo
+  exercício e o mesmo ano projetado. Em 17/09/2026 isso atingia 176 dos 1.652
+  entes com plano de amortização. Vale a mais recente, como no CRP.
+- **Cópia exata não é apontamento novo.** 46 das 770 linhas de notificação são
+  idênticas em todas as colunas; exibi-las duas vezes sugeriria dois
+  apontamentos onde há um.
+
 ## O que ainda falta
 
-- **A projeção atuarial ano a ano.** `DRAA_FLUXO_ATUARIAL` não é série temporal —
-  dá totais projetados, não a curva. A curva está nos arquivos de dados abertos da
-  SPREV. Há, porém, uma série temporal ainda não consumida na API:
-  `DRAA_PLANO_AMORTIZACAO`, com saldo e amortização ano a ano.
-- **Endpoints sem mapa de campos.** Doze dos 39 têm mapa; `python -m cadprev
+- **Endpoints sem mapa de campos.** Dezesseis dos 39 têm mapa; `python -m cadprev
   endpoints` marca quais. Governança, credenciamento e notificações do DAIR e do
   DRAA abririam telas novas.
 - **Histórico.** A ingestão é por competência; comparar exercícios depende de
