@@ -391,3 +391,30 @@ table.dados td.n.ruim{color:var(--crit);font-weight:500}
 .selo-estado.irregular{border-color:var(--crit);color:var(--crit);font-weight:500}
 .selo-estado.em_curso{border-color:var(--warn);color:var(--ink-2)}
 .selo-estado.encerrado{border-color:var(--ok);color:var(--ok-ink)}
+
+/* ---------- massas separadas: civil e militar ----------
+ *
+ * Só os Estados têm massa militar, e onde ela existe é de 14% a 39% da
+ * população declarada. As duas nunca aparecem somadas: cada uma tem a sua
+ * tabela, sob o seu rótulo. O rótulo é discreto de propósito — ele separa, não
+ * hierarquiza.
+ */
+.rotulo-massa{
+  font-size:.74rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--muted);margin:18px 0 6px;
+}
+.rotulo-massa:first-child{margin-top:0}
+/* Numa tabela larga o min-width de 560px cabe em telas de telefone, mas
+   espremer sete colunas nele quebra o nome do ente em uma palavra por linha —
+   seis linhas de altura para dizer "Governo do Estado do Rio Grande do Sul".
+   Com o nome inteiro numa linha a tabela passa da largura da tela e rola, que
+   é o comportamento que .rolar já existe para dar. */
+table.dados td.nome-ente{white-space:nowrap}
+
+table.dados tr.somatorio td{
+  border-top:1px solid var(--rule-strong);font-weight:500;color:var(--ink-2);
+}
+
+/* Nota de rodapé de um cartão: menor que o corpo, para ser lida depois dele e
+   não no lugar dele. */
+p.nota{font-size:.76rem;color:var(--muted);line-height:1.55;margin:12px 0 0;max-width:80ch}

@@ -25,7 +25,7 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import AbstractSet, Any, Dict, List, Mapping, Optional
 
-from . import benchmark, codigos, fundos, grupos, qualidade
+from . import benchmark, codigos, fundos, grupos, massas, qualidade
 from .store import Store
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -514,6 +514,172 @@ def montar_conformidade_nacional(store: Store,
 
 
 # ---------------------------------------------------------------------------
+# Aba — Militares, visão nacional
+# ---------------------------------------------------------------------------
+
+# O bloco militar do Anexo 04 do RREO, com os nomes de conta como o SICONFI os
+# publica — inclusive os erros de digitação dele ("Milirares", e "Inativos E
+# Pensionistas" onde o rótulo diz "Pensões e Inativos"). Corrigir o código aqui
+# seria deixar de encontrar a linha.
+_CONTA_CONTRIBUICOES = "TotalDasContribucoesDosMilirares"
+_CONTA_DESPESAS = "TotalDasDespesasComInativosEPensionistasMilirares"
+_CONTA_RESULTADO = "ResultadoAssociadoAInativosEPensionistasMilirares"
+_COLUNA_RECEITA_RREO = "RECEITAS REALIZADAS ATÉ O BIMESTRE (b)"
+_COLUNA_DESPESA_RREO = "DESPESAS PAGAS ATÉ O BIMESTRE (f)"
+
+
+def _rreo_militar(store: Store) -> Dict[str, Dict[str, Any]]:
+    """Contribuições e despesas dos militares, por ente, como o RREO declara.
+
+    Não é a mesma coisa que o DRAA: aqui é execução orçamentária do exercício
+    corrente, ali é avaliação atuarial. Convivem na mesma tela porque respondem
+    perguntas diferentes sobre a mesma massa — e a referência temporal de cada
+    uma aparece ao lado do número.
+    """
+    if not store.tem_tabela("SICONFI_RREO"):
+        return {}
+    fichas: Dict[str, Dict[str, Any]] = {}
+    for linha in store.consultar(
+            "SELECT cnpj_ente, exercicio, periodo, cod_conta, coluna, valor "
+            "FROM siconfi_rreo WHERE cod_conta IN (?, ?, ?)",
+            (_CONTA_CONTRIBUICOES, _CONTA_DESPESAS, _CONTA_RESULTADO)):
+        ficha = fichas.setdefault(linha["cnpj_ente"], {
+            "exercicio": linha["exercicio"], "periodo": linha["periodo"],
+            "contribuicoes": None, "despesas": None, "resultado": None})
+        coluna = (linha["coluna"] or "").strip()
+        conta = linha["cod_conta"]
+        if conta == _CONTA_CONTRIBUICOES and coluna == _COLUNA_RECEITA_RREO:
+            ficha["contribuicoes"] = linha["valor"]
+        elif conta == _CONTA_DESPESAS and coluna == _COLUNA_DESPESA_RREO:
+            ficha["despesas"] = linha["valor"]
+        elif conta == _CONTA_RESULTADO and coluna == _COLUNA_DESPESA_RREO:
+            ficha["resultado"] = linha["valor"]
+    return fichas
+
+
+def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
+                            fora: Optional[AbstractSet[str]] = None
+                            ) -> Dict[str, Any]:
+    """A massa militar, que só existe nos Estados.
+
+    Município não tem militar: a comparação é entre Estados e só entre Estados,
+    porque não há outro termo de comparação. Em 17/09/2026 havia massa militar
+    em 26 dos 27 governos estaduais — Minas Gerais não entrega DRAA — e em
+    nenhum dos 5.569 municípios.
+    """
+    if not store.tem_tabela("DRAA_ESTATISTICA"):
+        return {"disponivel": False}
+    fora = fora or frozenset()
+
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT cnpj_ente, exercicio, massa, tipo_populacao, categoria_populacao,"
+        " qt_masculino, qt_feminino, folha_masculino, folha_feminino"
+        " FROM draa_estatistica")]
+    # Só o exercício mais recente de cada ente: o DRAA de 2026 e o de 2025
+    # convivem na API e somá-los conta a mesma pessoa duas vezes.
+    ultimo: Dict[str, Any] = {}
+    for linha in linhas:
+        cnpj, exercicio = linha["cnpj_ente"], linha.get("exercicio")
+        if exercicio is not None and (cnpj not in ultimo or exercicio > ultimo[cnpj]):
+            ultimo[cnpj] = exercicio
+
+    contas: Dict[str, Dict[str, Any]] = {}
+    for linha in linhas:
+        cnpj = linha["cnpj_ente"]
+        if cnpj in fora or linha.get("exercicio") != ultimo.get(cnpj):
+            continue
+        qual = massas.normalizar(linha.get("massa")) or massas.CIVIL
+        ficha = contas.setdefault(cnpj, {
+            "exercicio": ultimo[cnpj],
+            "militar": {"ativo": 0, "inativo": 0, "pensionista": 0, "folha": 0.0},
+            "civil": {"ativo": 0, "inativo": 0, "pensionista": 0, "folha": 0.0},
+            "tem_militar": False})
+        alvo = ficha["militar" if qual == massas.MILITAR else "civil"]
+        pessoas = (linha["qt_masculino"] or 0) + (linha["qt_feminino"] or 0)
+        qual_papel = massas.papel(qual, linha.get("tipo_populacao"),
+                                  linha.get("categoria_populacao"))
+        if qual_papel in alvo:
+            alvo[qual_papel] += pessoas
+        alvo["folha"] += ((linha["folha_masculino"] or 0.0)
+                          + (linha["folha_feminino"] or 0.0))
+        if qual == massas.MILITAR:
+            ficha["tem_militar"] = True
+
+    rreo = _rreo_militar(store)
+    fichas = []
+    for cnpj, dados in contas.items():
+        if not dados["tem_militar"]:
+            continue
+        mil, civ = dados["militar"], dados["civil"]
+        ente = entes.get(cnpj) or {}
+        beneficiarios = mil["inativo"] + mil["pensionista"]
+        total_mil = mil["ativo"] + beneficiarios
+        total_civ = civ["ativo"] + civ["inativo"] + civ["pensionista"]
+        orcamento = rreo.get(cnpj) or {}
+        fichas.append({
+            "cnpj": cnpj,
+            "uf": ente.get("uf"),
+            "ente": ente.get("ente") or cnpj,
+            "exercicio": dados["exercicio"],
+            "ativos": mil["ativo"],
+            "inativos": mil["inativo"],
+            "pensionistas": mil["pensionista"],
+            "beneficiarios": beneficiarios,
+            "pessoas": total_mil,
+            "folha": round(mil["folha"], 2),
+            "razao_ativos_inativos": (round(mil["ativo"] / beneficiarios, 2)
+                                      if beneficiarios else None),
+            "civis": total_civ,
+            "razao_civil": (round(civ["ativo"] / (civ["inativo"] + civ["pensionista"]), 2)
+                            if (civ["inativo"] + civ["pensionista"]) else None),
+            "participacao": (round(total_mil / (total_mil + total_civ) * 100, 1)
+                             if (total_mil + total_civ) else None),
+            "exercicio_rreo": orcamento.get("exercicio"),
+            "periodo_rreo": orcamento.get("periodo"),
+            "contribuicoes": orcamento.get("contribuicoes"),
+            "despesas": orcamento.get("despesas"),
+            "resultado": orcamento.get("resultado"),
+        })
+    if not fichas:
+        return {"disponivel": False}
+    fichas.sort(key=lambda f: -f["pessoas"])
+
+    razoes = [f["razao_ativos_inativos"] for f in fichas
+              if f["razao_ativos_inativos"] is not None]
+    ativos = sum(f["ativos"] for f in fichas)
+    beneficiarios = sum(f["beneficiarios"] for f in fichas)
+    estaduais = {cnpj for cnpj, dados in entes.items()
+                 if dados.get("esfera") == grupos.ESTADUAL and cnpj not in fora}
+    com_massa = {f["cnpj"] for f in fichas}
+    return {
+        "disponivel": True,
+        "escopo": "Só os Estados têm massa militar. Município não entra nesta "
+                  "comparação porque não há o que comparar.",
+        "nota_nomenclatura": massas.NOTA_NOMENCLATURA,
+        "nota_carteira": massas.NOTA_CARTEIRA,
+        "entes": fichas,
+        "estados_com_massa": len(fichas),
+        "estados_sem_massa": sorted(
+            (entes[cnpj].get("uf") or "?") for cnpj in estaduais - com_massa),
+        # Massa militar declarada com zero pessoas é declaração, não ausência:
+        # o ente diz que não tem militares no seu RPPS. Fica na lista, com o
+        # zero dele, mas não conta como Estado com massa nem cobra RREO.
+        "estados_com_pessoas": sum(1 for f in fichas if f["pessoas"]),
+        "sem_rreo": sorted(f["uf"] or "?" for f in fichas
+                           if f["contribuicoes"] is None and f["pessoas"]),
+        "ativos": ativos,
+        "inativos": sum(f["inativos"] for f in fichas),
+        "pensionistas": sum(f["pensionistas"] for f in fichas),
+        "pessoas": sum(f["pessoas"] for f in fichas),
+        "folha": round(sum(f["folha"] for f in fichas), 2),
+        "razao_ativos_inativos": (round(ativos / beneficiarios, 2)
+                                  if beneficiarios else None),
+        # Grupo com menos de três declarantes não vira estatística.
+        "resumo_razao": benchmark.resumir(razoes) if len(razoes) >= 3 else None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Aba 4 — Carteira, visão nacional
 # ---------------------------------------------------------------------------
 
@@ -889,12 +1055,53 @@ def _montar_conformidade(store: Store, cnpj: str,
     }, **contagem)
 
 
+def _rotulo_do_fundo(plano: Optional[str], massa: Optional[str]) -> str:
+    """Como o painel chama o par plano×massa que a fonte declara separado."""
+    qual = massas.normalizar(massa)
+    nome = (plano or "Plano não declarado").strip()
+    if qual == massas.MILITAR:
+        return nome + " · militar"
+    if qual == massas.CIVIL:
+        return nome + " · civil"
+    return nome
+
+
+def _por_fundo(linhas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Separa as linhas por plano e massa, que a fonte nunca soma entre si.
+
+    O DRAA declara um conjunto de linhas por plano (Previdenciário, Financeiro,
+    Mantidos pelo Tesouro) e por massa (Civil, Militar). Cada conjunto é uma
+    avaliação própria, com seus próprios anos e seus próprios fluxos. Somá-los
+    duplica o ano e desenha duas curvas como se fossem uma — em 17/09/2026 isso
+    atingia 51 entes no plano de amortização e 263 no comparativo de receita.
+    """
+    caixas: Dict[tuple, List[Dict[str, Any]]] = {}
+    for linha in linhas:
+        caixas.setdefault(
+            ((linha.get("plano") or "").strip(),
+             massas.normalizar(linha.get("massa")) or ""), []).append(linha)
+    blocos = []
+    for (plano, massa), grupo in caixas.items():
+        blocos.append({"plano": plano or None, "massa": massa or None,
+                       "militar": massa == massas.MILITAR,
+                       "rotulo": _rotulo_do_fundo(plano, massa),
+                       "linhas": grupo})
+    # Civil antes de militar; dentro de cada massa, o conjunto maior primeiro.
+    blocos.sort(key=lambda b: (b["militar"], -len(b["linhas"]), b["rotulo"]))
+    return blocos
+
+
 def _montar_amortizacao(store: Store, cnpj: str) -> Dict[str, Any]:
     """O plano de amortização ano a ano — a única série temporal da API.
 
     O DRAA_FLUXO_ATUARIAL dá totais projetados, não a curva. Este endpoint dá a
     curva: saldo devedor, juros, amortização e aporte de cada ano até a
     quitação. É com ele que se vê se o plano de fato zera o déficit, e quando.
+
+    Uma curva por plano e por massa. O Maranhão, por exemplo, tem dois planos de
+    amortização no exercício de 2026 — R$ 91,9 bi de aportes civis e R$ 93,4 bi
+    de aportes militares. Somados, viravam um saldo que não existe em lugar
+    nenhum e um ano de quitação que não é o de nenhum dos dois.
     """
     if not store.tem_tabela("DRAA_PLANO_AMORTIZACAO"):
         return {"disponivel": False}
@@ -902,40 +1109,53 @@ def _montar_amortizacao(store: Store, cnpj: str) -> Dict[str, Any]:
         store, "draa_plano_amortizacao",
         "exercicio, plano, massa, ano, saldo_inicial, juros, amortizacao, "
         "pagamentos, aporte, saldo_final, taxa_juros, envio", cnpj,
-        ordem="exercicio DESC, ano", limite=600)
+        ordem="exercicio DESC, ano", limite=2000)
     if not linhas:
         return {"disponivel": False}
 
     # Uma avaliação por vez, e uma submissão por avaliação.
     exercicio = max(l["exercicio"] for l in linhas if l.get("exercicio"))
-    serie = _do_ultimo_envio([l for l in linhas if l.get("exercicio") == exercicio])
-    serie.sort(key=lambda l: l.get("ano") or 0)
+    recentes = _do_ultimo_envio([l for l in linhas
+                                 if l.get("exercicio") == exercicio])
 
-    anos = [{
-        "ano": l.get("ano"),
-        "saldo_inicial": l.get("saldo_inicial"),
-        "juros": l.get("juros"),
-        "amortizacao": l.get("amortizacao"),
-        "pagamentos": l.get("pagamentos"),
-        "aporte": l.get("aporte"),
-        "saldo_final": l.get("saldo_final"),
-    } for l in serie]
-
-    quitacao = next((a["ano"] for a in anos
-                     if (a["saldo_final"] or 0) <= 0.005), None)
+    blocos = []
+    for fundo in _por_fundo(recentes):
+        serie = sorted(fundo["linhas"], key=lambda l: l.get("ano") or 0)
+        anos = [{
+            "ano": l.get("ano"),
+            "saldo_inicial": l.get("saldo_inicial"),
+            "juros": l.get("juros"),
+            "amortizacao": l.get("amortizacao"),
+            "pagamentos": l.get("pagamentos"),
+            "aporte": l.get("aporte"),
+            "saldo_final": l.get("saldo_final"),
+        } for l in serie]
+        if not anos:
+            continue
+        quitacao = next((a["ano"] for a in anos
+                         if (a["saldo_final"] or 0) <= 0.005), None)
+        blocos.append({
+            "rotulo": fundo["rotulo"],
+            "plano": fundo["plano"],
+            "massa": fundo["massa"],
+            "militar": fundo["militar"],
+            "taxa_juros": serie[0].get("taxa_juros"),
+            "anos": anos,
+            "primeiro_ano": anos[0]["ano"],
+            "ultimo_ano": anos[-1]["ano"],
+            "saldo_inicial": anos[0]["saldo_inicial"],
+            "ano_quitacao": quitacao,
+            "total_juros": round(sum(a["juros"] or 0.0 for a in anos), 2),
+            "total_amortizacao": round(sum(a["amortizacao"] or 0.0 for a in anos), 2),
+            "total_aporte": round(sum(a["aporte"] or 0.0 for a in anos), 2),
+        })
+    if not blocos:
+        return {"disponivel": False}
     return {
         "disponivel": True,
         "exercicio": exercicio,
-        "plano": serie[0].get("plano"),
-        "taxa_juros": serie[0].get("taxa_juros"),
-        "anos": anos,
-        "primeiro_ano": anos[0]["ano"] if anos else None,
-        "ultimo_ano": anos[-1]["ano"] if anos else None,
-        "saldo_inicial": anos[0]["saldo_inicial"] if anos else None,
-        "ano_quitacao": quitacao,
-        "total_juros": round(sum(a["juros"] or 0.0 for a in anos), 2),
-        "total_amortizacao": round(sum(a["amortizacao"] or 0.0 for a in anos), 2),
-        "total_aporte": round(sum(a["aporte"] or 0.0 for a in anos), 2),
+        "blocos": blocos,
+        "tem_militar": any(b["militar"] for b in blocos),
     }
 
 
@@ -944,54 +1164,73 @@ def _montar_projetado_executado(store: Store, cnpj: str) -> Dict[str, Any]:
 
     A diferença vem calculada da fonte. O painel confere a conta em vez de
     refazê-la: divergir do que a fonte publica é, ele próprio, um achado.
+
+    Uma tabela por plano e por massa: o mesmo fluxo aparece uma vez em cada, e
+    empilhá-los listava a mesma rubrica duas vezes com valores de fundos
+    diferentes.
     """
     if not store.tem_tabela("DRAA_COMPARATIVO_RECEITA"):
         return {"disponivel": False}
     linhas = _varios(
         store, "draa_comparativo_receita",
-        "exercicio, exercicio_inicial, codigo_fluxo, fluxo, projetado, "
-        "executado, diferenca, envio", cnpj,
-        ordem="exercicio DESC", limite=400)
+        "exercicio, plano, massa, exercicio_inicial, codigo_fluxo, fluxo, "
+        "projetado, executado, diferenca, envio", cnpj,
+        ordem="exercicio DESC", limite=2000)
     if not linhas:
         return {"disponivel": False}
 
     exercicio = max(l["exercicio"] for l in linhas if l.get("exercicio"))
     do_exercicio = _do_ultimo_envio(
         [l for l in linhas if l.get("exercicio") == exercicio])
-    itens = []
+
+    blocos = []
     inconsistentes = 0
-    for l in do_exercicio:
-        proj, exe = l.get("projetado"), l.get("executado")
-        dif = l.get("diferenca")
-        # A conferência: a fonte define diferença como PROJETADO menos
-        # EXECUTADO, e não o contrário. Conferido contra a base nacional de
-        # 17/09/2026: nesse sentido nenhuma das 79.986 linhas destoa; no
-        # sentido inverso, 31.236 destoariam. Um sinal trocado aqui produziria
-        # trinta mil acusações falsas.
-        if proj is not None and exe is not None and dif is not None:
-            if abs((proj - exe) - dif) > max(0.02, abs(dif) * 0.0001):
-                inconsistentes += 1
-        # Item com projetado, executado e diferença todos em zero não diz nada
-        # sobre o plano — enche a tela e empurra para baixo o que diz.
-        if not any((proj, exe, dif)):
+    for fundo in _por_fundo(do_exercicio):
+        itens = []
+        for l in fundo["linhas"]:
+            proj, exe = l.get("projetado"), l.get("executado")
+            dif = l.get("diferenca")
+            # A conferência: a fonte define diferença como PROJETADO menos
+            # EXECUTADO, e não o contrário. Conferido contra a base nacional de
+            # 17/09/2026: nesse sentido nenhuma das 79.986 linhas destoa; no
+            # sentido inverso, 31.236 destoariam. Um sinal trocado aqui
+            # produziria trinta mil acusações falsas.
+            if proj is not None and exe is not None and dif is not None:
+                if abs((proj - exe) - dif) > max(0.02, abs(dif) * 0.0001):
+                    inconsistentes += 1
+            # Item com projetado, executado e diferença todos em zero não diz
+            # nada sobre o plano — enche a tela e empurra para baixo o que diz.
+            if not any((proj, exe, dif)):
+                continue
+            itens.append({
+                "codigo": l.get("codigo_fluxo"),
+                "fluxo": l.get("fluxo"),
+                "projetado": proj,
+                "executado": exe,
+                "diferenca": dif,
+                "desvio": (round((exe - proj) / abs(proj) * 100, 1)
+                           if proj not in (None, 0) and exe is not None else None),
+            })
+        if not itens:
             continue
-        itens.append({
-            "codigo": l.get("codigo_fluxo"),
-            "fluxo": l.get("fluxo"),
-            "projetado": proj,
-            "executado": exe,
-            "diferenca": dif,
-            "desvio": (round((exe - proj) / abs(proj) * 100, 1)
-                       if proj not in (None, 0) and exe is not None else None),
+        itens.sort(key=lambda i: -abs(i["diferenca"] or 0.0))
+        blocos.append({
+            "rotulo": fundo["rotulo"],
+            "plano": fundo["plano"],
+            "massa": fundo["massa"],
+            "militar": fundo["militar"],
+            "itens": itens[:20],
+            "diferenca_total": round(sum(i["diferenca"] or 0.0 for i in itens), 2),
         })
-    itens.sort(key=lambda i: -abs(i["diferenca"] or 0.0))
+    if not blocos:
+        return {"disponivel": False}
     return {
         "disponivel": True,
         "exercicio": exercicio,
         "exercicio_referencia": (do_exercicio[0].get("exercicio_inicial")
                                  if do_exercicio else None),
-        "itens": itens[:20],
-        "diferenca_total": round(sum(i["diferenca"] or 0.0 for i in itens), 2),
+        "blocos": blocos,
+        "tem_militar": any(b["militar"] for b in blocos),
         "conferencia_falhou": inconsistentes,
     }
 
@@ -1037,43 +1276,98 @@ def _varios(store: Store, tabela: str, colunas: str, cnpj: str,
 
 
 def _montar_estatistica(store: Store, cnpj: str) -> Dict[str, Any]:
-    """Massa de participantes, somando os grupos por tipo de população.
+    """Massa de participantes, separada por massa antes de somar qualquer coisa.
 
-    O endpoint devolve uma linha por grupo — categoria funcional, plano e massa
-    — com as contagens separadas por sexo. O que a ficha mostra é o total por
-    tipo de população, então a soma acontece aqui.
+    Civil e militar são populações distintas, com avaliação atuarial distinta e
+    nomenclatura distinta, e a fonte as separa em campos diferentes: no civil o
+    papel está em ``tp_populacao``; no militar esse campo diz sempre "Militares"
+    e o papel está em ``no_cat_populacao``. Agrupar tudo por ``tp_populacao``,
+    como o painel fazia, jogava os militares num balde único — ativos, reserva e
+    pensionistas somados — e os deixava fora de ativos e de inativos. Nos 26
+    governos estaduais isso escondia de 14% a 39% da população declarada.
+
+    Ver ``cadprev.massas``.
     """
     linhas = _varios(store, "draa_estatistica",
-                     "exercicio, tipo_populacao, qt_masculino, qt_feminino,"
-                     " folha_masculino, folha_feminino", cnpj,
-                     ordem="exercicio DESC", limite=2000)
+                     "exercicio, massa, tipo_populacao, categoria_populacao,"
+                     " qt_masculino, qt_feminino, folha_masculino, folha_feminino",
+                     cnpj, ordem="exercicio DESC", limite=4000)
     if not linhas:
         return {"disponivel": False}
 
     exercicio = linhas[0]["exercicio"]
-    por_tipo: Dict[str, Dict[str, float]] = defaultdict(
-        lambda: {"pessoas": 0, "folha": 0.0})
+    # chave da massa -> rótulo do grupo -> contagem
+    por_massa: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    papeis: Dict[str, Dict[str, int]] = {}
+    ordem_das_massas: List[str] = []
+
     for linha in linhas:
         if linha["exercicio"] != exercicio:
             continue  # só o exercício mais recente
-        alvo = por_tipo[(linha["tipo_populacao"] or "Não informado").strip()]
-        alvo["pessoas"] += (linha["qt_masculino"] or 0) + (linha["qt_feminino"] or 0)
+        qual = massas.normalizar(linha.get("massa")) or massas.CIVIL
+        if qual not in por_massa:
+            por_massa[qual] = {}
+            papeis[qual] = defaultdict(int)
+            ordem_das_massas.append(qual)
+        rotulo, termo = massas.rotulo(
+            qual, linha.get("tipo_populacao"), linha.get("categoria_populacao"))
+        alvo = por_massa[qual].setdefault(
+            rotulo, {"pessoas": 0, "folha": 0.0, "fonte": termo})
+        pessoas = (linha["qt_masculino"] or 0) + (linha["qt_feminino"] or 0)
+        alvo["pessoas"] += pessoas
         alvo["folha"] += (linha["folha_masculino"] or 0.0) + (linha["folha_feminino"] or 0.0)
+        papeis[qual][massas.papel(qual, linha.get("tipo_populacao"),
+                                  linha.get("categoria_populacao"))] += pessoas
 
-    ativos = por_tipo.get("Servidores", {}).get("pessoas", 0)
-    inativos = (por_tipo.get("Aposentados", {}).get("pessoas", 0)
-                + por_tipo.get("Pensionistas", {}).get("pessoas", 0))
-    return {
+    blocos = []
+    for qual in ordem_das_massas:
+        grupos = [{"rotulo": rotulo, "fonte": dados["fonte"],
+                   "pessoas": int(dados["pessoas"]),
+                   "folha": round(dados["folha"], 2)}
+                  for rotulo, dados in sorted(por_massa[qual].items(),
+                                              key=lambda kv: kv[1]["pessoas"],
+                                              reverse=True)]
+        conta = papeis[qual]
+        ativos = conta.get(massas.ATIVO, 0)
+        inativos = conta.get(massas.INATIVO, 0)
+        pensionistas = conta.get(massas.PENSIONISTA, 0)
+        beneficiarios = inativos + pensionistas
+        blocos.append({
+            "chave": qual.lower(),
+            "rotulo": qual,
+            "militar": qual == massas.MILITAR,
+            "grupos": grupos,
+            "ativos": int(ativos),
+            "inativos": int(inativos),
+            "pensionistas": int(pensionistas),
+            "beneficiarios": int(beneficiarios),
+            "pessoas": int(sum(g["pessoas"] for g in grupos)),
+            "folha": round(sum(g["folha"] for g in grupos), 2),
+            "razao_ativos_inativos": (round(ativos / beneficiarios, 2)
+                                      if beneficiarios else None),
+        })
+    # Militar depois de civil, sempre — mesmo quando é o maior dos dois.
+    blocos.sort(key=lambda b: (b["militar"], -b["pessoas"]))
+
+    tem_militar = any(b["militar"] for b in blocos)
+    ativos = sum(b["ativos"] for b in blocos)
+    beneficiarios = sum(b["beneficiarios"] for b in blocos)
+    ficha = {
         "disponivel": True,
         "exercicio": exercicio,
-        "grupos": [{"rotulo": rotulo, "pessoas": int(dados["pessoas"]),
-                    "folha": round(dados["folha"], 2)}
-                   for rotulo, dados in sorted(
-                       por_tipo.items(), key=lambda kv: kv[1]["pessoas"], reverse=True)],
+        "massas": blocos,
+        "tem_militar": tem_militar,
+        # O ente inteiro: é o que a aba de caixa usa, e a folha paga não
+        # distingue farda de terno.
+        "grupos": [dict(g, massa=b["rotulo"]) for b in blocos for g in b["grupos"]],
         "ativos": int(ativos),
-        "inativos": int(inativos),
-        "razao_ativos_inativos": round(ativos / inativos, 2) if inativos else None,
+        "inativos": int(beneficiarios),
+        "razao_ativos_inativos": (round(ativos / beneficiarios, 2)
+                                  if beneficiarios else None),
     }
+    if tem_militar:
+        ficha["nota_nomenclatura"] = massas.NOTA_NOMENCLATURA
+    return ficha
 
 
 def _montar_caixa(store: Store, cnpj: str) -> Dict[str, Any]:
@@ -1423,7 +1717,7 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     # Uma variante por combinação de chaves. São dezesseis agregados pequenos:
     # pré-calcular sai mais barato que reimplementar as somas em JavaScript, e
     # garante que o número da tela vem do mesmo código que os testes cobrem.
-    panoramas, carteiras, conformidades = {}, {}, {}
+    panoramas, carteiras, conformidades, militares = {}, {}, {}, {}
     for combinacao in qualidade.combinacoes():
         fora = qualidade.entes_fora(entes, marcas, combinacao)
         panoramas[combinacao] = montar_panorama(store, entes, fora)
@@ -1431,11 +1725,13 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
             store, entes, fora, linhas_fora)
         conformidades[combinacao] = montar_conformidade_nacional(
             store, entes, fora)
+        militares[combinacao] = montar_militar_nacional(store, entes, fora)
 
     gerados = [
         _gravar("panorama.json", {"variantes": panoramas}, dir_saida),
         _gravar("carteira-nacional.json", {"variantes": carteiras}, dir_saida),
         _gravar("conformidade.json", {"variantes": conformidades}, dir_saida),
+        _gravar("militar.json", {"variantes": militares}, dir_saida),
     ]
 
     indice = sorted(

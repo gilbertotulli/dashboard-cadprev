@@ -496,9 +496,10 @@ class TestNovasFontesDoDRAA(unittest.TestCase):
             if not amort.get("disponivel"):
                 continue
             vistos += 1
-            anos = [a["ano"] for a in amort["anos"]]
-            self.assertEqual(len(anos), len(set(anos)),
-                             "anos repetidos em " + ente["ente"])
+            for bloco in amort["blocos"]:
+                anos = [a["ano"] for a in bloco["anos"]]
+                self.assertEqual(len(anos), len(set(anos)),
+                                 "anos repetidos em " + ente["ente"])
         self.assertTrue(vistos, "o demo precisa gerar plano de amortização")
 
     def test_reenvio_nao_dobra_o_comparativo(self):
@@ -506,8 +507,9 @@ class TestNovasFontesDoDRAA(unittest.TestCase):
             pe = self._ficha(ente["cnpj"]).get("projetado_executado") or {}
             if not pe.get("disponivel"):
                 continue
-            codigos = [i["codigo"] for i in pe["itens"]]
-            self.assertEqual(len(codigos), len(set(codigos)))
+            for bloco in pe["blocos"]:
+                codigos = [i["codigo"] for i in bloco["itens"]]
+                self.assertEqual(len(codigos), len(set(codigos)))
 
     def test_diferenca_e_projetado_menos_executado(self):
         """O sinal da fonte, conferido: 79.986 linhas nacionais fecham assim, e
@@ -519,10 +521,11 @@ class TestNovasFontesDoDRAA(unittest.TestCase):
                 continue
             achou = True
             self.assertEqual(pe["conferencia_falhou"], 0)
-            for item in pe["itens"]:
-                self.assertAlmostEqual(
-                    item["projetado"] - item["executado"], item["diferenca"],
-                    places=2)
+            for bloco in pe["blocos"]:
+                for item in bloco["itens"]:
+                    self.assertAlmostEqual(
+                        item["projetado"] - item["executado"], item["diferenca"],
+                        places=2)
         self.assertTrue(achou)
 
     def test_saldo_crescente_aparece(self):
@@ -532,7 +535,8 @@ class TestNovasFontesDoDRAA(unittest.TestCase):
         for ente in self._entes():
             amort = self._ficha(ente["cnpj"]).get("amortizacao") or {}
             if amort.get("disponivel") and any(
-                    (a["amortizacao"] or 0) < 0 for a in amort["anos"]):
+                    (a["amortizacao"] or 0) < 0
+                    for bloco in amort["blocos"] for a in bloco["anos"]):
                 crescentes += 1
         self.assertTrue(crescentes)
 
@@ -753,3 +757,219 @@ class TestComposicaoContabil(unittest.TestCase):
             dv["sem_saldo"] + dv["saldo_parcial"] + dv["confrontados"])
         self.assertLessEqual(dv["ate_1"], dv["ate_5"])
         self.assertEqual(dv["ate_5"] + dv["acima_5"], dv["confrontados"])
+
+
+class TestMassaMilitar(unittest.TestCase):
+    """Civil e militar são massas separadas, e só os Estados têm a segunda.
+
+    Os números vêm da base nacional de 17/09/2026: massa militar em 26 dos 27
+    governos estaduais, em nenhum município, e de 14% a 39% da população
+    declarada onde existe.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.mkdtemp(prefix="cadprev-militar-")
+        fixtures = os.path.join(cls.dir, "fx")
+        demo.escrever(fixtures)
+        from cadprev import ingest, siconfi, fieldmap
+        cls.saida = os.path.join(cls.dir, "data")
+        cliente = Cliente(fixtures=fixtures, pausa=0)
+        with Store(os.path.join(cls.dir, "t.sqlite3")) as store:
+            ingest.ingerir_varios(cliente, store, [
+                "RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA",
+                "DIPR", "DRAA_ESTATISTICA", "DRAA_VALORES_COMPROMISSOS",
+                "DRAA_COMPARATIVO_RECEITA", "DRAA_PLANO_AMORTIZACAO"])
+            # O SICONFI é outra API, com outro envelope: o bloco militar do
+            # Anexo 04 só existe lá.
+            brutos = siconfi.Cliente(fixtures=fixtures, pausa=0).entes()
+            resolucao = fieldmap.resolver("SICONFI_ENTE", brutos[0].keys())
+            store.gravar("SICONFI_ENTE",
+                         (fieldmap.aplicar(resolucao, b) for b in brutos))
+            rreo = siconfi.ClienteRREO(fixtures=fixtures, pausa=0)
+            linhas = []
+            for alvo in store.consultar(
+                    "SELECT cnpj_ente, cod_ibge, esfera_siconfi FROM siconfi_ente"):
+                itens = rreo.anexo_rpps(alvo["cod_ibge"], alvo["esfera_siconfi"],
+                                        demo.ANO, 3)
+                for item in itens:
+                    item["cnpj_ente"] = alvo["cnpj_ente"]
+                linhas.extend(itens)
+            resolucao = fieldmap.resolver("SICONFI_RREO", linhas[0].keys())
+            store.gravar("SICONFI_RREO",
+                         (fieldmap.aplicar(resolucao, l) for l in linhas))
+            build.construir(store, dir_saida=cls.saida, origem="demonstracao")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def _ficha(self, cnpj):
+        with open(os.path.join(self.saida, "ente", cnpj + ".json"),
+                  encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def _entes(self):
+        with open(os.path.join(self.saida, "entes.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def _nacional(self, nome):
+        from cadprev import qualidade
+        with open(os.path.join(self.saida, nome), encoding="utf-8") as fh:
+            return json.load(fh)["variantes"][qualidade.chave_padrao()]
+
+    def test_so_estados_tem_massa_militar(self):
+        estaduais = militares = 0
+        for ente in self._entes():
+            est = self._ficha(ente["cnpj"]).get("estatistica") or {}
+            if not est.get("disponivel"):
+                continue
+            if ente["esfera"] == "estadual":
+                estaduais += 1
+            if est.get("tem_militar"):
+                militares += 1
+                self.assertEqual(
+                    ente["esfera"], "estadual",
+                    "município não tem militar: " + ente["ente"])
+        self.assertTrue(estaduais and militares)
+
+    def test_militar_usa_a_nomenclatura_do_regime_e_guarda_a_da_fonte(self):
+        """O militar não se aposenta: passa à reserva e depois à reforma.
+
+        A troca de termo é visível — o rótulo do regime na tela, o termo do
+        CADPREV ao lado —, porque uma substituição silenciosa não se confere.
+        """
+        achou = False
+        for ente in self._entes():
+            est = self._ficha(ente["cnpj"]).get("estatistica") or {}
+            if not est.get("tem_militar"):
+                continue
+            bloco = next(b for b in est["massas"] if b["militar"])
+            rotulos = {g["rotulo"]: g["fonte"] for g in bloco["grupos"]}
+            self.assertIn("Reserva e reforma", rotulos)
+            self.assertNotIn("Aposentados", rotulos)
+            self.assertEqual(rotulos["Reserva e reforma"],
+                             "MILITARES - APOSENTADOS")
+            achou = True
+        self.assertTrue(achou)
+
+    def test_as_duas_massas_nao_se_somam_num_grupo_so(self):
+        """Antes desta separação os militares caíam num balde único.
+
+        ``tp_populacao`` diz sempre "Militares", então agrupar por ele juntava
+        ativos, reserva e pensionistas num número sem significado — e deixava
+        os três fora de ativos e de inativos.
+        """
+        for ente in self._entes():
+            est = self._ficha(ente["cnpj"]).get("estatistica") or {}
+            if not est.get("tem_militar"):
+                continue
+            mil = next(b for b in est["massas"] if b["militar"])
+            civ = next(b for b in est["massas"] if not b["militar"])
+            self.assertEqual(len(mil["grupos"]), 3)
+            self.assertTrue(mil["ativos"] and mil["inativos"]
+                            and mil["pensionistas"])
+            # O total do ente é a soma das duas massas, e nenhuma delas some.
+            self.assertEqual(est["ativos"], mil["ativos"] + civ["ativos"])
+            self.assertEqual(est["inativos"],
+                             mil["beneficiarios"] + civ["beneficiarios"])
+            self.assertGreater(est["ativos"], civ["ativos"])
+
+    def test_um_plano_de_amortizacao_por_massa(self):
+        """Somar as duas curvas produz um saldo que não existe em nenhuma."""
+        achou = False
+        for ente in self._entes():
+            amort = self._ficha(ente["cnpj"]).get("amortizacao") or {}
+            if not amort.get("tem_militar"):
+                continue
+            achou = True
+            mil = next(b for b in amort["blocos"] if b["militar"])
+            civ = next(b for b in amort["blocos"] if not b["militar"])
+            self.assertNotEqual(mil["saldo_inicial"], civ["saldo_inicial"])
+            for bloco in amort["blocos"]:
+                anos = [a["ano"] for a in bloco["anos"]]
+                self.assertEqual(len(anos), len(set(anos)))
+        self.assertTrue(achou, "o demo precisa ter plano de amortização militar")
+
+    def test_uma_tabela_de_fluxos_por_massa(self):
+        achou = False
+        for ente in self._entes():
+            pe = self._ficha(ente["cnpj"]).get("projetado_executado") or {}
+            if not pe.get("tem_militar"):
+                continue
+            achou = True
+            rotulos = [b["rotulo"] for b in pe["blocos"]]
+            self.assertEqual(len(rotulos), len(set(rotulos)))
+            self.assertIn("Previdenciário · militar", rotulos)
+        self.assertTrue(achou)
+
+    def test_comparativo_militar_so_existe_onde_ha_massa_militar(self):
+        """Município não devolve zero neste indicador: devolve indefinido.
+
+        Zero seria lido como "nenhum militar na ativa para muitos na reserva",
+        que é o pior resultado possível — e ele não tem militar nenhum.
+        """
+        with open(os.path.join(self.saida, "benchmark.json"),
+                  encoding="utf-8") as fh:
+            b = json.load(fh)
+        self.assertIn("razao_militar", [i["chave"] for i in b["indicadores"]])
+        com, sem = 0, 0
+        for cnpj, rpps in b["rpps"].items():
+            valor = rpps["valores"].get("razao_militar")
+            est = self._ficha(cnpj).get("estatistica") or {}
+            if est.get("tem_militar"):
+                self.assertIsNotNone(valor)
+                com += 1
+            else:
+                self.assertIsNone(valor)
+                sem += 1
+        self.assertTrue(com and sem)
+
+    def test_grupo_sem_estados_nao_ganha_referencia_militar(self):
+        """A regra dos três declarantes já basta para manter o município fora.
+
+        Não é preciso uma exceção para militares: um grupo de municípios não
+        tem três valores definidos, então não produz mediana nenhuma.
+        """
+        from cadprev import qualidade
+        with open(os.path.join(self.saida, "benchmark.json"),
+                  encoding="utf-8") as fh:
+            grupos_ = json.load(fh)["grupos"]["variantes"][qualidade.chave_padrao()]
+        with_ = [g["estatisticas"].get("razao_militar")
+                 for g in grupos_["porte"].values()]
+        self.assertTrue(any(v is not None for v in with_))
+        self.assertTrue(any(v is None for v in with_))
+
+    def test_painel_nacional_militar_so_tem_estados(self):
+        m = self._nacional("militar.json")
+        self.assertTrue(m["disponivel"])
+        self.assertTrue(m["estados_com_pessoas"])
+        esferas = {e["cnpj"]: e for e in self._entes()}
+        for ficha in m["entes"]:
+            self.assertEqual(esferas[ficha["cnpj"]]["esfera"], "estadual")
+        self.assertEqual(m["ativos"], sum(e["ativos"] for e in m["entes"]))
+        # A razão nacional é a do conjunto, não a média das razões.
+        beneficiarios = sum(e["beneficiarios"] for e in m["entes"])
+        self.assertAlmostEqual(m["razao_ativos_inativos"],
+                               round(m["ativos"] / beneficiarios, 2), places=2)
+
+    def test_ausencia_de_bloco_militar_no_rreo_nao_vira_zero(self):
+        """Estado sem a linha no Anexo 04 fica nomeado, não zerado."""
+        m = self._nacional("militar.json")
+        self.assertTrue(m["sem_rreo"], "o demo precisa de um Estado sem o bloco")
+        for ficha in m["entes"]:
+            if ficha["uf"] in m["sem_rreo"]:
+                self.assertIsNone(ficha["contribuicoes"])
+                self.assertIsNone(ficha["despesas"])
+
+    def test_carteira_nao_e_atribuida_a_nenhuma_massa(self):
+        """O DAIR não separa a carteira por massa, e o painel diz isso.
+
+        Em 17/09/2026 o campo de plano vinha vazio nas 59.843 linhas da base
+        nacional. Ratear o patrimônio entre civis e militares seria inventar
+        uma repartição que nenhuma fonte declara.
+        """
+        m = self._nacional("militar.json")
+        self.assertIn("nota_carteira", m)
+        for ficha in m["entes"]:
+            self.assertNotIn("patrimonio", ficha)

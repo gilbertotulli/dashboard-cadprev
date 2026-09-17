@@ -123,12 +123,48 @@ a este projeto.
 repartição / taxa de administração — o Nível A que o projeto declarava
 impossível a partir do CADPREV — e a comparação entre fontes.
 
+**Fase 6 — separar as massas civil e militar.** Não estava neste plano e mudou
+mais coisa do que qualquer fase anterior, porque não acrescentou fonte: corrigiu
+a leitura das que já estavam ingeridas.
+
+O achado: o CADPREV declara o papel do participante em campos diferentes conforme
+a massa. No civil está em `tp_populacao`; no militar esse campo diz sempre
+"Militares" e o papel está em `no_cat_populacao`. O painel agrupava tudo por
+`tp_populacao`, de modo que ativos, reserva e pensionistas militares caíam num
+grupo só e ficavam fora tanto de ativos quanto de inativos. Nos 26 governos
+estaduais que declaram massa militar, isso escondia de 14% a 39% da população.
+
+A mesma leitura descuidada valia para `plano`: o plano de amortização e o
+comparativo de receita vêm separados por plano **e** por massa, e o painel
+somava os conjuntos. Em 17/09/2026, 51 entes tinham o ano repetido na curva de
+amortização e 263 tinham o item de fluxo repetido no comparativo — a maioria por
+conviverem plano Previdenciário e Financeiro, não por militares. O bug era geral;
+a pergunta sobre militares foi o que o revelou.
+
+O que entrou:
+
+- `cadprev/massas.py` — o vocabulário das duas massas e a assimetria da fonte
+  num lugar só, com a nomenclatura do regime (reserva e reforma, não
+  aposentadoria) e o termo do CADPREV guardado ao lado.
+- Ficha, plano de amortização e comparativo de receita: um bloco por massa, e
+  por plano, nunca somados.
+- Aba **Militares** — nacional, restrita aos Estados, cruzando a avaliação
+  atuarial do DRAA com o bloco militar do Anexo 04 do RREO, que o SICONFI
+  publica e o CADPREV não tem.
+- Indicador `razao_militar` no comparativo, indefinido para quem não tem a massa.
+  A restrição "só entre Estados" não precisou de regra: a regra dos três
+  declarantes, que já existia, mantém os grupos municipais sem mediana militar.
+
+O que **não** entrou, por não haver base: o DAIR traz a carteira sem plano e sem
+massa — em 17/09/2026 o campo vinha vazio nas 59.843 linhas nacionais. Não há
+patrimônio "do fundo militar" nessa fonte, e o painel diz isso em vez de ratear.
+
 ### Situação em 17/09/2026
 
-As fases 1, 2, 4 e 5 estão implantadas. A fase 3 depende de semanas de medição
+As fases 1, 2, 4, 5 e 6 estão implantadas. A fase 3 depende de semanas de medição
 acumulada e não pode ser antecipada sem desfazer o próprio motivo dela existir.
 
-**Fase 6, a próxima — DCA.** Trazer o Anexo I-AB e confrontar a provisão
+**Fase 7, a próxima — DCA.** Trazer o Anexo I-AB e confrontar a provisão
 matemática contábil com a avaliação atuarial do DRAA, respeitando a defasagem de
 um exercício entre os dois. Uma requisição por ente e por ano.
 

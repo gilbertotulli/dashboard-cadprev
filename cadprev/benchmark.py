@@ -62,10 +62,24 @@ class Indicador:
 
 
 INDICADORES: Sequence[Indicador] = (
-    Indicador("razao_ativos_inativos", "Ativos por inativo", "razao", "maior",
-              "Quantos servidores na ativa sustentam cada aposentado ou "
-              "pensionista. Abaixo de 1, a massa já inverteu.",
+    Indicador("razao_ativos_inativos", "Ativos por beneficiário", "razao",
+              "maior",
+              "Quantos na ativa sustentam cada aposentado, militar da reserva "
+              "ou pensionista. Abaixo de 1, a massa já inverteu. Onde há massa "
+              "militar as duas entram juntas, porque o patrimônio e o caixa "
+              "que as sustentam também não são separáveis na fonte.",
               "DRAA_ESTATISTICA"),
+    # Só os Estados têm massa militar, então só entre Estados este indicador
+    # tem valor definido. A restrição não precisa de regra própria: município
+    # devolve None, fica fora das estatísticas, e um grupo sem três declarantes
+    # não produz mediana — as faixas municipais e de capital simplesmente não
+    # ganham referência. É a mesma disciplina que já rege todo o resto.
+    Indicador("razao_militar", "Ativos por beneficiário — militares", "razao",
+              "maior",
+              "Militares na ativa para cada militar na reserva, reformado ou "
+              "pensionista. Existe só nos Estados: município não tem militar, "
+              "e comparar com ele não seria uma comparação difícil, seria uma "
+              "comparação sem termo.", "DRAA_ESTATISTICA"),
     Indicador("patrimonio_por_beneficiario", "Patrimônio por beneficiário",
               "reais", "maior",
               "Quanto há investido para cada aposentado e pensionista na folha.",
@@ -147,8 +161,14 @@ def calcular(ficha: Mapping[str, Any]) -> Dict[str, Optional[float]]:
     despesa = caixa.get("total_despesa") if caixa.get("disponivel") else None
     meses = caixa.get("meses_declarados") or 0
 
+    # A razão da massa militar, quando a fonte declara uma. O ente sem massa
+    # militar não vale zero aqui: vale indefinido.
+    militar = next((b for b in (est.get("massas") or []) if b.get("militar")), None)
+    razao_militar = militar.get("razao_ativos_inativos") if militar else None
+
     resultado: Dict[str, Optional[float]] = {
         "razao_ativos_inativos": est.get("razao_ativos_inativos"),
+        "razao_militar": razao_militar,
         "patrimonio_por_beneficiario": (
             round(patrimonio / inativos, 2)
             if patrimonio and inativos else None),

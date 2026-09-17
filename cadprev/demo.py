@@ -218,6 +218,9 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         ident = {"nr_cnpj_entidade": cnpj, "no_ente": nome, "sg_uf": uf}
         segregado = rnd.random() < 0.38
         patrimonio = porte * 1e9
+        # Só os Estados têm militares. Nenhum município do demo recebe massa
+        # militar, porque nenhum município do país tem uma.
+        eh_governo_estadual = nome.startswith("Governo do Estado")
 
         # Quem migrou para o RGPS tem duas vigências: o RPPS antigo e o regime
         # atual. É a mais recente que vale.
@@ -343,8 +346,14 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 te_justicativa_retificacao=None))
 
         # DRAA_ESTATISTICA: uma linha por grupo populacional, contagem por sexo.
-        for tipo, fator in (("Servidores", 138), ("Aposentados", 47),
-                            ("Pensionistas", 11), ("Servidores Iminentes", 9)):
+        # A razão civil também varia entre entes — de 0,43 a 5,43 na base real.
+        # Um demo em que todo mundo tem a mesma razão desenharia uma parede
+        # reta ao lado das barras militares e esconderia justamente o contraste
+        # que a separação das massas existe para mostrar.
+        madura = rnd.uniform(0.6, 2.1)
+        for tipo, fator in (("Servidores", 138), ("Aposentados", 47 * madura),
+                            ("Pensionistas", 11 * madura),
+                            ("Servidores Iminentes", 9)):
             total = int(porte * fator)
             tabelas["DRAA_ESTATISTICA"].append(dict(
                 ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
@@ -354,6 +363,29 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 vl_folha_mensal_masc=total // 2 * 3200.0,
                 vl_folha_mensal_fem=(total - total // 2) * 3100.0,
                 vl_idade_media_masc=54.2, vl_idade_media_fem=52.8))
+
+        # A massa militar só existe nos Estados, e a fonte a declara de um jeito
+        # diferente do civil: tp_populacao diz sempre "Militares" e é
+        # no_cat_populacao que separa ativo, reserva/reforma e pensionista.
+        # O demo reproduz essa assimetria — é ela que o pipeline tem de tratar.
+        if eh_governo_estadual:
+            # A razão militar não é a mesma em todo Estado — na base real vai de
+            # 0,56 no Rio Grande do Sul a 17,44 em Roraima. Um demo com seis
+            # Estados idênticos desenharia uma parede reta e não exercitaria a
+            # comparação que a aba existe para fazer.
+            maturidade = rnd.uniform(0.55, 2.4)
+            for categoria, fator in (("MILITARES - ATIVOS", 41 * maturidade),
+                                     ("MILITARES - APOSENTADOS", 23),
+                                     ("MILITARES - PENSIONISTAS", 12)):
+                total = int(porte * fator)
+                tabelas["DRAA_ESTATISTICA"].append(dict(
+                    ident, dt_exercicio=ANO, tp_plano="Previdenciário",
+                    tp_massa="Militar", cd_populacao=1120100,
+                    tp_populacao="Militares", no_cat_populacao=categoria,
+                    qt_grupo_masc=total - total // 6, qt_grupo_fem=total // 6,
+                    vl_folha_mensal_masc=(total - total // 6) * 7900.0,
+                    vl_folha_mensal_fem=total // 6 * 7400.0,
+                    vl_idade_media_masc=46.9, vl_idade_media_fem=42.1))
 
         tabelas["DRAA_SEGREGACAO_MASSA"].append(dict(
             ident, dt_exercicio=ANO, tp_plano="Previdenciário", tp_massa="Civil",
@@ -455,6 +487,22 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                     vl_diferenca="{:.2f}".format(projetado - executado),
                     dt_envio=quando, te_situacao=situacao))
 
+        # O mesmo item de fluxo é declarado uma vez por massa, com valores de
+        # avaliações diferentes. Empilhá-los listaria a rubrica duas vezes.
+        if eh_governo_estadual:
+            for codigo, descricao, base in _FLUXOS_COMPARADOS:
+                projetado = receitas * base * 0.31
+                executado = projetado * rnd.uniform(0.6, 1.2)
+                for quando, situacao in _versoes(reenviou, envio_valido):
+                    tabelas["DRAA_COMPARATIVO_RECEITA"].append(dict(
+                        ident, dt_exercicio=ANO, dt_exercicio_inicial=ANO - 11,
+                        tp_plano="Previdenciário", tp_massa="Militar",
+                        nr_fluxo=codigo, no_fluxo=descricao,
+                        vl_projetado="{:.2f}".format(projetado),
+                        vl_executado="{:.2f}".format(executado),
+                        vl_diferenca="{:.2f}".format(projetado - executado),
+                        dt_envio=quando, te_situacao=situacao))
+
         # --- plano de amortização ano a ano; o primeiro ente da lista paga
         # menos que os juros, e por isso vê o saldo crescer ---
         saldo = patrimonio * 0.9
@@ -481,6 +529,36 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
             saldo = saldo_final
             if saldo <= 0:
                 break
+
+        # Dois planos de amortização no mesmo exercício, um por massa, com
+        # saldos e anos de quitação diferentes. É o caso do Maranhão na base
+        # real: R$ 39,5 bi civis e R$ 18,0 bi militares, que somados viravam um
+        # saldo que não existe em nenhum dos dois.
+        if eh_governo_estadual:
+            saldo = patrimonio * 0.4
+            taxa_mil = 5.0
+            for ano_projetado in range(ANO, ANO + 22):
+                juros = saldo * taxa_mil / 100
+                pagamento = juros + saldo * 0.06
+                amortizacao = pagamento - juros
+                saldo_final = max(0.0, saldo - amortizacao)
+                for quando, situacao in _versoes(reenviou, envio_valido):
+                    tabelas["DRAA_PLANO_AMORTIZACAO"].append(dict(
+                        ident, dt_exercicio=ANO, tp_plano="Previdenciário",
+                        tp_massa="Militar", dt_ano=ano_projetado,
+                        tx_juros=taxa_mil,
+                        vl_saldo_inicial="{:.2f}".format(saldo),
+                        vl_juros="{:.2f}".format(juros),
+                        vl_amortizacao="{:.2f}".format(amortizacao),
+                        vl_pagamentos="{:.2f}".format(pagamento),
+                        vl_aporte="{:.2f}".format(saldo * 0.002),
+                        vl_saldo_final="{:.2f}".format(saldo_final),
+                        vl_base_calculo="{:.2f}".format(folha * 4),
+                        vl_aliquotas=taxa_mil, dt_envio=quando,
+                        te_situacao=situacao))
+                saldo = saldo_final
+                if saldo <= 0:
+                    break
 
     return tabelas
 def entes_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -573,6 +651,26 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
                 valores = [("SALDO ATUAL", cod_inv, recursos * 0.98),
                            ("SALDO ATUAL", cod_caixa, recursos * 0.02)] + valores
             for coluna, cod, valor in valores:
+                linhas.append(dict(base, coluna=coluna, cod_conta=cod,
+                                   conta=cod, valor=round(valor, 2)))
+
+        # O bloco militar do Anexo 04, que só os Estados declaram — e nem todos.
+        # Um Estado fica de fora para que a tela tenha de dizer que a linha
+        # falta, em vez de tratar a ausência como zero.
+        if ente["ente"].startswith("Governo do Estado") and n != 3:
+            contribuicoes = total * 0.021
+            despesas = total * 0.09
+            base = {"exercicio": ANO, "periodo": 3, "cod_ibge": ente["cod_ibge"],
+                    "uf": ente["uf"], "instituicao": ente["ente"],
+                    "anexo": "RREO-Anexo 04", "populacao": ente["populacao"]}
+            for coluna, cod, valor in (
+                    ("RECEITAS REALIZADAS ATÉ O BIMESTRE (b)",
+                     "TotalDasContribucoesDosMilirares", contribuicoes),
+                    ("DESPESAS PAGAS ATÉ O BIMESTRE (f)",
+                     "TotalDasDespesasComInativosEPensionistasMilirares", despesas),
+                    ("DESPESAS PAGAS ATÉ O BIMESTRE (f)",
+                     "ResultadoAssociadoAInativosEPensionistasMilirares",
+                     contribuicoes - despesas)):
                 linhas.append(dict(base, coluna=coluna, cod_conta=cod,
                                    conta=cod, valor=round(valor, 2)))
     return linhas

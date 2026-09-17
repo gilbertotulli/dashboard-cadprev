@@ -496,6 +496,11 @@
    */
   function barrasPareadas(svg, W, H, cfg) {
     var linhasCfg = cfg.linhas;
+    // A forma nasceu para perfil de alocação, tudo em percentual. Quando a
+    // grandeza não é percentual — uma razão, por exemplo — o sufixo fixo
+    // rotularia como "%" um número que não é.
+    var un = cfg.unidade === undefined ? "%" : cfg.unidade;
+    var dec = cfg.dec === undefined ? 1 : cfg.dec;
     var padL = Math.min(178, W * 0.42), padR = 52;
     var alturaLinha = H / linhasCfg.length;
     var bh = Math.min(9, (alturaLinha - 12) / 2);
@@ -521,7 +526,7 @@
           d: rrect(padL, par[2], largura, bh, 0, 3), fill: par[1]
         });
         ligar(barra, function (ev) {
-          mostrar(titulo(l.rotulo) + linha(par[1], par[3], num(v, 1) + "%"), ev);
+          mostrar(titulo(l.rotulo) + linha(par[1], par[3], num(v, dec) + un), ev);
         });
         svg.appendChild(barra);
       });
@@ -532,7 +537,7 @@
       ].forEach(function (par) {
         if (par[0] === null || par[0] === undefined) return;
         svg.appendChild(txt(padL + par[0] / max * pw + 7, par[2],
-          num(par[0], 1) + "%", {
+          num(par[0], dec) + un, {
             fill: par[1], size: 10, weight: 500, baseline: "middle",
             tabular: true
           }));

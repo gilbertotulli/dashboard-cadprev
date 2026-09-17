@@ -462,6 +462,42 @@
     return { estadual: "RPPS estadual", capital: "RPPS de capital", municipal: "RPPS municipal" }[chave] || "—";
   }
 
+  /* Civil e militar não somam. O militar não se aposenta — passa à reserva e
+   * depois à reforma —, tem avaliação atuarial própria e só existe nos Estados.
+   * Uma tabela para cada, e o termo da fonte ao lado do termo do regime sempre
+   * que o painel troca um pelo outro. */
+  function blocosDaMassa(est) {
+    var muitas = (est.massas || []).length > 1;
+    var nos = [];
+    (est.massas || []).forEach(function (b) {
+      if (muitas) {
+        nos.push(h("p", { class: "rotulo-massa", texto: b.rotulo }));
+      }
+      nos.push(tabela(
+        [{ t: "Grupo" }, { t: "Pessoas", n: true }, { t: "Folha mensal", n: true }],
+        (b.grupos || []).map(function (g) {
+          return h("tr", {}, [
+            h("td", { texto: g.rotulo,
+                      title: g.fonte ? "No CADPREV: " + g.fonte : "" }),
+            h("td", { class: "n", texto: num(g.pessoas, 0) }),
+            h("td", { class: "n", texto: g.folha ? reais(g.folha) : "—" })
+          ]);
+        }).concat([
+          h("tr", { class: "somatorio" }, [
+            h("td", { texto: "Razão ativos / beneficiários" }),
+            h("td", { class: "n", texto: b.razao_ativos_inativos === null ||
+                      b.razao_ativos_inativos === undefined
+                        ? "—" : num(b.razao_ativos_inativos, 2) }),
+            h("td", {})
+          ])
+        ])));
+    });
+    if (est.nota_nomenclatura) {
+      nos.push(h("p", { class: "nota", texto: est.nota_nomenclatura }));
+    }
+    return nos;
+  }
+
   function abaFicha() {
     if (!estado.cnpj) return Promise.resolve([semEnte("Ficha do RPPS")]);
     return carregarEnte().then(function (e) {
@@ -498,24 +534,13 @@
                 ]);
               }))),
           cartao("Massa de participantes", "DRAA_ESTATISTICA",
-            est.disponivel ? "Exercício " + est.exercicio : "Sem DRAA no banco",
             est.disponivel
-              ? tabela([{ t: "Grupo" }, { t: "Pessoas", n: true }, { t: "Folha mensal", n: true }],
-                (est.grupos || []).map(function (g) {
-                  return h("tr", {}, [
-                    h("td", { texto: g.rotulo }),
-                    h("td", { class: "n", texto: num(g.pessoas, 0) }),
-                    h("td", { class: "n", texto: g.folha ? reais(g.folha) : "—" })
-                  ]);
-                }).concat([
-                  h("tr", {}, [
-                    h("td", { texto: "Razão ativos / inativos" }),
-                    h("td", { class: "n", texto: est.razao_ativos_inativos === null
-                      ? "—" : num(est.razao_ativos_inativos, 2) }),
-                    h("td", {})
-                  ])
-                ]))
-              : h("p", { class: "sub", texto: "—" }))
+              ? "Exercício " + est.exercicio +
+                (est.tem_militar ? " · civis e militares são massas separadas"
+                                 : "")
+              : "Sem DRAA no banco",
+            est.disponivel ? blocosDaMassa(est)
+                           : h("p", { class: "sub", texto: "—" }))
         ])
       ];
     });
@@ -822,9 +847,10 @@
         }
 
         var ref = resolverReferencia(b, meu);
-        var alvo = grafico(b.indicadores.length * 54);
+        var visiveis = indicadoresVisiveis(b, meu);
+        var alvo = grafico(visiveis.length * 54);
 
-        var linhasRegua = b.indicadores.map(function (ind) {
+        var linhasRegua = visiveis.map(function (ind) {
           var brasil = b.grupos.brasil.estatisticas[ind.chave];
           var grupo = ref.estatisticas ? ref.estatisticas[ind.chave] : null;
           var valor = meu.valores[ind.chave];
@@ -879,7 +905,7 @@
 
         depoisDeMontar(function () {
           Charts.desenhar(alvo, "reguas", {
-            linhas: linhasRegua, altura: b.indicadores.length * 54,
+            linhas: linhasRegua, altura: visiveis.length * 54,
             nomeRpps: e.ente, nomeReferencia: ref.rotulo,
             descricao: "Posição do RPPS em cada indicador"
           });
@@ -1281,8 +1307,20 @@
     return caixa;
   }
 
+  /* Indicador que não tem assunto para este RPPS não é indicador sem dado: é
+   * indicador que não se aplica. Município não tem militar — mostrar a linha
+   * com um travessão sugeriria que falta declaração, quando o que falta é a
+   * própria massa. */
+  function indicadoresVisiveis(b, meu) {
+    return b.indicadores.filter(function (ind) {
+      if (ind.chave !== "razao_militar") return true;
+      var v = meu.valores[ind.chave];
+      return v !== null && v !== undefined;
+    });
+  }
+
   function tabelaComparativo(b, meu, ref) {
-    var linhas = b.indicadores.map(function (ind) {
+    var linhas = indicadoresVisiveis(b, meu).map(function (ind) {
       var fmt = FORMATADORES[ind.unidade] || FORMATADORES.razao;
       var valor = meu.valores[ind.chave];
       var grupo = ref.estatisticas ? ref.estatisticas[ind.chave] : null;
@@ -1361,6 +1399,27 @@
               "não errou nada: apenas descreve uma situação mais antiga. Se " +
               "isso desqualifica o número depende da pergunta que você está " +
               "fazendo, e quem decide é quem pergunta."
+          })
+        ]),
+        cartao("Militares, e por que eles ficam à parte", null, null, [
+          h("p", {
+            texto: "Só os Estados têm massa militar — em 17/09/2026, 26 dos 27 " +
+              "governos estaduais e nenhum dos 5.569 municípios. Onde existe, " +
+              "é de 14% a 39% da população declarada, e a razão entre ativos e " +
+              "beneficiários não acompanha a civil do mesmo ente."
+          }),
+          h("p", {
+            texto: "Militar não se aposenta: passa à reserva e depois à " +
+              "reforma. O CADPREV grava o grupo como \u201cMILITARES - " +
+              "APOSENTADOS\u201d; o painel mostra o termo do regime e registra " +
+              "o da fonte ao lado. É a única troca de termo do projeto, e ela " +
+              "fica visível para poder ser conferida."
+          }),
+          h("p", {
+            texto: "O DAIR não separa a carteira por massa, então o patrimônio " +
+              "de um Estado é o do RPPS inteiro, civil e militar juntos. O " +
+              "painel diz isso em vez de repartir o número por um critério que " +
+              "nenhuma fonte declara."
           })
         ]),
         cartao("Erros de cadastro e o que o painel faz com eles", null, null, [
@@ -1531,8 +1590,25 @@
    * pergunta que interessa: o saldo devedor chega a zero, e quando. */
   function cartoesDeAmortizacao(e) {
     var a = e.amortizacao || {};
-    if (!a.disponivel || !(a.anos || []).length) return [];
+    var blocos = (a.blocos || []).filter(function (b) {
+      return (b.anos || []).length;
+    });
+    if (!a.disponivel || !blocos.length) return [];
 
+    var nos = [h("h3", { class: "secao", texto: "Plano de amortização" })];
+    if (blocos.length > 1) {
+      nos.push(h("p", { class: "nota", texto:
+        "A fonte declara " + blocos.length + " planos separados — um por fundo e " +
+        "por massa. Cada um tem o seu saldo e o seu ano de quitação; somá-los " +
+        "produziria um saldo que não existe em nenhum deles." }));
+    }
+    blocos.forEach(function (b) {
+      nos = nos.concat(umPlanoDeAmortizacao(b, a.exercicio, blocos.length > 1));
+    });
+    return nos;
+  }
+
+  function umPlanoDeAmortizacao(a, exercicio, nomear) {
     /* Milhões sempre, mesmo quando o saldo passa do bilhão: em bilhões um
      * saldo de 1,04 bi rende marcas de eixo "1, 1, 1, 0, 0" — resolução de
      * menos para uma curva cujo assunto é justamente descer até zero. */
@@ -1546,13 +1622,14 @@
         unidade: sufixo,
         rotulos: a.anos.map(function (x) { return String(x.ano); }),
         series: [{
-          nome: "Saldo devedor", cor: "var(--s1)",
+          nome: "Saldo devedor", cor: a.militar ? "var(--s2)" : "var(--s1)",
           dados: a.anos.map(function (x) {
             return x.saldo_final === null || x.saldo_final === undefined
               ? null : x.saldo_final / escala;
           })
         }],
-        descricao: "Saldo devedor projetado ano a ano"
+        descricao: "Saldo devedor projetado ano a ano" +
+          (nomear ? " — " + a.rotulo : "")
       });
     });
 
@@ -1563,20 +1640,19 @@
       return (x.amortizacao || 0) < 0;
     }).length;
 
-    var nos = [
-      h("h3", { class: "secao", texto: "Plano de amortização" }),
-      h("div", { class: "kpis" }, [
-        kpi("Saldo a amortizar", reais(a.saldo_inicial),
-          "em " + (a.primeiro_ano || "—")),
-        kpi("Quitação prevista", a.ano_quitacao ? String(a.ano_quitacao) : "não zera",
-          a.ano_quitacao ? "pelo plano vigente" : "o plano não chega a zero",
-          a.ano_quitacao ? "bom" : "ruim"),
-        kpi("Juros até a quitação", reais(a.total_juros),
-          (a.taxa_juros ? "taxa de " + pct(a.taxa_juros, 2) : "taxa não declarada")),
-        kpi("Aportes previstos", reais(a.total_aporte),
-          "além das contribuições")
-      ])
-    ];
+    var nos = [];
+    if (nomear) nos.push(h("p", { class: "rotulo-massa", texto: a.rotulo }));
+    nos.push(h("div", { class: "kpis" }, [
+      kpi("Saldo a amortizar", reais(a.saldo_inicial),
+        "em " + (a.primeiro_ano || "—")),
+      kpi("Quitação prevista", a.ano_quitacao ? String(a.ano_quitacao) : "não zera",
+        a.ano_quitacao ? "pelo plano vigente" : "o plano não chega a zero",
+        a.ano_quitacao ? "bom" : "ruim"),
+      kpi("Juros até a quitação", reais(a.total_juros),
+        (a.taxa_juros ? "taxa de " + pct(a.taxa_juros, 2) : "taxa não declarada")),
+      kpi("Aportes previstos", reais(a.total_aporte),
+        "além das contribuições")
+    ]));
     if (crescendo) {
       nos.push(h("div", { class: "aviso-linha" }, [
         h("span", { class: "ico", texto: "\u26a0" }),
@@ -1586,11 +1662,13 @@
           "do período e o saldo devedor cresce." })
       ]));
     }
-    nos.push(cartao("Saldo devedor projetado", "DRAA_PLANO_AMORTIZACAO",
-      "Avaliação de " + (a.exercicio || "—") + " · " + a.anos.length +
+    nos.push(cartao("Saldo devedor projetado" + (nomear ? " · " + a.rotulo : ""),
+      "DRAA_PLANO_AMORTIZACAO",
+      "Avaliação de " + (exercicio || "—") + " · " + a.anos.length +
       " anos, de " + a.primeiro_ano + " a " + a.ultimo_ano,
       alvo));
-    nos.push(cartao("Primeiros anos do plano", "DRAA_PLANO_AMORTIZACAO",
+    nos.push(cartao("Primeiros anos do plano" + (nomear ? " · " + a.rotulo : ""),
+      "DRAA_PLANO_AMORTIZACAO",
       "Juros e amortização de cada exercício",
       tabela([{ t: "Ano", n: true }, { t: "Saldo inicial", n: true },
               { t: "Juros", n: true }, { t: "Amortização", n: true },
@@ -1612,7 +1690,10 @@
    * e despesas, e executar menos que o projetado é ruim numa e bom na outra. */
   function cartaoProjetadoExecutado(e) {
     var pe = e.projetado_executado || {};
-    if (!pe.disponivel || !(pe.itens || []).length) return [];
+    var blocos = (pe.blocos || []).filter(function (b) {
+      return (b.itens || []).length;
+    });
+    if (!pe.disponivel || !blocos.length) return [];
     var nos = [];
     if (pe.conferencia_falhou) {
       nos.push(h("div", { class: "aviso-linha" }, [
@@ -1623,22 +1704,32 @@
           "sem recalcular." })
       ]));
     }
-    nos.push(cartao("Projetado contra executado", "DRAA_COMPARATIVO_RECEITA",
-      "Avaliação de " + (pe.exercicio || "—") +
-      " · maiores diferenças em valor · a diferença é o projetado menos o executado",
-      tabela([{ t: "Item de fluxo" }, { t: "Projetado", n: true },
-              { t: "Executado", n: true }, { t: "Diferença", n: true },
-              { t: "Desvio", n: true }],
-        pe.itens.map(function (i) {
-          return h("tr", {}, [
-            h("td", { texto: i.fluxo || "—" }),
-            h("td", { class: "n", texto: reais(i.projetado) }),
-            h("td", { class: "n", texto: reais(i.executado) }),
-            h("td", { class: "n", texto: reais(i.diferenca) }),
-            h("td", { class: "n", texto: i.desvio === null ||
-                      i.desvio === undefined ? "—" : pct(i.desvio, 1) })
-          ]);
-        }), true)));
+    var nomear = blocos.length > 1;
+    if (nomear) {
+      nos.push(h("p", { class: "nota", texto:
+        "Uma tabela por fundo e por massa: o mesmo item de fluxo é declarado " +
+        "uma vez em cada, com valores de avaliações diferentes." }));
+    }
+    blocos.forEach(function (b) {
+      nos.push(cartao(
+        "Projetado contra executado" + (nomear ? " · " + b.rotulo : ""),
+        "DRAA_COMPARATIVO_RECEITA",
+        "Avaliação de " + (pe.exercicio || "—") +
+        " · maiores diferenças em valor · a diferença é o projetado menos o executado",
+        tabela([{ t: "Item de fluxo" }, { t: "Projetado", n: true },
+                { t: "Executado", n: true }, { t: "Diferença", n: true },
+                { t: "Desvio", n: true }],
+          b.itens.map(function (i) {
+            return h("tr", {}, [
+              h("td", { texto: i.fluxo || "—" }),
+              h("td", { class: "n", texto: reais(i.projetado) }),
+              h("td", { class: "n", texto: reais(i.executado) }),
+              h("td", { class: "n", texto: reais(i.diferenca) }),
+              h("td", { class: "n", texto: i.desvio === null ||
+                        i.desvio === undefined ? "—" : pct(i.desvio, 1) })
+            ]);
+          }), true)));
+    });
     return nos;
   }
 
@@ -2095,11 +2186,158 @@
       });
   }
 
+  /* ---------------------------------------------- militares
+   *
+   * Uma aba só porque a massa militar não cabe nas outras: só os Estados a têm,
+   * a avaliação atuarial é própria, o fundo é próprio e o militar não se
+   * aposenta — vai para a reserva e depois para a reforma. Comparar um Estado
+   * com um município aqui não seria uma comparação difícil: seria uma
+   * comparação sem termo, porque município não tem militar.
+   */
+  function abaMilitares() {
+    return nacional("militar.json").then(function (m) {
+      if (!m.disponivel) {
+        return [vazio("Militares indisponível",
+          "Falta ingerir <code>DRAA_ESTATISTICA</code>. Rode " +
+          "<code>python -m cadprev ingest DRAA_ESTATISTICA</code>.")];
+      }
+      var comPessoas = (m.entes || []).filter(function (e) { return e.pessoas; });
+      var r = m.resumo_razao;
+
+      /* Ordenado pela razão, não pelo tamanho: o assunto é a relação entre
+       * quem contribui e quem recebe, e ela não acompanha a população —
+       * Roraima, com 3 mil militares, está no extremo. As duas massas do mesmo
+       * ente lado a lado porque é isso que a separação revela: em quase todos
+       * os Estados a razão militar e a civil não se parecem. */
+      var ordenados = comPessoas.filter(function (e) {
+        return e.razao_ativos_inativos !== null &&
+               e.razao_ativos_inativos !== undefined;
+      }).slice().sort(function (a, b) {
+        return b.razao_ativos_inativos - a.razao_ativos_inativos;
+      });
+      var altura = Math.max(200, ordenados.length * 21);
+      var alvo = grafico(altura);
+      depoisDeMontar(function () {
+        Charts.desenhar(alvo, "barrasPareadas", {
+          altura: altura, unidade: "", dec: 2,
+          nomeRpps: "Militar", nomeReferencia: "Civil",
+          linhas: ordenados.map(function (e) {
+            return { rotulo: (e.uf || "?") + " · " +
+                       (e.ente || "").replace(/^Governo d[aeo] (Estado d[aeo] )?/, ""),
+                     valor: e.razao_ativos_inativos,
+                     referencia: e.razao_civil };
+          }),
+          descricao: "Ativos por beneficiário, na massa militar e na civil de " +
+            "cada Estado"
+        });
+      });
+
+      var linhas = comPessoas.map(function (e) {
+        return linhaClicavel(e.cnpj, [
+          h("td", { class: "nome-ente" },
+            [e.ente, h("span", { class: "uf", texto: e.uf || "" })]),
+          h("td", { class: "n", texto: num(e.ativos, 0) }),
+          h("td", { class: "n", texto: num(e.inativos, 0) }),
+          h("td", { class: "n", texto: num(e.pensionistas, 0) }),
+          h("td", { class: "n", texto: e.razao_ativos_inativos === null ||
+                    e.razao_ativos_inativos === undefined
+                      ? "—" : num(e.razao_ativos_inativos, 2) }),
+          h("td", { class: "n", texto: e.razao_civil === null ||
+                    e.razao_civil === undefined
+                      ? "—" : num(e.razao_civil, 2) }),
+          h("td", { class: "n", texto: e.participacao === null ||
+                    e.participacao === undefined
+                      ? "—" : pct(e.participacao, 1) })
+        ]);
+      });
+
+      /* Execução orçamentária ao lado de avaliação atuarial: são perguntas
+       * diferentes sobre a mesma massa, de fontes diferentes, com referências
+       * temporais diferentes — e por isso cada uma leva a sua data na coluna,
+       * em vez de se dissolverem num total só. */
+      var comOrcamento = comPessoas.filter(function (e) {
+        return e.contribuicoes !== null && e.contribuicoes !== undefined;
+      });
+      var orcamento = comOrcamento.length ? cartao(
+        "Contribuições e despesas dos militares", "SICONFI · RREO Anexo 04",
+        "Execução orçamentária do exercício, acumulada até o bimestre " +
+        "declarado — outra fonte e outra referência temporal que a avaliação " +
+        "atuarial acima",
+        tabela([{ t: "Estado" }, { t: "Bim.", n: true },
+                { t: "Contribuições", n: true }, { t: "Despesas", n: true },
+                { t: "Resultado", n: true }],
+          comOrcamento.slice().sort(function (a, b) {
+            return (b.despesas || 0) - (a.despesas || 0);
+          }).map(function (e) {
+            return linhaClicavel(e.cnpj, [
+              h("td", { class: "nome-ente" },
+                [e.ente, h("span", { class: "uf", texto: e.uf || "" })]),
+              h("td", { class: "n", texto: e.periodo_rreo || "—" }),
+              h("td", { class: "n", texto: reais(e.contribuicoes) }),
+              h("td", { class: "n", texto: reais(e.despesas) }),
+              h("td", { class: "n" + ((e.resultado || 0) < 0 ? " ruim" : ""),
+                        texto: reais(e.resultado) })
+            ]);
+          }), true)) : null;
+
+      var nos = [
+        h("h2", { class: "secao", texto: "Militares" }),
+        h("p", { class: "intro", texto:
+          "Militar não se aposenta: passa à reserva e depois à reforma. A " +
+          "avaliação atuarial é própria e a massa é própria. " + m.escopo }),
+        h("div", { class: "kpis" }, [
+          kpi("Estados com massa militar", num(m.estados_com_pessoas, 0),
+            m.estados_sem_massa.length
+              ? "sem DRAA: " + m.estados_sem_massa.join(", ")
+              : "todos os Estados declaram"),
+          kpi("Militares na ativa", num(m.ativos, 0), "declarados no DRAA"),
+          kpi("Na reserva, reformados e pensionistas",
+            num(m.inativos + m.pensionistas, 0),
+            num(m.inativos, 0) + " na reserva ou reforma e " +
+            num(m.pensionistas, 0) + " pensionistas"),
+          kpi("Ativos por beneficiário",
+            m.razao_ativos_inativos === null ? "—"
+              : num(m.razao_ativos_inativos, 2),
+            r ? "mediana por Estado de " + num(r.mediana, 2) +
+                " · de " + num(r.min, 2) + " a " + num(r.max, 2)
+              : "sem grupo para mediana",
+            (m.razao_ativos_inativos || 0) >= 1 ? "bom" : "ruim")
+        ]),
+        cartao("Ativos por beneficiário, Estado a Estado", "DRAA_ESTATISTICA",
+          "Militares na ativa para cada militar na reserva, reformado ou " +
+          "pensionista — e, ao lado, a mesma razão na massa civil do mesmo ente",
+          [alvo, legenda([
+            { cor: "var(--s2)", rotulo: "Militar" },
+            { cor: "var(--s1)", rotulo: "Civil" }
+          ])]),
+        cartao("Massa militar de cada Estado", "DRAA_ESTATISTICA",
+          "Clique na linha para abrir o ente · a razão civil ao lado mostra " +
+          "que as duas massas não se comportam igual no mesmo ente",
+          tabela([{ t: "Estado" }, { t: "Ativos", n: true },
+                  { t: "Reserva e reforma", n: true },
+                  { t: "Pensionistas", n: true },
+                  { t: "Razão militar", n: true },
+                  { t: "Razão civil", n: true },
+                  { t: "% da massa", n: true }], linhas, true))
+      ];
+      if (orcamento) nos.push(orcamento);
+      if (m.sem_rreo && m.sem_rreo.length) {
+        nos.push(h("p", { class: "nota", texto:
+          "Sem o bloco militar no Anexo 04 do RREO coletado: " +
+          m.sem_rreo.join(", ") + ". Ausência de linha não é ausência de " +
+          "despesa — é ausência de declaração nessa fonte." }));
+      }
+      nos.push(h("p", { class: "nota", texto: m.nota_carteira }));
+      nos.push(h("p", { class: "nota", texto: m.nota_nomenclatura }));
+      return nos;
+    });
+  }
+
   var ABAS = {
     panorama: abaPanorama, ficha: abaFicha, caixa: abaCaixa,
     carteira: abaCarteiraEnte, atuaria: abaAtuaria,
     comparativo: abaComparativo, conformidade: abaConformidade,
-    qualidade: abaQualidade,
+    militares: abaMilitares, qualidade: abaQualidade,
     ajuda: abaAjuda
   };
 
@@ -2112,6 +2350,7 @@
     if (estado.aba === "panorama") return true;
     if (estado.aba === "carteira" && !estado.cnpj) return true;
     if (estado.aba === "conformidade" && !estado.cnpj) return true;
+    if (estado.aba === "militares") return true;
     return estado.aba === "comparativo" && !!estado.cnpj;
   }
 

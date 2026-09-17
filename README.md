@@ -386,6 +386,61 @@ Duas regras de leitura nasceram aqui:
   idênticas em todas as colunas; exibi-las duas vezes sugeriria dois
   apontamentos onde há um.
 
+## Militares
+
+Só os Estados têm massa militar. Em 17/09/2026 ela aparecia em 26 dos 27
+governos estaduais — Minas Gerais não entrega DRAA — e em nenhum dos 5.569
+municípios. Onde existe, é de 14% (Tocantins) a 39% (Rio de Janeiro) da
+população declarada, e a razão entre ativos e beneficiários não acompanha a
+civil do mesmo ente: no Espírito Santo é 1,08 contra 0,61; no Ceará, 1,68 contra
+0,61; no Rio Grande do Sul, 0,56 contra 0,43.
+
+A separação obrigou a ler a fonte com mais cuidado do que "agrupar por tipo de
+população". O CADPREV descreve as duas massas em campos diferentes:
+
+| | papel do participante | carreira |
+|---|---|---|
+| Civil | `tp_populacao` (Servidores, Aposentados, Pensionistas) | `no_cat_populacao` |
+| Militar | `no_cat_populacao` (ATIVOS, APOSENTADOS, PENSIONISTAS) | — |
+
+No militar `tp_populacao` diz sempre "Militares". Agrupar as duas pelo mesmo
+campo — que era o que o painel fazia — punha ativos, reserva e pensionistas
+militares num balde único e os deixava fora tanto de ativos quanto de inativos:
+para os 26 governos estaduais, um quinto a dois quintos da massa sumia da conta
+que o painel mostrava. Hoje cada massa tem a sua tabela, os seus totais e a sua
+razão, e o total do ente é a soma explícita das duas.
+
+**Nomenclatura.** Militar não se aposenta: passa à reserva e depois à reforma. O
+CADPREV grava o grupo como `MILITARES - APOSENTADOS`; o painel mostra "Reserva e
+reforma" e registra o termo da fonte ao lado, porque uma substituição silenciosa
+não se confere. É a única troca de termo do projeto, e ela é visível.
+
+**Um fundo por massa.** O plano de amortização e o comparativo de receita também
+vêm separados por plano e por massa, e somá-los produzia números que não existem
+em nenhum dos dois. O Maranhão declara em 2026 dois planos de amortização — R$
+39,5 bi civis e R$ 18,0 bi militares —, que o painel exibia como um saldo só. A
+correção vale além dos militares: 51 entes tinham o ano repetido no plano de
+amortização e 263 tinham o item de fluxo repetido no comparativo, quase todos
+pela convivência entre plano Previdenciário e Financeiro.
+
+**O que a fonte não separa, o painel não reparte.** O DAIR traz a carteira ativo
+a ativo sem plano e sem massa: em 17/09/2026 o campo de plano vinha vazio nas
+59.843 linhas da base nacional. Não existe patrimônio "do fundo militar" nessa
+fonte, e a aba diz isso em vez de ratear. O SICONFI cobre parte do vão: o Anexo
+04 do RREO tem um bloco militar próprio — contribuições, despesas com inativos e
+pensionistas, e o resultado entre os dois. Dos 21 Estados cujo Anexo 04 estava
+coletado em 17/09/2026, 20 traziam o bloco; o Rio Grande do Sul entregou o anexo
+sem ele. A aba nomeia quem ficou sem a linha em vez de tratar a ausência como
+zero — o SICONFI nomeia as contas com os erros de digitação dele
+(`TotalDasContribucoesDosMilirares`), e o painel os repete, porque corrigi-los
+seria deixar de encontrar a linha.
+
+**A comparação.** Município não tem militar, então a comparação militar só cabe
+entre Estados. Isso não precisou de exceção: o indicador vem indefinido para
+quem não tem a massa, e a regra dos três declarantes que já regia todo o resto
+mantém os grupos municipais sem mediana militar. No comparativo de um município
+a linha nem aparece — indicador sem assunto não é indicador sem dado.
+
 ## O que ainda falta
 
 - **Endpoints sem mapa de campos.** Dezesseis dos 39 têm mapa; `python -m cadprev
