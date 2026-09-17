@@ -60,6 +60,7 @@ cadprev/        ingestão e agregação (Python, sem dependências)
   fundos.py       separação por natureza do fundo (Níveis A e B)
   qualidade.py    o que a própria base contradiz, e as chaves de recorte
   competencia.py  pergunta à API qual competência do DAIR já fechou
+  siconfi.py      cliente da segunda fonte: o SICONFI, do Tesouro Nacional
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
 web/            painel estático (HTML, CSS e JS, sem build)
@@ -250,6 +251,27 @@ As outras três medem a atualidade do dado, não a sua correção. Quem entregou
 último DAIR há cinco meses não errou nada — apenas descreve uma situação mais
 antiga. Se isso desqualifica o número depende da pergunta, e quem decide é quem
 pergunta.
+
+## A segunda fonte
+
+O SICONFI, do Tesouro Nacional, entrou pela tabela de entes da federação —
+`python -m cadprev siconfi`, uma requisição para o país inteiro. O que casa as
+duas bases é o CNPJ, e ele casa em **5.594 dos 5.596** entes que o CADPREV
+conhece: igualdade de chave, sem correspondência aproximada.
+
+Com ela, esfera e capital deixaram de ser deduzidas do nome. A dedução era
+frágil e errava: há sete municípios batizados com nome de unidade federativa —
+Tocantins em Minas, Espírito Santo e Paraná no Rio Grande do Norte, Mato Grosso
+na Paraíba —, e a regra antiga promovia todos a governo estadual. O país tem 27
+governos estaduais; o painel contava 34. Agora a esfera vem declarada, e a
+contagem fecha.
+
+A tabela é **referência, não fonte de entes**: ela cobre 5.598 entidades, quatro
+das quais o CADPREV não conhece, e uni-la ao índice acrescentaria fichas vazias e
+mexeria no denominador nacional.
+
+Veio de brinde a população de cada ente, que abre indicadores per capita ainda
+não explorados.
 
 ## O agendamento
 

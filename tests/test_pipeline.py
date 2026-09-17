@@ -572,3 +572,54 @@ class TestNovasFontesDoDRAA(unittest.TestCase):
         with Store(self.banco) as store:
             build.construir(store, dir_saida=self.saida, origem="demonstracao")
         self.assertFalse(os.path.exists(orfa))
+
+
+class TestSiconfiNoIndice(unittest.TestCase):
+    """A tabela de entes do Tesouro é referência, não fonte de entes."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.mkdtemp(prefix="cadprev-siconfi-")
+        cls.fixtures = os.path.join(cls.dir, "fx")
+        demo.escrever(cls.fixtures)
+        from cadprev import ingest, siconfi, fieldmap
+        cls.banco = os.path.join(cls.dir, "t.sqlite3")
+        cls.saida = os.path.join(cls.dir, "data")
+        with Store(cls.banco) as store:
+            ingest.ingerir_varios(
+                Cliente(fixtures=cls.fixtures, pausa=0), store,
+                ["RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA"])
+            brutos = siconfi.Cliente(fixtures=cls.fixtures, pausa=0).entes()
+            resolucao = fieldmap.resolver("SICONFI_ENTE", brutos[0].keys())
+            store.gravar("SICONFI_ENTE",
+                         (fieldmap.aplicar(resolucao, b) for b in brutos))
+            build.construir(store, dir_saida=cls.saida, origem="demonstracao")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def _entes(self):
+        with open(os.path.join(self.saida, "entes.json"), encoding="utf-8") as fh:
+            return json.load(fh)
+
+    def test_tabela_de_referencia_nao_vira_ente_do_painel(self):
+        """Ela cobre os 5.598 entes da federação; quatro o CADPREV não conhece.
+
+        Uni-la ao índice acrescentaria fichas vazias e mexeria no denominador.
+        """
+        indice = self._entes()
+        with Store(self.banco) as store:
+            do_siconfi = store.consultar("SELECT COUNT(*) n FROM siconfi_ente")[0]["n"]
+            do_crp = store.consultar(
+                "SELECT COUNT(DISTINCT cnpj_ente) n FROM rpps_crp")[0]["n"]
+        self.assertTrue(do_siconfi)
+        self.assertEqual(len(indice), do_crp)
+
+    def test_populacao_chega_ao_indice(self):
+        comunidade = [e for e in self._entes() if e.get("populacao")]
+        self.assertTrue(comunidade)
+
+    def test_capital_vem_declarada(self):
+        capitais = [e for e in self._entes() if e["esfera"] == "capital"]
+        self.assertTrue(capitais)

@@ -135,6 +135,12 @@ jobs:
           FILTRO_UF=""
           [ -n "$UF" ] && FILTRO_UF="--uf $UF"
 
+          # Mede antes de varrer. O carimbo de atualização da fonte é uma
+          # requisição, e é o histórico dele que vai dizer, daqui a algumas
+          # semanas, se a varredura completa semanal se justifica. Por ora só
+          # anota — nada é cortado com base nele.
+          python -m cadprev marco 2>&1 | tee -a ingest.log || true
+
           # Melhor esforço: a falha de um endpoint secundário deixa um cartão
           # vazio, não justifica derrubar a publicação inteira. Os essenciais
           # são conferidos logo abaixo.
@@ -146,6 +152,11 @@ jobs:
           #
           # A carteira é de uma competência só: o ano inteiro seriam mais de um
           # milhão de linhas sem ganho de leitura.
+          # A tabela de entes da federação do Tesouro: uma requisição para o
+          # país inteiro. Dá população e marca de capital autoritativas, no
+          # lugar da dedução por nome que promovia município a governo estadual.
+          python -m cadprev siconfi 2>&1 | tee -a ingest.log || true
+
           python -m cadprev ingest DAIR_CARTEIRA \
             $FILTRO_UF --ano "$ANO" --mes "$MES" 2>&1 | tee ingest.log || true
 

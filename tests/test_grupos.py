@@ -55,3 +55,44 @@ class TestTabelaAuxiliar(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEsferaDeclarada(unittest.TestCase):
+    """Quando o SICONFI declara a esfera, nada é deduzido do nome."""
+
+    def test_municipio_com_nome_de_outro_estado(self):
+        """Há sete municípios batizados com nome de unidade federativa.
+
+        Aceitar qualquer nome de estado promovia todos a governo estadual.
+        """
+        self.assertEqual(grupos.esfera("MG", "Tocantins"), "municipal")
+        self.assertEqual(grupos.esfera("RN", "Espírito Santo"), "municipal")
+        self.assertEqual(grupos.esfera("PB", "Mato Grosso"), "municipal")
+        self.assertEqual(grupos.esfera("TO", "Paranã"), "municipal")
+
+    def test_o_proprio_estado_continua_estadual(self):
+        self.assertEqual(grupos.esfera("ES", "Espírito Santo"), "estadual")
+        self.assertEqual(grupos.esfera("AC", "Governo do Estado do Acre"),
+                         "estadual")
+
+    def test_declaracao_do_siconfi_vence_a_deducao(self):
+        """O município de Amapá, no Amapá, é municipal — a fonte afirma."""
+        self.assertEqual(
+            grupos.esfera("AP", "Amapá", capital=False, esfera_fonte="M"),
+            "municipal")
+        self.assertEqual(
+            grupos.esfera("GO", "Goiás", capital=False, esfera_fonte="M"),
+            "municipal")
+
+    def test_capital_declarada(self):
+        self.assertEqual(
+            grupos.esfera("SP", "São Paulo", capital=True, esfera_fonte="M"),
+            "capital")
+        self.assertEqual(
+            grupos.esfera("SP", "Santos", capital=False, esfera_fonte="M"),
+            "municipal")
+
+    def test_distrito_federal_e_estadual(self):
+        self.assertEqual(
+            grupos.esfera("DF", "Governo do Distrito Federal",
+                          capital=True, esfera_fonte="D"), "estadual")

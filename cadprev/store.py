@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS origem (
 )
 """
 
+#: Carimbos observados na fonte a cada carga. Existe para responder, com
+#: histórico em vez de suposição, à pergunta que decide a carga incremental: o
+#: que de fato mudou desde a semana passada. Enquanto não houver semanas
+#: suficientes registradas, nada é cortado — só medido.
+_DDL_MARCO = """
+CREATE TABLE IF NOT EXISTS marco (
+    nome   TEXT NOT NULL,
+    valor  TEXT,
+    quando TEXT NOT NULL,
+    PRIMARY KEY (nome, quando)
+)
+"""
+
 _DDL_EXECUCAO = """
 CREATE TABLE IF NOT EXISTS execucao (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +73,7 @@ class Store:
         self.con.execute("PRAGMA journal_mode=WAL")
         self.con.execute(_DDL_EXECUCAO)
         self.con.execute(_DDL_ORIGEM)
+        self.con.execute(_DDL_MARCO)
         self.con.commit()
 
     def __enter__(self) -> "Store":
@@ -91,6 +105,39 @@ class Store:
         return [c.nome for c in campos]
 
     # -- origem dos dados -------------------------------------------------
+
+    def registrar_marco(self, nome: str, valor: Optional[str]) -> bool:
+        """Anota um carimbo da fonte, e diz se ele mudou desde o anterior.
+
+        Só grava quando o valor muda: a série fica sendo a lista de mudanças,
+        não a de execuções, e uma olhada nela responde de imediato com que
+        frequência a fonte realmente se move.
+        """
+        anterior = self.ultimo_marco(nome)
+        if anterior and anterior.get("valor") == valor:
+            return False
+        self.con.execute(
+            "INSERT OR REPLACE INTO marco (nome, valor, quando) VALUES (?, ?, ?)",
+            (nome, valor,
+             datetime.now(timezone.utc).isoformat(timespec="seconds")))
+        self.con.commit()
+        return True
+
+    def ultimo_marco(self, nome: str) -> Optional[Dict[str, Any]]:
+        linha = self.con.execute(
+            "SELECT nome, valor, quando FROM marco WHERE nome = ? "
+            "ORDER BY quando DESC LIMIT 1", (nome,)).fetchone()
+        return dict(linha) if linha else None
+
+    def marcos(self, nome: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Histórico de mudanças dos carimbos, do mais recente ao mais antigo."""
+        sql = "SELECT nome, valor, quando FROM marco"
+        args: tuple = ()
+        if nome:
+            sql += " WHERE nome = ?"
+            args = (nome,)
+        return [dict(l) for l in
+                self.con.execute(sql + " ORDER BY quando DESC", args)]
 
     def marcar_origem(self, marca: str) -> None:
         """Registra que este banco recebeu dados de uma origem.
@@ -166,15 +213,23 @@ class Store:
         return total
 
     def registrar_execucao(self, endpoint: str, filtros: Mapping[str, Any],
-                           linhas: int, resolucao: fieldmap.Resolucao,
+                           linhas: int,
+                           resolucao: Optional[fieldmap.Resolucao] = None,
                            nivel: Optional[str] = None) -> None:
-        """Guarda a procedência da ingestão."""
+        """Guarda a procedência da ingestão.
+
+        ``resolucao`` é opcional porque nem toda fonte passa pelo mapa de
+        campos: a tabela de entes do SICONFI tem nomes estáveis e é traduzida
+        no próprio cliente.
+        """
+        encontrados = resolucao.encontrados if resolucao else {}
+        nao_mapeados = resolucao.nao_mapeados if resolucao else []
         self.con.execute(
             "INSERT INTO execucao (endpoint, filtros, linhas, nivel, resolucao,"
             " nao_mapeado, quando) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (endpoint, json.dumps(filtros, ensure_ascii=False), linhas, nivel,
-             json.dumps(resolucao.encontrados, ensure_ascii=False),
-             json.dumps(resolucao.nao_mapeados, ensure_ascii=False),
+             json.dumps(encontrados, ensure_ascii=False),
+             json.dumps(nao_mapeados, ensure_ascii=False),
              datetime.now(timezone.utc).isoformat(timespec="seconds")))
         self.con.commit()
 

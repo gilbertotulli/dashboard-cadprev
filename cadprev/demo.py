@@ -483,10 +483,46 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 break
 
     return tabelas
+def entes_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """A tabela de entes da federação, no formato do SICONFI.
+
+    Espelha os mesmos entes do conjunto do CADPREV, com a esfera e a capital
+    declaradas — que é o ponto: sem elas, a classificação volta a deduzir pelo
+    nome, e a dedução por nome é o que promovia o município de Amapá a governo
+    estadual.
+    """
+    vistos, saida = set(), []
+    for registro in tabelas["RPPS_CRP"]:
+        cnpj = registro["nr_cnpj_entidade"]
+        if cnpj in vistos:
+            continue
+        vistos.add(cnpj)
+        nome, uf = registro["no_ente"], registro["sg_uf"]
+        estadual = nome.lower().startswith(("governo do estado",
+                                            "governo do distrito"))
+        saida.append({
+            "cod_ibge": 3200000 + len(vistos),
+            "ente": nome,
+            "capital": "1  " if (not estadual and len(vistos) % 9 == 1) else "0  ",
+            "regiao": "SE",
+            "uf": uf,
+            "esfera": "E" if estadual else "M",
+            "exercicio": ANO,
+            "populacao": 10000 + len(vistos) * 137,
+            "cnpj": cnpj,
+        })
+    return saida
+
+
 def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     """Grava as amostras no formato de página da API."""
     os.makedirs(destino, exist_ok=True)
     tabelas = gerar(nivel_a=nivel_a)
+    # O SICONFI é outra API e tem outro envelope: o cliente dele procura o
+    # arquivo pelo caminho do recurso, não pelo nome do endpoint.
+    with open(os.path.join(destino, "entes.json"), "w", encoding="utf-8") as fh:
+        json.dump({"items": entes_do_siconfi(tabelas), "hasMore": False},
+                  fh, ensure_ascii=False)
     contagem = {}
     for nome, registros in tabelas.items():
         caminho = os.path.join(destino, nome + ".json")

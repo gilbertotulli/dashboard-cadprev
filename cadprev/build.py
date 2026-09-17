@@ -77,9 +77,13 @@ def montar_entes(store: Store) -> Dict[str, Dict[str, Any]]:
     """
     regimes = _regime_vigente(store)
     com_carteira = _entes_com_carteira(store)
+    do_siconfi = _tabela_do_siconfi(store)
     entes: Dict[str, Dict[str, Any]] = {}
     for tabela in store.tabelas():
-        if tabela == "execucao":
+        # A tabela do SICONFI é referência, não fonte: ela cobre os 5.598 entes
+        # da federação, quatro dos quais o CADPREV não conhece. Uni-la ao índice
+        # acrescentaria fichas vazias e mexeria no denominador nacional.
+        if tabela in ("execucao", "siconfi_ente"):
             continue
         try:
             linhas = store.consultar(
@@ -90,8 +94,14 @@ def montar_entes(store: Store) -> Dict[str, Dict[str, Any]]:
             cnpj = linha["cnpj_ente"]
             if not cnpj or cnpj in entes:
                 continue
+            oficial = do_siconfi.get(cnpj) or {}
             registro = {"cnpj": cnpj, "ente": linha["ente"]}
-            registro.update(grupos.classificar(linha["uf"], linha["ente"]))
+            registro.update(grupos.classificar(
+                linha["uf"], linha["ente"], oficial.get("capital"),
+                oficial.get("esfera_siconfi")))
+            if oficial:
+                registro["populacao"] = oficial.get("populacao")
+                registro["cod_ibge"] = oficial.get("cod_ibge")
             regime = regimes.get(cnpj)
             registro["regime"] = regime
             registro["tem_rpps"] = (
@@ -120,6 +130,21 @@ def _regime_vigente(store: Store) -> Dict[str, str]:
          GROUP BY r.cnpj_ente
     """)
     return {l["cnpj_ente"]: _normalizar_situacao(l["regime"]) for l in linhas}
+
+
+def _tabela_do_siconfi(store: Store) -> Dict[str, Dict[str, Any]]:
+    """Entes da federação como o Tesouro os publica, indexados por CNPJ.
+
+    População e marca de capital vêm daqui quando a tabela está no banco. Foi a
+    dedução por nome que classificou São Paulo e Rio de Janeiro como estaduais
+    — o município tem o mesmo nome do estado —, e quem publica a lista de
+    capitais não precisa deduzir.
+    """
+    if not store.tem_tabela("SICONFI_ENTE"):
+        return {}
+    return {l["cnpj_ente"]: dict(l) for l in store.consultar(
+        "SELECT cnpj_ente, cod_ibge, populacao, capital, esfera_siconfi "
+        "FROM siconfi_ente WHERE cnpj_ente IS NOT NULL")}
 
 
 def _entes_com_carteira(store: Store) -> set:
@@ -1244,6 +1269,7 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
         ({"cnpj": dados["cnpj"], "ente": dados["ente"], "uf": dados["uf"],
           "esfera": dados["esfera"], "regiao": dados["regiao"],
           "tem_rpps": bool(dados.get("tem_rpps")),
+          "populacao": dados.get("populacao"),
           "marcas": sorted(marcas.get(dados["cnpj"], {}))}
          for dados in entes.values()),
         key=lambda d: (d["uf"] or "", d["ente"] or ""))
@@ -1326,6 +1352,11 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
         "nivel_fundo": carteiras[qualidade.chave_padrao()].get("nivel"),
         "capitais_conhecidas": grupos.cobertura_capitais(),
         "execucoes": store.resumo(),
+        # Carimbo da fonte e o histórico de quando ele mudou. Enquanto não
+        # houver semanas suficientes registradas, isto é medição — nada é
+        # cortado da varredura por causa dele.
+        "fonte_atualizada_em": (store.ultimo_marco("data_atualizacao") or {}).get("valor"),
+        "mudancas_da_fonte": store.marcos("data_atualizacao")[:12],
     }
     gerados.append(_gravar("meta.json", meta, dir_saida))
     return {"arquivos": len(gerados) + len(list(escolhidos)), "meta": meta}

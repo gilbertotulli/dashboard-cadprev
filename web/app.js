@@ -1858,6 +1858,40 @@
                           linhasExec, true));
         }
 
+        /* O carimbo da fonte. Em 17/09/2026 ele marcava 15/08 e não se movia
+         * havia um mês — cada carga semanal rebaixava um milhão de linhas
+         * idênticas. Está aqui para medir isso com histórico em vez de
+         * suposição; o corte da varredura só vem depois da evidência. */
+        var m = estado.meta || {};
+        if (m.fonte_atualizada_em) {
+          var mudancas = m.mudancas_da_fonte || [];
+          nos.push(h("h3", { texto: "Atualização da fonte" }));
+          nos.push(h("p", { class: "nota", texto:
+            "A API publica um carimbo de quando os dados dela mudaram pela " +
+            "última vez. O painel registra esse carimbo a cada carga: é o que " +
+            "vai permitir decidir, com histórico, se a varredura completa " +
+            "semanal se justifica." }));
+          nos.push(h("div", { class: "kpis" }, [
+            kpi("Fonte atualizada em", data(m.fonte_atualizada_em),
+              "carimbo publicado pela API"),
+            kpi("Cargas desde então",
+              m.gerado_em ? num(diasEntre(m.fonte_atualizada_em, m.gerado_em), 0) +
+                " dias" : "—",
+              "entre o carimbo e esta construção"),
+            kpi("Mudanças registradas", num(mudancas.length, 0),
+              "desde que a medição começou")
+          ]));
+          if (mudancas.length > 1) {
+            nos.push(tabela([{ t: "Fonte mudou para" }, { t: "Detectado em" }],
+              mudancas.map(function (x) {
+                return h("tr", {}, [
+                  h("td", { texto: data(x.valor) }),
+                  h("td", { texto: data(x.quando) })
+                ]);
+              })));
+          }
+        }
+
         nos.push(h("p", { class: "nota", texto:
           "Situação apurada em " + data(q.referencia) + "." }));
         return nos;

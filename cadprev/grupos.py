@@ -127,6 +127,10 @@ def eh_estadual(uf: Optional[str], ente: Optional[str]) -> bool:
     True
     >>> eh_estadual("MG", "Governo do Município de Contagem")
     False
+    >>> eh_estadual("MG", "Tocantins")          # o município mineiro
+    False
+    >>> eh_estadual("RN", "Espírito Santo")     # o município potiguar
+    False
     """
     normal = _normalizar(ente)
     if not normal:
@@ -135,8 +139,14 @@ def eh_estadual(uf: Optional[str], ente: Optional[str]) -> bool:
         return False
     if _MARCA_ESTADUAL.match(normal):
         return True
-    # Nome cru igual ao do estado: só é estadual se não for também a capital.
-    return normal in _NOMES_UF_NORMALIZADOS and not eh_capital(uf, ente)
+    # Nome cru igual ao do PRÓPRIO estado, e não ao de qualquer um: há sete
+    # municípios batizados com nome de outra unidade federativa — Tocantins em
+    # Minas, Espírito Santo e Paraná no Rio Grande do Norte, Mato Grosso na
+    # Paraíba —, e aceitar qualquer nome os promovia todos a governo estadual.
+    # Ainda assim é só desempate: quando o SICONFI declara a esfera, ela vale.
+    do_proprio_estado = _normalizar(NOMES_UF.get((uf or "").strip().upper(), ""))
+    return bool(do_proprio_estado) and normal == do_proprio_estado \
+        and not eh_capital(uf, ente)
 
 
 def eh_capital(uf: Optional[str], ente: Optional[str]) -> bool:
@@ -152,12 +162,24 @@ def eh_capital(uf: Optional[str], ente: Optional[str]) -> bool:
     return (uf.strip().upper(), _normalizar(ente)) in CAPITAIS
 
 
-def esfera(uf: Optional[str], ente: Optional[str]) -> str:
+#: Como o SICONFI nomeia as esferas na tabela de entes da federação.
+ESFERA_DO_SICONFI = {"E": ESTADUAL, "D": ESTADUAL, "M": MUNICIPAL}
+
+
+def esfera(uf: Optional[str], ente: Optional[str],
+           capital: Optional[bool] = None,
+           esfera_fonte: Optional[str] = None) -> str:
     """Classifica em estadual, capital ou demais municípios.
 
     A ordem dos testes importa: o Distrito Federal é estadual e capital ao
     mesmo tempo, e conta como estadual, que é o que ele é do ponto de vista
     previdenciário.
+
+    ``capital`` e ``esfera_fonte`` são as marcas autoritativas do SICONFI, que
+    publica a tabela de entes da federação com a esfera ("E", "M", "D") e a
+    capital sinalizadas. Quando elas vêm, nada é deduzido do nome: adivinhar só
+    se justifica enquanto não há quem afirme, e a dedução por nome é justamente
+    o que promovia o município de Amapá a governo do Amapá.
 
     >>> esfera("ES", "Governo do Estado do Espírito Santo")
     'estadual'
@@ -170,19 +192,24 @@ def esfera(uf: Optional[str], ente: Optional[str]) -> str:
     >>> esfera("DF", "Governo do Distrito Federal")
     'estadual'
     """
-    if eh_estadual(uf, ente):
+    declarada = ESFERA_DO_SICONFI.get((esfera_fonte or "").strip().upper())
+    if declarada == ESTADUAL:
         return ESTADUAL
-    if eh_capital(uf, ente):
+    if declarada is None and eh_estadual(uf, ente):
+        return ESTADUAL
+    if capital if capital is not None else eh_capital(uf, ente):
         return CAPITAL
     return MUNICIPAL
 
 
-def classificar(uf: Optional[str], ente: Optional[str]) -> Dict[str, Optional[str]]:
+def classificar(uf: Optional[str], ente: Optional[str],
+                capital: Optional[bool] = None,
+                esfera_fonte: Optional[str] = None) -> Dict[str, Optional[str]]:
     """Todos os recortes de uma vez, com a origem de cada um."""
     return {
         "uf": (uf or "").strip().upper() or None,
         "regiao": regiao(uf),
-        "esfera": esfera(uf, ente),
+        "esfera": esfera(uf, ente, capital, esfera_fonte),
     }
 
 

@@ -237,6 +237,27 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
         _c("longo_prazo", "vl_perspectiva_longo_prazo", tipo="decimal",
            obrigatorio=False),
     ),
+    # --- SICONFI: outra fonte, outros nomes, mesma chave ---
+    #
+    # A tabela de entes da federação do Tesouro. Não usa _IDENT porque o
+    # SICONFI nomeia as colunas de identificação de outro jeito: `cnpj`, `ente`
+    # e `uf`, sem o prefixo. O que casa as duas bases é o CNPJ, e ele casa em
+    # 5.594 dos 5.596 entes que o CADPREV conhece.
+    "SICONFI_ENTE": (
+        _c("cnpj_ente", "cnpj", tipo="cnpj"),
+        _c("ente", "ente"),
+        _c("uf", "uf"),
+        _c("cod_ibge", "cod_ibge", tipo="inteiro", obrigatorio=False),
+        _c("populacao", "populacao", tipo="inteiro", obrigatorio=False),
+        _c("capital", "capital", tipo="booleano", obrigatorio=False,
+           nota="vem como texto com espaços à direita — \"1  \", \"0  \" — e é "
+                "a marca autoritativa de capital, no lugar da dedução por nome "
+                "que classificou São Paulo e Rio de Janeiro como estaduais"),
+        _c("esfera_siconfi", "esfera", obrigatorio=False, nota="M, E, U ou D"),
+        _c("regiao_siconfi", "regiao", obrigatorio=False),
+        _c("exercicio", "exercicio", tipo="inteiro", obrigatorio=False),
+    ),
+
     # --- o que a SPREV apontou, e o que o próprio demonstrativo confronta ---
     "DRAA_ENCAMINHAMENTO": _IDENT + (
         _c("exercicio", "dt_exercicio", tipo="inteiro"),

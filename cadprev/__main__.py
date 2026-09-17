@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from . import build, demo, endpoints, fieldmap, ingest, store as store_mod
@@ -131,6 +132,19 @@ def cmd_demo(args) -> int:
         for item in resultado["erros"]:
             print("  {:<28} ERRO: {}".format(item["endpoint"], item["erro"]),
                   file=sys.stderr)
+
+        # A tabela de entes do SICONFI vem da outra API e por isso não entra no
+        # laço acima. Sem ela o demo classificaria a esfera por dedução, que é
+        # justamente o caminho que o painel deixou de usar.
+        from cadprev import siconfi
+        brutos = siconfi.Cliente(fixtures=demo.DIR_DEMO, pausa=0).entes()
+        resolucao = fieldmap.resolver("SICONFI_ENTE", brutos[0].keys())
+        linhas = store.gravar(
+            "SICONFI_ENTE",
+            (fieldmap.aplicar(resolucao, b) for b in brutos))
+        store.registrar_execucao("SICONFI_ENTE", {}, linhas, resolucao)
+        print("  {:<28} {:>8} linhas".format("SICONFI_ENTE", linhas))
+
         saida = build.construir(store, dir_saida=args.saida, origem="demonstracao")
 
     print("\n  painel pronto em {} (origem: demonstracao)".format(args.saida))
@@ -171,6 +185,66 @@ def cmd_competencia(args) -> int:
     ano, mes = achado
     print("ano={}".format(ano))
     print("mes={}".format(mes))
+    return 0
+
+
+def cmd_siconfi(args) -> int:
+    """Traz a tabela de entes da federação do SICONFI.
+
+    Uma requisição para o país inteiro. Dá população e marca de capital
+    autoritativas, no lugar da dedução por nome que já classificou São Paulo e
+    Rio de Janeiro como estaduais.
+    """
+    from cadprev import siconfi
+    cliente = siconfi.Cliente(pausa=args.pausa, fixtures=args.fixtures)
+    brutos = cliente.entes()
+    if not brutos:
+        print("o SICONFI não devolveu entes", file=sys.stderr)
+        return 1
+    resolucao = fieldmap.resolver("SICONFI_ENTE", brutos[0].keys())
+    fieldmap.exigir(resolucao, list(brutos[0].keys()))
+    registros = [fieldmap.aplicar(resolucao, b) for b in brutos]
+    registros = [r for r in registros if r.get("cnpj_ente")]
+    with store_mod.Store(args.banco) as store:
+        linhas = store.gravar("SICONFI_ENTE", registros)
+        store.registrar_execucao("SICONFI_ENTE", {}, linhas, resolucao)
+        store.marcar_origem("demonstracao" if args.fixtures else "api")
+    capitais = sum(1 for r in registros if r.get("capital"))
+    print("SICONFI_ENTE: {} entes ({} capitais)".format(linhas, capitais))
+    return 0
+
+
+def cmd_marco(args) -> int:
+    """Anota o carimbo de atualização da fonte, para medir o que muda.
+
+    A API não deixa filtrar por data de alteração, mas publica um carimbo
+    global. Registrar esse carimbo a cada carga é o que vai permitir, depois de
+    algumas semanas de histórico, decidir com evidência se a varredura completa
+    pode ser dispensada — em vez de cortar no escuro.
+    """
+    cliente = Cliente(pausa=args.pausa)
+    try:
+        pagina = cliente.pagina("DATA_ATUALIZACAO", offset=0)
+        dados = pagina.get("data") or []
+        bruto = dados[0].get("DTAtualizacao") if dados else None
+    except Exception as erro:  # a medição não pode derrubar a carga
+        print("não consegui ler DATA_ATUALIZACAO: {}".format(erro), file=sys.stderr)
+        return 0
+
+    valor = None
+    if bruto is not None:
+        try:
+            valor = datetime.fromtimestamp(
+                int(bruto) / 1000, tz=timezone.utc).isoformat(timespec="seconds")
+        except (TypeError, ValueError):
+            valor = str(bruto)
+
+    with store_mod.Store(args.banco) as store:
+        mudou = store.registrar_marco("data_atualizacao", valor)
+        historico = store.marcos("data_atualizacao")
+    print("fonte atualizada em: {}".format(valor or "—"))
+    print("mudou desde a última carga: {}".format("sim" if mudou else "não"))
+    print("mudanças registradas até agora: {}".format(len(historico)))
     return 0
 
 
@@ -253,6 +327,17 @@ def construir_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("status", help="o que já foi ingerido")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("siconfi",
+                       help="traz a tabela de entes da federação do SICONFI")
+    p.add_argument("--pausa", type=float, default=0.5)
+    p.add_argument("--fixtures")
+    p.set_defaults(func=cmd_siconfi)
+
+    p = sub.add_parser("marco",
+                       help="anota o carimbo de atualização da fonte")
+    p.add_argument("--pausa", type=float, default=1.0)
+    p.set_defaults(func=cmd_marco)
 
     p = sub.add_parser("competencia",
                        help="pergunta à API qual competência do DAIR já fechou")
