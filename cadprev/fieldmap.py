@@ -164,7 +164,9 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
         _c("tipo_ativo", "no_tipo_ativo", "tipo_ativo", obrigatorio=False),
         _c("limite_cmn", "pc_cmn", "limite_resol_cmn", tipo="decimal",
            obrigatorio=False,
-           nota="teto da Resolução CMN 3.922/10, no próprio registro do ativo"),
+           nota="teto da norma vigente para a CLASSE do ativo, no próprio "
+                "registro. Não é teto de segmento: dentro de Renda Fixa "
+                "convivem classes de 5%, 20%, 80% e 100%"),
         _c("identificacao_ativo", "id_ativo", "ident_ativo", obrigatorio=False),
         _c("nome_ativo", "no_fundo", "nm_ativo", obrigatorio=False),
         _c("quantidade_cotas", "qt_rpps", "qtd_quotas", tipo="decimal",

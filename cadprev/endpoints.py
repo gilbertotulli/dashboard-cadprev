@@ -87,8 +87,8 @@ CATALOGO: Tuple[Endpoint, ...] = (
 
     # --- DAIR ---
     _e("DAIR_CARTEIRA", "dair",
-       "Carteira de investimentos ativo a ativo, com o limite da Resolução "
-       "CMN 3.922/10 no próprio registro",
+       "Carteira de investimentos ativo a ativo, com o teto da norma vigente "
+       "no próprio registro de cada classe",
        ENTE_BIMESTRE, "mensal"),
     _e("DAIR_APLICACOES_RESGATE", "dair",
        "APR — aplicações e resgates, com o plano/fundo de cada operação",

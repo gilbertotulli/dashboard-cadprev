@@ -72,14 +72,35 @@ _MUNICIPIOS = [
 ]
 
 #: Segmentos e limites como a API os devolve (``no_segmento`` e ``pc_cmn``).
-_SEGMENTOS = [
-    ("Renda Fixa", 100, 0.74),
-    ("Renda Variável", 30, 0.11),
-    ("Investimentos Estruturados", 10, 0.045),
-    ("Investimentos no Exterior", 10, 0.04),
-    ("Fundos Imobiliários", 5, 0.02),
-    ("Disponibilidades Financeiras", None, 0.045),
+#: Classes de ativo como a API as devolve: o teto é da CLASSE, não do segmento,
+#: e dentro de Renda Fixa convivem tetos de 20%, 80% e 100%. É essa convivência
+#: que torna errado comparar o total do segmento com um teto qualquer dele — e
+#: uma amostra com uma classe por segmento não teria como revelar o erro.
+#:
+#: (segmento, classe, teto da classe, fatia do patrimônio)
+_CLASSES = [
+    ("Renda Fixa", "Fundo/Classe 100% Títulos Públicos ou ETF TP TN  Art. 7° I", 100.0, 0.30),
+    ("Renda Fixa", "Títulos Públicos – Oferta Balcão  Art. 7° III", 100.0, 0.22),
+    ("Renda Fixa", "Fundo/Classe de Investimento em Renda Fixa/ETF sem subclasse  Art. 7° IV", 80.0, 0.17),
+    ("Renda Fixa", "Fundo/Classe de Investimento em Crédito Privado  Art. 7° VII", 20.0, 0.05),
+    ("Renda Variável", "Fundo/Classe de Investimento em Ações  Art. 8° I", 40.0, 0.09),
+    ("Renda Variável", "Fundo/Classe de Investimento em BDR-Ações e BDR-ETF  Art. 9°-A III", 10.0, 0.02),
+    ("Investimentos Estruturados", "Fundo/Classe de Investimento Multimercado  Art. 10", 15.0, 0.035),
+    ("Investimentos Estruturados", "Fundo/Classe de Investimento em Participações (FIP)  Art. 10", 10.0, 0.01),
+    ("Investimentos no Exterior", "Fundo/Classe de Investimento no Exterior Investidor Profissional  Art. 9°", 10.0, 0.04),
+    ("Fundos Imobiliários", "Fundo/Classe de Investimento Imobiliário  art. 11", 20.0, 0.02),
+    ("Empréstimos Consignados", "Empréstimos Consignados  art. 12", 5.0, 0.005),
+    ("Disponibilidades Financeiras", None, None, 0.045),
 ]
+
+#: O ente que estoura um teto de verdade: BDR bem acima dos 10% da classe.
+_ENTE_EXCEDE_CLASSE = 8
+
+#: O ente cujo segmento Renda Fixa passa de 80% com todas as classes dentro dos
+#: próprios tetos. Pela regra antiga — segmento contra um teto qualquer do
+#: segmento — ele era acusado de ilegalidade; pela regra correta, está em ordem.
+#: Nacionalmente esse era o caso de 371 dos 390 RPPS acusados.
+_ENTE_FALSO_EXCESSO = 9
 
 #: Valor de cota único, para que a aritmética do demo seja conferível a olho:
 #: quantidade x cota tem de bater com o valor total, e é a violação dessa
@@ -96,8 +117,12 @@ _COTA = 4.1571579040
 _PL_FUNDO = 5.2e8
 
 #: O ente cuja carteira traz a cota com a vírgula seis casas fora do lugar,
-#: reproduzindo Santo Afonso/MT na carga de 15/09/2026.
-_ENTE_ENVENENADO = 3
+#: reproduzindo Santo Afonso/MT na carga de 15/09/2026. É um município pequeno,
+#: como o caso real: o erro de digitação não escolhe ente grande, e num ente
+#: grande a posição envenenada passaria de um quatrilhão de reais — magnitude
+#: em que o próprio float perde os centavos, o que é problema do demo e não do
+#: painel.
+_ENTE_ENVENENADO = 20
 
 #: Entes que pararam de entregar o DAIR no segundo mês do exercício.
 _ENTES_DEFASADOS = frozenset({5, 11})
@@ -296,12 +321,31 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # mesmos BB e SICREDI aparecem em centenas de carteiras. Sem esse
         # compartilhamento não há consenso sobre o tamanho de cada fundo, e a
         # régua de lançamento impossível não teria contra o que comparar.
-        for segmento, limite, fatia in _SEGMENTOS:
-            valor_segmento = patrimonio * fatia * rnd.uniform(0.85, 1.15)
-            ativos = 1 if segmento == "Disponibilidades Financeiras" else rnd.randint(2, 4)
+        # Duas passagens: a primeira decide os valores, a segunda os grava com
+        # o percentual sobre o total que de fato resultou. Na API o pc_recursos
+        # de um ente soma 100% (1.820 dos 1.821 entes em 17/09/2026), e uma
+        # amostra em que ele não soma não exercita o enquadramento.
+        fatias = []
+        for segmento, classe, teto, fatia in _CLASSES:
+            peso = fatia * rnd.uniform(0.85, 1.15)
+            if indice == _ENTE_FALSO_EXCESSO:
+                # Renda Variável em 47% do total, com 38% em ações (teto 40%) e
+                # 9% em BDR (teto 10%): as duas classes dentro dos próprios
+                # tetos, o segmento acima do maior deles. A regra antiga
+                # comparava o segmento com o teto da maior classe e acusava
+                # ilegalidade. Era o caso de 371 dos 390 RPPS acusados.
+                peso = {0.09: 0.38, 0.02: 0.09}.get(fatia, peso * 0.55)
+            if indice == _ENTE_EXCEDE_CLASSE and teto == 10.0 and "BDR" in (classe or ""):
+                peso = 0.14  # estouro real: 14% numa classe de teto 10%
+            fatias.append((segmento, classe, teto, peso))
+        soma = sum(f[3] for f in fatias) or 1.0
+
+        for ordem, (segmento, classe, teto, peso) in enumerate(fatias):
+            valor_classe = patrimonio * peso / soma
+            ativos = 1 if segmento == "Disponibilidades Financeiras" else rnd.randint(1, 3)
             for n in range(ativos):
-                valor = valor_segmento / ativos
-                fundo_id, fundo_nome = _fundo(segmento, n)
+                valor = valor_classe / ativos
+                fundo_id, fundo_nome = _fundo(segmento, ordem * 4 + n)
                 # Conta e caixa não têm PL; fundo tem, e é sempre maior que a
                 # posição de um cotista só.
                 fundo_pl = (None if segmento == "Disponibilidades Financeiras"
@@ -309,17 +353,25 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 cotas = valor / _COTA
                 registro = dict(
                     ident, dt_ano=ANO, dt_mes_bimestre=MES_DAIR,
-                    no_segmento=segmento, no_tipo_ativo="Tipo exemplo",
-                    pc_cmn=limite, id_ativo=fundo_id, no_fundo=fundo_nome,
+                    no_segmento=segmento,
+                    no_tipo_ativo=classe or "Conta corrente",
+                    pc_cmn=teto, id_ativo=fundo_id, no_fundo=fundo_nome,
                     qt_rpps="{:.10f}".format(cotas),
                     vl_atual_ativo="{:.10f}".format(_COTA),
                     vl_total_atual="{:.2f}".format(valor),
-                    pc_rpps="{:.2f}".format(valor / patrimonio * 100),
+                    pc_rpps="{:.2f}".format(peso / soma / ativos * 100),
                     vl_patrimonio="{:.2f}".format(fundo_pl) if fundo_pl else None,
                     pc_patrimonio="{:.2f}".format(rnd.uniform(0.4, 16.0)))
                 # Um lançamento envenenado, reproduzindo o caso de Santo
                 # Afonso/MT: a cota digitada com a vírgula seis casas à direita.
-                if indice == _ENTE_ENVENENADO and segmento == "Renda Variável" and n == 0:
+                # A menor classe da carteira de um município pequeno: é assim
+                # que o caso real se parece — R$ 3,16 tri saídos de uma posição
+                # de poucos milhões. Numa classe grande a posição envenenada
+                # passaria de 9e13 reais, ponto em que o float64 deixa de
+                # representar centavos e o demo passa a testar a aritmética da
+                # linguagem em vez da regra do painel.
+                if (indice == _ENTE_ENVENENADO
+                        and segmento == "Empréstimos Consignados" and n == 0):
                     registro["vl_atual_ativo"] = "{:.10f}".format(_COTA * 1e6)
                     registro["vl_total_atual"] = "{:.2f}".format(valor * 1e6)
                     registro["pc_patrimonio"] = "1611016.66"

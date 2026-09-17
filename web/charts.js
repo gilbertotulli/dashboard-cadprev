@@ -301,7 +301,11 @@
     // área do gráfico. Abaixo de 420px o rótulo sobe para cima da barra, que é
     // onde há largura sobrando.
     var acima = W < 420;
-    var padL = acima ? 0 : Math.min(112, W * 0.3), padR = acima ? 46 : 58, padB = 22;
+    // Nomes de classe de ativo são bem mais longos que nomes de segmento, para
+    // os quais esta forma nasceu. Quem chama diz de quanta calha precisa; o
+    // teto relativo continua valendo, para o rótulo nunca comer o gráfico.
+    var padL = acima ? 0 : Math.min(cfg.padL || 112, W * 0.34);
+    var padR = acima ? 46 : 58, padB = 22;
     var linhasCfg = cfg.linhas, alturaLinha = (H - padB) / linhasCfg.length;
     var bh = acima ? 13 : 16;
     var pw = W - padL - padR;

@@ -700,6 +700,7 @@ def montar_carteira_nacional(store: Store,
 
     execucao = store.ultima_execucao("DAIR_CARTEIRA") or {}
     nivel = execucao.get("nivel") or fundos.NIVEL_B
+    competencia = _competencias_do_dair(store)
 
     segregacao = _mapa_segregacao(store)
     colunas = ("cnpj_ente, segmento, valor_total, limite_cmn, plano"
@@ -762,6 +763,11 @@ def montar_carteira_nacional(store: Store,
         "excluidos_do_ranking_menores": len(ordenados) - len(com_valor),
         "regra_menores": ("Entre os RPPS que enviaram DAIR na competência e "
                           "declararam patrimônio maior que zero."),
+        # O que os cinco maiores somam, contra o país: a concentração é o dado,
+        # e ela não se lê linha a linha.
+        "total_maiores": round(sum(por_ente[c] for c in ordenados[:5]), 2),
+        "perc_maiores": _pct(sum(por_ente[c] for c in ordenados[:5]), total),
+        **competencia,
     }
 
 
@@ -1430,9 +1436,17 @@ def _montar_caixa(store: Store, cnpj: str) -> Dict[str, Any]:
     total_receita = sum(p["receita"] for p in serie if p["receita"] is not None)
     total_despesa = sum(p["despesa"] for p in serie if p["despesa"] is not None)
     completos = [p for p in serie if p["resultado"] is not None]
+
+    def _competencia(ponto) -> str:
+        return "{:04d}-{:02d}".format(ponto["ano"], ponto["mes"])
+
     return {
         "disponivel": True,
         "serie": serie,
+        # A janela da série, para que "ingressos no período" diga que período.
+        "primeira_competencia": _competencia(serie[0]),
+        "ultima_competencia": _competencia(serie[-1]),
+        "competencias": len(serie),
         "planos": sorted(planos),
         "total_receita": round(total_receita, 2),
         "total_despesa": round(total_despesa, 2),
@@ -1446,17 +1460,74 @@ def _montar_caixa(store: Store, cnpj: str) -> Dict[str, Any]:
     }
 
 
+#: O percentual vem da fonte com duas casas decimais. Meio centésimo de ponto
+#: acima do teto é arredondamento dela, não excesso do RPPS — e a diferença
+#: entre as duas leituras é a diferença entre informar e acusar.
+MARGEM_DO_LIMITE = 0.05
+
+#: A norma em vigor sobre aplicação dos recursos dos RPPS. Quem declara o teto
+#: de cada classe é a API, no próprio registro do ativo (``pc_cmn``) — o painel
+#: não mantém tabela de limites, justamente para não ficar defasado quando a
+#: norma muda. Esta constante existe só para nomear a norma na tela, e é o
+#: único lugar a mudar quando ela for substituída.
+NORMA_DOS_INVESTIMENTOS = "Resolução CMN 5.272/2025"
+
+
+def _competencias_do_dair(store: Store) -> Dict[str, Any]:
+    """A que mês a carteira se refere — pergunta que a tela não respondia.
+
+    O painel ingere uma competência fechada por vez, escolhida perguntando à
+    API qual já fechou (``cadprev.competencia``), então a posição de todos os
+    RPPS é do mesmo mês e comparável. Isso é uma escolha, não um acaso, e
+    precisa estar escrito ao lado do número: patrimônio sem competência é um
+    valor sem data, e a carteira de junho não responde pela de setembro.
+
+    Se um dia a base guardar mais de uma competência, ``varias`` avisa — somar
+    posições de meses diferentes contaria o mesmo dinheiro duas vezes.
+    """
+    if not store.tem_tabela("DAIR_CARTEIRA"):
+        return {}
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT DISTINCT ano, mes FROM dair_carteira "
+        "WHERE ano IS NOT NULL AND mes IS NOT NULL ORDER BY ano DESC, mes DESC")]
+    if not linhas:
+        return {}
+    recente = linhas[0]
+    return {
+        "ano": recente["ano"],
+        "mes": recente["mes"],
+        "competencia": "{:04d}-{:02d}".format(recente["ano"], recente["mes"]),
+        "varias": len(linhas) > 1,
+    }
+
+
 def _montar_carteira_ente(store: Store, cnpj: str,
                           linhas_fora: Optional[AbstractSet[int]] = None
                           ) -> Dict[str, Any]:
-    """Alocação por segmento contra o limite legal, e as maiores posições.
+    """Composição da carteira, enquadramento por classe e maiores posições.
+
+    **O enquadramento é por classe de ativo, não por segmento.** A Resolução do
+    CMN não fixa um teto por segmento: fixa um teto por classe, e dentro de um
+    mesmo segmento eles são muito diferentes — em 17/09/2026 o segmento Renda
+    Fixa reunia classes com teto de 5%, 20%, 80% e 100%. Comparar o total do
+    segmento com um desses tetos é comparar coisas diferentes, e era o que este
+    painel fazia: acusava 390 dos 1.821 RPPS com carteira de exceder o limite
+    legal quando apenas 20 excedem de fato — 371 acusações falsas, e um excesso
+    real que a regra antiga não via. Um RPPS com 55,7% em título público (teto
+    de 100%) aparecia estourando um teto de 80% que é de outra classe.
+
+    O percentual usado é o que a própria fonte calcula (``pc_recursos``), que
+    soma 100% em 1.820 dos 1.821 entes. Quando o painel exclui alguma linha do
+    ente — a regra de impossibilidade aritmética —, esse percentual deixa de
+    valer sobre o total corrigido e é recalculado; a ficha diz qual dos dois
+    está na tela.
 
     A linha que a base contradiz sai daqui pelo mesmo motivo que sai do total
     nacional: um painel que exclui um lançamento da soma do país e o mantém na
     ficha do ente publica dois números incompatíveis sobre o mesmo fato.
     """
-    colunas = ("rowid AS rowid, segmento, tipo_ativo, nome_ativo, limite_cmn,"
-               " valor_total, perc_recursos, pl_fundo, perc_pl_fundo")
+    colunas = ("rowid AS rowid, ano, mes, segmento, tipo_ativo, nome_ativo,"
+               " limite_cmn, valor_total, perc_recursos, pl_fundo, perc_pl_fundo")
     linhas = _varios(store, "dair_carteira", colunas, cnpj,
                      ordem="valor_total DESC", limite=5000)
     linhas_fora = linhas_fora or frozenset()
@@ -1467,46 +1538,106 @@ def _montar_carteira_ente(store: Store, cnpj: str,
                 "excluidas": len(excluidas)} if excluidas else {"disponivel": False}
 
     total = sum(linha.get("valor_total") or 0.0 for linha in linhas)
+    # Com linha excluída o percentual da fonte passa a se referir a um total
+    # que a tela não mostra mais. Aí o painel refaz a conta e avisa.
+    da_fonte = not excluidas and all(
+        l.get("perc_recursos") is not None for l in linhas)
+
+    def _perc(linha) -> float:
+        if da_fonte:
+            return linha.get("perc_recursos") or 0.0
+        return _pct(linha.get("valor_total") or 0.0, total)
+
     por_segmento: Dict[str, Dict[str, Any]] = {}
+    por_classe: Dict[tuple, Dict[str, Any]] = {}
     for linha in linhas:
         nome = (linha.get("segmento") or "Não informado").strip()
         alvo = por_segmento.setdefault(nome, {"rotulo": nome, "valor": 0.0,
-                                              "limite": linha.get("limite_cmn")})
+                                              "perc": 0.0})
         alvo["valor"] += linha.get("valor_total") or 0.0
-        if alvo["limite"] is None:
-            alvo["limite"] = linha.get("limite_cmn")
+        alvo["perc"] += _perc(linha)
+
+        classe = (linha.get("tipo_ativo") or "Não informada").strip()
+        chave = (nome, classe)
+        item = por_classe.setdefault(chave, {
+            "segmento": nome, "rotulo": classe, "valor": 0.0, "perc": 0.0,
+            "limite": linha.get("limite_cmn"), "ativos": 0})
+        item["valor"] += linha.get("valor_total") or 0.0
+        item["perc"] += _perc(linha)
+        item["ativos"] += 1
+        if item["limite"] is None:
+            item["limite"] = linha.get("limite_cmn")
 
     segmentos = []
     for dados in sorted(por_segmento.values(), key=lambda s: s["valor"], reverse=True):
-        perc = _pct(dados["valor"], total)
         segmentos.append({
-            "rotulo": dados["rotulo"], "valor": round(dados["valor"], 2),
-            "perc": perc, "limite": dados["limite"],
-            "excede": bool(dados["limite"] and perc > dados["limite"]),
+            "rotulo": dados["rotulo"],
+            "valor": round(dados["valor"], 2),
+            "perc": round(dados["perc"], 2),
             "alocacao": dados["rotulo"].strip().lower() != SEGMENTO_DISPONIBILIDADES,
+        })
+
+    # Margem de 0,05 ponto: a fonte publica o percentual com duas casas, e um
+    # arredondamento dela não é um estouro de limite.
+    classes = []
+    for dados in sorted(por_classe.values(), key=lambda c: c["valor"], reverse=True):
+        limite = dados["limite"]
+        perc = round(dados["perc"], 2)
+        classes.append({
+            "segmento": dados["segmento"],
+            "rotulo": dados["rotulo"],
+            "valor": round(dados["valor"], 2),
+            "perc": perc,
+            "limite": limite,
+            "ativos": dados["ativos"],
+            "excede": bool(limite is not None and perc > limite + MARGEM_DO_LIMITE),
+            "folga": (round(limite - perc, 2) if limite is not None else None),
         })
 
     posicoes = [{
         "nome": linha.get("nome_ativo") or linha.get("tipo_ativo") or "—",
         "segmento": linha.get("segmento"),
+        "classe": linha.get("tipo_ativo"),
         "valor": round(linha.get("valor_total") or 0.0, 2),
-        "perc_carteira": _pct(linha.get("valor_total") or 0.0, total),
+        "perc_carteira": round(_perc(linha), 2),
         "perc_pl_fundo": linha.get("perc_pl_fundo"),
     } for linha in linhas[:10]]
 
     concentrados = [p for p in posicoes if (p["perc_pl_fundo"] or 0) > 10]
+    mostradas = sum(p["valor"] for p in posicoes)
+    excedidas = [c for c in classes if c["excede"]]
+    # "Não enquadrado na Resolução CMN" é a própria fonte dizendo que o ativo
+    # está fora da norma. Não é um limite estourado — é outra coisa, e some se
+    # for tratada como ausência de limite.
+    fora_da_norma = [c for c in classes
+                     if "não enquadrad" in c["segmento"].lower()
+                     or "não enquadrad" in (c["rotulo"] or "").lower()]
     return {
         "disponivel": True,
         "total": round(total, 2),
         "ativos": len(linhas),
+        "total_posicoes": round(mostradas, 2),
+        "perc_posicoes": round(sum(p["perc_carteira"] for p in posicoes), 2),
         "segmentos": segmentos,
+        "classes": classes,
         "posicoes": posicoes,
-        "fora_do_limite": sum(1 for s in segmentos if s["excede"]),
+        "percentual_da_fonte": da_fonte,
+        "classes_fora_do_limite": len(excedidas),
+        "fora_do_limite": len(excedidas),  # nome antigo, mesmo conteúdo
+        "maior_excesso": (max((c["perc"] - c["limite"] for c in excedidas),
+                              default=None)),
+        "classes_sem_limite": sum(1 for c in classes if c["limite"] is None),
+        "valor_fora_da_norma": round(sum(c["valor"] for c in fora_da_norma), 2),
+        "perc_fora_da_norma": round(sum(c["perc"] for c in fora_da_norma), 2),
         "concentracao_pl": len(concentrados),
         "maior_posicao": posicoes[0]["perc_carteira"] if posicoes else 0.0,
         "excluidas": len(excluidas),
         "valor_excluido": round(sum(l.get("valor_total") or 0.0
                                     for l in excluidas), 2),
+        "ano": linhas[0].get("ano"),
+        "mes": linhas[0].get("mes"),
+        "competencia": ("{:04d}-{:02d}".format(linhas[0]["ano"], linhas[0]["mes"])
+                        if linhas[0].get("ano") and linhas[0].get("mes") else None),
     }
 
 
@@ -1820,6 +1951,8 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
         "com_rpps": sum(1 for d in entes.values() if d.get("tem_rpps")),
         "fichas": len(escolhidos),
         "nivel_fundo": carteiras[qualidade.chave_padrao()].get("nivel"),
+        "norma_dos_investimentos": NORMA_DOS_INVESTIMENTOS,
+        "competencia_dair": _competencias_do_dair(store).get("competencia"),
         "capitais_conhecidas": grupos.cobertura_capitais(),
         "execucoes": store.resumo(),
         # Carimbo da fonte e o histórico de quando ele mudou. Enquanto não

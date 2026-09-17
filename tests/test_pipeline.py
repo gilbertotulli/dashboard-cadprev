@@ -222,6 +222,115 @@ class TestPipeline(unittest.TestCase):
         self.assertGreater(achado["vezes"], 10)
         self.assertNotIn("posicao_corrigida", achado)
 
+    # ------------------------------------------- enquadramento na norma
+
+    def test_enquadramento_compara_classe_com_o_teto_da_classe(self):
+        """O teto é da classe de ativo, não do segmento.
+
+        Dentro de Renda Fixa convivem classes com teto de 5%, 20%, 80% e 100%.
+        Comparar o total do segmento com um desses tetos acusava, em
+        17/09/2026, 390 dos 1.821 RPPS com carteira de exceder o limite legal
+        quando só 20 excedem de fato — 371 acusações falsas de ilegalidade.
+        """
+        achou_sem_teto = False
+        for ente in self._json("entes.json"):
+            carteira = self._json(
+                os.path.join("ente", ente["cnpj"] + ".json")).get("carteira") or {}
+            if not carteira.get("disponivel"):
+                continue
+            classes = carteira["classes"]
+            self.assertTrue(classes)
+            # Dentro de um segmento, tetos diferentes: é isto que torna errado
+            # comparar o segmento com um teto qualquer dele.
+            for classe in classes:
+                if classe["limite"] is None:
+                    achou_sem_teto = True
+                    self.assertFalse(classe["excede"])
+                    continue
+                self.assertEqual(
+                    classe["excede"],
+                    classe["perc"] > classe["limite"] + 0.05,
+                    "{}: {}".format(ente["ente"], classe["rotulo"]))
+            self.assertEqual(carteira["classes_fora_do_limite"],
+                             sum(1 for c in classes if c["excede"]))
+        self.assertTrue(achou_sem_teto,
+                        "o demo precisa de classe sem teto (disponibilidades)")
+
+    def test_segmento_acima_do_teto_de_uma_classe_nao_e_ilegalidade(self):
+        """A regressão: 371 das 390 acusações vinham daqui.
+
+        Um RPPS com 38% em ações (teto de 40%) e 9% em BDR (teto de 10%) tem o
+        segmento Renda Variável em 47% — acima do teto da maior classe dele, e
+        com as duas classes rigorosamente dentro dos próprios tetos.
+        """
+        achou = False
+        for ente in self._json("entes.json"):
+            carteira = self._json(
+                os.path.join("ente", ente["cnpj"] + ".json")).get("carteira") or {}
+            if not carteira.get("disponivel"):
+                continue
+            # o teto que a regra antiga usava: o da maior classe do segmento
+            teto_antigo = {}
+            for classe in carteira["classes"]:
+                if classe["limite"] is not None:
+                    teto_antigo.setdefault(classe["segmento"], classe["limite"])
+            acusados = [s for s in carteira["segmentos"]
+                        if teto_antigo.get(s["rotulo"])
+                        and s["perc"] > teto_antigo[s["rotulo"]]]
+            if acusados and not carteira["classes_fora_do_limite"]:
+                achou = True
+        self.assertTrue(
+            achou, "o demo precisa de um ente que a regra antiga acusaria "
+                   "e a correta absolve")
+
+    def test_excesso_real_continua_visivel(self):
+        excessos = []
+        for ente in self._json("entes.json"):
+            carteira = self._json(
+                os.path.join("ente", ente["cnpj"] + ".json")).get("carteira") or {}
+            if carteira.get("classes_fora_do_limite"):
+                excessos.append(ente["ente"])
+                self.assertGreater(carteira["maior_excesso"], 0)
+        self.assertTrue(excessos, "o demo precisa de um excesso real")
+
+    def test_percentual_e_o_que_a_fonte_calcula(self):
+        """A fonte publica pc_recursos e ele soma 100%. Recalcular seria
+        substituir a declaração por uma derivação — e só faz sentido quando o
+        painel excluiu alguma linha do ente."""
+        for ente in self._json("entes.json"):
+            carteira = self._json(
+                os.path.join("ente", ente["cnpj"] + ".json")).get("carteira") or {}
+            if not carteira.get("disponivel"):
+                continue
+            soma = sum(c["perc"] for c in carteira["classes"])
+            self.assertAlmostEqual(soma, 100.0, delta=1.0, msg=ente["ente"])
+            self.assertEqual(carteira["percentual_da_fonte"],
+                             not carteira["excluidas"])
+
+    def test_competencia_acompanha_o_patrimonio(self):
+        """Patrimônio sem competência é valor sem data."""
+        nacional = self._nacional("carteira-nacional.json")
+        self.assertTrue(nacional["competencia"])
+        self.assertFalse(nacional["varias"],
+                         "somar competências diferentes conta o mesmo dinheiro duas vezes")
+        self.assertEqual(self._json("meta.json")["competencia_dair"],
+                         nacional["competencia"])
+        for ente in self._json("entes.json"):
+            carteira = self._json(
+                os.path.join("ente", ente["cnpj"] + ".json")).get("carteira") or {}
+            if carteira.get("disponivel"):
+                self.assertTrue(carteira["competencia"], ente["ente"])
+
+    def test_norma_dos_investimentos_vem_de_um_lugar_so(self):
+        """O painel não mantém tabela de limites — quem declara o teto de cada
+        classe é a API. A norma aparece na tela só como referência, e de uma
+        constante só, para não haver duas versões dela em telas diferentes."""
+        from cadprev import build as b
+        meta = self._json("meta.json")
+        self.assertEqual(meta["norma_dos_investimentos"],
+                         b.NORMA_DOS_INVESTIMENTOS)
+        self.assertIn("CMN", meta["norma_dos_investimentos"])
+
     def test_ente_sem_rpps_nao_conta_como_rpps(self):
         """O CRP é do ente federativo: a base cobre quem migrou para o RGPS."""
         indice = self._json("entes.json")
