@@ -16,10 +16,25 @@ caminhando para trás, e escolhe-se a mais recente que esteja substancialmente
 cheia em relação à melhor vista. O critério é relativo de propósito — com filtro
 de UF os volumes são duas ordens de grandeza menores, e qualquer piso absoluto
 estaria errado num dos dois casos.
+
+O que se conta é **declarante**, não linha de carteira, e a diferença é a que
+separa esta régua de uma armadilha. A primeira versão contava linhas do
+DAIR_CARTEIRA, que vêm paginadas de 5.000 em 5.000: em 17/09/2026 os meses 4, 5,
+6 e 7 devolviam todos exatamente 5.000 na primeira página, indistinguíveis entre
+si. Só que o mês 7 tinha 318 declarantes contra 1.882 do mês 6 — 15% dos RPPS —,
+e escolhê-lo publicaria um patrimônio nacional de sessenta bilhões onde há
+quatrocentos e onze.
+
+O DAIR_IDENTIFICACAO traz uma linha por declaração, cerca de duas mil por mês, e
+por isso cabe inteiro numa página: a contagem é exata, não saturada. Quando ainda
+assim ela encostar no limite de paginação, a medida deixou de ser confiável e o
+módulo diz isso em vez de ordenar competências por um número que empatou.
 """
 
 from typing import Any, List, Optional, Tuple
 from datetime import date
+
+from . import endpoints
 
 #: Até quando caminhar para trás. Catorze meses cobrem o ano inteiro mais a
 #: virada, e ainda assim é uma requisição por mês — barato contra uma carga que
@@ -36,19 +51,29 @@ def _anterior(ano: int, mes: int) -> Tuple[int, int]:
     return (ano - 1, 12) if mes == 1 else (ano, mes - 1)
 
 
+class MedidaSaturada(RuntimeError):
+    """A contagem encostou no limite de paginação e não distingue mais nada."""
+
+
 def volumes(cliente: Any, hoje: Optional[date] = None,
             uf: Optional[str] = None,
             meses: int = MESES_PARA_TRAS) -> List[Tuple[int, int, int]]:
-    """Quantas linhas a primeira página traz em cada competência recente."""
+    """Quantos RPPS declararam DAIR em cada competência recente."""
     hoje = hoje or date.today()
     ano, mes = hoje.year, hoje.month
     vistos: List[Tuple[int, int, int]] = []
     for _ in range(meses):
-        filtros = {"dt_ano": ano, "dt_mes_bimestre": mes}
+        filtros = {"dt_ano": ano, "dt_mes": mes}
         if uf:
             filtros["sg_uf"] = uf
-        pagina = cliente.pagina("DAIR_CARTEIRA", offset=0, **filtros)
-        vistos.append((ano, mes, len(pagina.get("data") or [])))
+        pagina = cliente.pagina("DAIR_IDENTIFICACAO", offset=0, **filtros)
+        quantos = len(pagina.get("data") or [])
+        if quantos >= endpoints.PAGE_SIZE:
+            raise MedidaSaturada(
+                "{}/{} devolveu a página cheia ({} declarações): a contagem "
+                "saturou e não serve para comparar competências."
+                .format(mes, ano, quantos))
+        vistos.append((ano, mes, quantos))
         ano, mes = _anterior(ano, mes)
     return vistos
 
