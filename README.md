@@ -451,18 +451,49 @@ CADPREV grava o grupo como `MILITARES - APOSENTADOS`; o painel mostra "Reserva e
 reforma" e registra o termo da fonte ao lado, porque uma substituição silenciosa
 não se confere. É a única troca de termo do projeto, e ela é visível.
 
-**Um fundo por massa.** O plano de amortização e o comparativo de receita também
-vêm separados por plano e por massa, e somá-los produzia números que não existem
-em nenhum dos dois. O Maranhão declara em 2026 dois planos de amortização — R$
+**Um fundo por massa.** A avaliação atuarial, o plano de amortização e o
+comparativo de receita vêm separados por plano e por massa, e somá-los produzia
+números que não existem em nenhum dos dois. Na aba Atuária isso juntava a
+avaliação civil com a militar num único resultado atuarial, e somava os 14% do
+custeio civil com os 10,5% do militar num plano de custeio que não é de ninguém. O Maranhão declara em 2026 dois planos de amortização — R$
 39,5 bi civis e R$ 18,0 bi militares —, que o painel exibia como um saldo só. A
 correção vale além dos militares: 51 entes tinham o ano repetido no plano de
 amortização e 263 tinham o item de fluxo repetido no comparativo, quase todos
 pela convivência entre plano Previdenciário e Financeiro.
 
+**O fundo militar, onde ele existe.** O sistema de proteção social dos militares
+não é plano de previdência: é de repartição, custeado pelo tesouro estadual, e
+não tem contribuição patronal — o Estado recolhe a contribuição de ativos,
+inativos e pensionistas (hoje 10,5% sobre o valor integral) e paga toda a
+despesa. O DRAA confirma isso item a item. Dos 26 Estados com massa militar,
+medidos no item 500000 (ativos garantidores dos compromissos do plano):
+
+| | Estados | cobertura das provisões |
+|---|---:|---|
+| declaram **zero** ativo garantidor | 14 | 0% |
+| declaram valor simbólico | 9 | abaixo de 1% — BA em 0,004%, SC em 0,02%, RJ em 0,05% |
+| estão formando o fundo | 1 | RS, 5,1% |
+| têm fundo constituído | 2 | AP, 31,5%; RR, 30,1% |
+
+**Nenhum dos 26 omite o item.** Todos declaram um valor. É por isso que o zero
+pode ser lido como zero sem violar a regra de que ausência não é zero: aqui não
+existe ausência. O zero é a declaração de que não há fundo — e a tela escreve
+isso, em vez de um travessão que sugeriria falta de informação. Quem não declara
+o item aparece como "não declarado", um terceiro estado que não se confunde com
+os outros dois.
+
+A tela publica a **cobertura**, não um "tem fundo: sim ou não": o rótulo binário
+poria a Bahia, com 0,004%, do mesmo lado do Amapá, com 31,5%. E não há cor nesses
+números — zero aqui descreve o regime, não o desempenho. A tendência de novos
+Estados constituírem fundos militares aparece sozinha: quando o ativo garantidor
+deixar de ser zero, a cobertura sobe e a linha muda de leitura sem que nada
+precise ser reprogramado.
+
 **O que a fonte não separa, o painel não reparte.** O DAIR traz a carteira ativo
 a ativo sem plano e sem massa: em 17/09/2026 o campo de plano vinha vazio nas
 59.843 linhas da base nacional. Não existe patrimônio "do fundo militar" nessa
-fonte, e a aba diz isso em vez de ratear. O SICONFI cobre parte do vão: o Anexo
+fonte — o que existe é o ativo garantidor declarado no DRAA, que é outra coisa e
+aparece como tal. O SICONFI cobre parte do vão: o Anexo
 04 do RREO tem um bloco militar próprio — contribuições, despesas com inativos e
 pensionistas, e o resultado entre os dois. Dos 21 Estados cujo Anexo 04 estava
 coletado em 17/09/2026, 20 traziam o bloco; o Rio Grande do Sul entregou o anexo

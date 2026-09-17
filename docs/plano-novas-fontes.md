@@ -159,6 +159,25 @@ O que **não** entrou, por não haver base: o DAIR traz a carteira sem plano e s
 massa — em 17/09/2026 o campo vinha vazio nas 59.843 linhas nacionais. Não há
 patrimônio "do fundo militar" nessa fonte, e o painel diz isso em vez de ratear.
 
+**Fase 6.1 — o fundo militar e o enquadramento por classe.** Duas correções que
+saíram da mesma pergunta: o que a fonte declara, e o que o painel estava
+deduzindo no lugar dela.
+
+*Fundo militar.* O sistema dos militares é de repartição, custeado pelo tesouro
+estadual, sem contribuição patronal. Medido nos 26 Estados: 14 declaram zero
+ativo garantidor, 9 declaram menos de 1% das provisões, 2 têm fundo de verdade
+(AP 31,5%, RR 30,1%) e 1 está formando (RS 5,1%). Nenhum omite o item — o zero
+é declaração, não lacuna, e a tela o trata como tal.
+
+*Enquadramento.* O painel comparava o total de um segmento com o teto de uma das
+classes dentro dele e acusava 390 dos 1.821 RPPS de exceder o limite legal;
+excedem 20. A correção usa o teto que a API já declara para cada classe, e o
+percentual que ela mesma calcula.
+
+*Referência temporal e totalizadores.* Competência do DAIR, janela do DIPR,
+exercício do DRAA e bimestre do RREO em cada quadro; linha de fechamento em todo
+quadro truncado, dizendo o que soma e quanto ficou de fora.
+
 ### Situação em 17/09/2026
 
 As fases 1, 2, 4, 5 e 6 estão implantadas. A fase 3 depende de semanas de medição

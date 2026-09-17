@@ -1615,6 +1615,20 @@
               "fazendo, e quem decide é quem pergunta."
           })
         ]),
+        cartao("Datas de referência e totais", null, null, [
+          h("p", {
+            texto: "Cada quadro leva a data a que se refere, porque as fontes " +
+              "têm periodicidades diferentes e conviver na mesma tela não as " +
+              "torna contemporâneas: a carteira é a posição de uma competência " +
+              "mensal, a avaliação atuarial é anual, o RREO é bimestral e o " +
+              "caixa é a janela que o RPPS declarou."
+          }),
+          h("p", {
+            texto: "Quadro que mostra os maiores itens traz uma linha de " +
+              "fechamento com o que ele soma e com o total de onde a lista " +
+              "saiu. Sem ela, sete rubricas passam por carteira inteira."
+          })
+        ]),
         cartao("Limites de aplicação: o teto é da classe", null, null, [
           h("p", {
             texto: "A norma do CMN não fixa um teto por segmento, e sim por " +
