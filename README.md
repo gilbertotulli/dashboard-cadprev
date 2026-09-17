@@ -298,6 +298,28 @@ Escolher uma esconderia o achado: são apurações independentes, com datas de
 posição e critérios distintos, e a distância entre elas diz algo sobre o
 cadastro. Em Vitória, junho de 2026, elas diferem em 0,18%.
 
+#### Duas divergências que o painel não pode fabricar
+
+A carga nacional de 17/09/2026 trouxe o Anexo 04 de 1.712 entes, e duas
+armadilhas apareceram só ao medir a distribuição das diferenças:
+
+**Ausência de saldo não é saldo zero.** 278 entes entregaram receitas e despesas
+sem declarar o saldo das aplicações. Somar `investimentos or 0` transformava esse
+silêncio em zero e acusava cada um deles de 100% de divergência contra a carteira
+do CADPREV — um em cada seis RPPS, acusado de algo que a fonte nunca disse.
+
+**Soma parcial não é soma.** Outros 451 declararam o saldo de um fundo e omitiram
+o de outro que movimenta receita. O total do SICONFI ficava incompleto, e
+confrontá-lo com a carteira inteira comparava um fragmento com o todo: Doutor
+Maurício Cardoso/RS declarava só os R$ 75 mil da taxa de administração, e o
+painel anunciava 99,8% de divergência contra os R$ 47 milhões da carteira.
+
+Os dois casos saem do confronto e aparecem nomeados, em vez de virar divergência.
+Com eles fora, sobram 983 entes confrontáveis: divergência típica de **0,73%**,
+70% dentro de 5%. A distribuição fica na aba Qualidade, para que uma diferença
+isolada possa ser lida contra o país — 4% parece muito até se saber quantos ficam
+abaixo de cinco.
+
 ## O agendamento
 
 A carga roda às segundas, 06:17 UTC. A competência **não** é deduzida do

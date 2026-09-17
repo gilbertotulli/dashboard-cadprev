@@ -547,22 +547,32 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
         total = carteira.get(ente["cnpj"])
         if not total:
             continue
+        # Dois casos que o painel precisa distinguir de divergência, e que
+        # custaram duas correções: o ente que entrega receitas e despesas sem o
+        # saldo das aplicações, e o que declara o saldo de um fundo e omite o de
+        # outro que movimenta receita. Tratados como zero, acusariam uma
+        # diferença de cem por cento que a fonte nunca declarou.
+        sem_saldo = n == 4
+        saldo_parcial = n == 6
         # Uma diferença pequena entre as fontes é o esperado: datas de posição e
         # critérios distintos. Um ente foge da faixa para que a tela tenha o que
         # sinalizar.
         desvio = 1.12 if n == 2 else 1.0 + (n % 5) * 0.004
-        for cod_inv, cod_caixa, cod_rec, cod_desp, fatia in _CONTAS_DO_RREO:
+        for ordem, (cod_inv, cod_caixa, cod_rec, cod_desp,
+                    fatia) in enumerate(_CONTAS_DO_RREO):
             recursos = total * desvio * fatia
             base = {"exercicio": ANO, "periodo": 3, "cod_ibge": ente["cod_ibge"],
                     "uf": ente["uf"], "instituicao": ente["ente"],
                     "anexo": "RREO-Anexo 04", "populacao": ente["populacao"]}
-            for coluna, cod, valor in (
-                    ("SALDO ATUAL", cod_inv, recursos * 0.98),
-                    ("SALDO ATUAL", cod_caixa, recursos * 0.02),
-                    ("RECEITAS REALIZADAS ATÉ O BIMESTRE (b)", cod_rec,
-                     recursos * 0.11),
-                    ("DESPESAS PAGAS ATÉ O BIMESTRE (f)", cod_desp,
-                     recursos * 0.09)):
+            omite_saldo = sem_saldo or (saldo_parcial and ordem == 0)
+            valores = [
+                ("RECEITAS REALIZADAS ATÉ O BIMESTRE (b)", cod_rec, recursos * 0.11),
+                ("DESPESAS PAGAS ATÉ O BIMESTRE (f)", cod_desp, recursos * 0.09),
+            ]
+            if not omite_saldo:
+                valores = [("SALDO ATUAL", cod_inv, recursos * 0.98),
+                           ("SALDO ATUAL", cod_caixa, recursos * 0.02)] + valores
+            for coluna, cod, valor in valores:
                 linhas.append(dict(base, coluna=coluna, cod_conta=cod,
                                    conta=cod, valor=round(valor, 2)))
     return linhas

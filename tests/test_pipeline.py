@@ -680,18 +680,19 @@ class TestComposicaoContabil(unittest.TestCase):
                 totais.add(c["total"])
         self.assertGreater(len(totais), 1)
 
-    def test_tres_fundos_somam_o_total(self):
+    def test_fundos_com_saldo_somam_o_total(self):
+        """Só entra na soma o fundo que declarou saldo — e a soma é o total."""
         vistos = 0
         for ficha in self._fichas():
             c = ficha.get("contabil") or {}
-            if not c.get("disponivel"):
+            if not c.get("disponivel") or not c.get("com_saldo"):
                 continue
             vistos += 1
-            soma = sum((f["investimentos"] or 0) + (f["caixa"] or 0)
-                       for f in c["fundos"])
-            self.assertAlmostEqual(soma, c["total"], places=2)
+            declarados = [f for f in c["fundos"] if f["recursos"] is not None]
             self.assertAlmostEqual(
-                sum(f["perc"] for f in c["fundos"]), 100.0, places=1)
+                sum(f["recursos"] for f in declarados), c["total"], places=2)
+            self.assertAlmostEqual(
+                sum(f["perc"] for f in declarados), 100.0, places=1)
         self.assertTrue(vistos)
 
     def test_confronto_compara_as_duas_fontes(self):
@@ -712,3 +713,43 @@ class TestComposicaoContabil(unittest.TestCase):
                    if abs((((f.get("contabil") or {}).get("confronto") or {})
                            .get("perc")) or 0) > 5]
         self.assertTrue(grandes)
+
+    def test_ausencia_de_saldo_nao_vira_zero(self):
+        """Em 17/09/2026, 278 dos 1.712 entes com Anexo 04 entregavam receitas
+        e despesas sem o saldo das aplicações. Somar `inv or 0` acusava cada um
+        deles de 100% de divergência contra a carteira do CADPREV."""
+        achou = False
+        for ficha in self._fichas():
+            c = ficha.get("contabil") or {}
+            if not c.get("disponivel") or c.get("com_saldo"):
+                continue
+            achou = True
+            self.assertIsNone(c["total"])
+            self.assertIsNone(c.get("confronto"))
+            self.assertTrue(any(f["receitas"] is not None for f in c["fundos"]))
+        self.assertTrue(achou, "o demo precisa conter um ente sem saldo")
+
+    def test_soma_parcial_nao_e_confrontada(self):
+        """Fundo que movimenta receita sem declarar saldo é buraco no total."""
+        achou = False
+        for ficha in self._fichas():
+            c = ficha.get("contabil") or {}
+            if not c.get("disponivel") or not c.get("com_saldo"):
+                continue
+            if c.get("saldo_completo"):
+                continue
+            achou = True
+            self.assertIsNone(c.get("confronto"))
+            self.assertTrue(any(f["recursos"] is None and f["receitas"] is not None
+                                for f in c["fundos"]))
+        self.assertTrue(achou, "o demo precisa conter um ente com saldo parcial")
+
+    def test_distribuicao_nacional_da_divergencia(self):
+        with open(os.path.join(self.saida, "qualidade.json"), encoding="utf-8") as fh:
+            dv = json.load(fh)["divergencia_entre_fontes"]
+        self.assertTrue(dv["disponivel"])
+        self.assertEqual(
+            dv["com_anexo"],
+            dv["sem_saldo"] + dv["saldo_parcial"] + dv["confrontados"])
+        self.assertLessEqual(dv["ate_1"], dv["ate_5"])
+        self.assertEqual(dv["ate_5"] + dv["acima_5"], dv["confrontados"])

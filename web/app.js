@@ -611,7 +611,11 @@
 
   function abaCarteiraEnte() {
     if (!estado.cnpj) return abaCarteiraNacional();
-    return carregarEnte().then(function (e) {
+    return Promise.all([
+      carregarEnte(),
+      buscar("qualidade.json").catch(function () { return null; })
+    ]).then(function (r) {
+      var e = r[0];
       var c = e.carteira || {};
       if (!c.disponivel) return [cabecalhoEnte(e), semDado("carteira", "DAIR_CARTEIRA")];
 
@@ -1647,21 +1651,38 @@
     administracao: "var(--s3)"
   };
 
+  /* Uma divergência isolada não diz nada sem a distribuição ao lado: 4% parece
+   * muito até se saber quantos RPPS ficam abaixo de cinco. */
+  function reguaNacionalDaDivergencia() {
+    var dv = (estado.cache["qualidade.json"] || {}).divergencia_entre_fontes;
+    if (!dv || !dv.disponivel) return "";
+    return " Para referência, a divergência típica no país é de " +
+      pct(dv.mediana, 2) + ", e " + pct(dv.perc_ate_5, 0) + " dos RPPS " +
+      "confrontáveis ficam dentro de 5%.";
+  }
+
   function cartoesContabeis(e) {
     var c = e.contabil || {};
     if (!c.disponivel || !(c.fundos || []).length) return [];
 
-    var alvo = grafico(118);
-    depoisDeMontar(function () {
-      Charts.desenhar(alvo, "barraUnica", {
-        altura: 118, alturaBarra: 30, titulo: "Recursos por fundo",
-        partes: c.fundos.map(function (f) {
-          return { rotulo: f.rotulo, cor: COR_DO_FUNDO[f.chave] || "var(--s4)",
-                   valor: (f.investimentos || 0) + (f.caixa || 0) };
-        }),
-        descricao: "Recursos separados entre os três fundos do RPPS"
+    /* Sem saldo declarado não há composição a desenhar. Um de cada seis entes
+     * entrega o Anexo 04 com receitas e despesas e sem o saldo das aplicações,
+     * e desenhar uma barra zerada afirmaria um patrimônio que a fonte não
+     * declarou. As receitas e despesas continuam valendo. */
+    var alvo = c.com_saldo ? grafico(118) : null;
+    if (alvo) {
+      depoisDeMontar(function () {
+        Charts.desenhar(alvo, "barraUnica", {
+          altura: 118, alturaBarra: 30, titulo: "Recursos por fundo",
+          partes: c.fundos.filter(function (f) { return f.recursos !== null; })
+            .map(function (f) {
+              return { rotulo: f.rotulo, cor: COR_DO_FUNDO[f.chave] || "var(--s4)",
+                       valor: f.recursos };
+            }),
+          descricao: "Recursos separados entre os três fundos do RPPS"
+        });
       });
-    });
+    }
 
     var nos = [
       h("h3", { class: "secao", texto: "Composição contábil por fundo" }),
@@ -1670,11 +1691,22 @@
         c.periodo + "º bimestre de " + c.exercicio + ". É a separação entre " +
         "capitalização, repartição e taxa de administração que o CADPREV não " +
         "expõe: a carteira dele vem ativo a ativo, sem o plano de cada ativo." }),
-      cartao("Recursos por fundo", "SICONFI · RREO-Anexo 04",
-        "Investimentos e disponibilidades somados",
-        [alvo, legenda(c.fundos.map(function (f) {
-          return { cor: COR_DO_FUNDO[f.chave] || "var(--s4)", rotulo: f.rotulo };
-        }))]),
+      c.com_saldo
+        ? cartao("Recursos por fundo", "SICONFI · RREO-Anexo 04",
+            "Investimentos e disponibilidades somados",
+            [alvo, legenda(c.fundos.filter(function (f) {
+              return f.recursos !== null;
+            }).map(function (f) {
+              return { cor: COR_DO_FUNDO[f.chave] || "var(--s4)", rotulo: f.rotulo };
+            }))])
+        : h("div", { class: "aviso-linha" }, [
+            h("span", { class: "ico", texto: "\u26a0" }),
+            h("span", { texto:
+              "Este ente entregou o Anexo 04 com receitas e despesas, mas sem o " +
+              "saldo das aplicações. A composição por fundo não pode ser " +
+              "mostrada — e tratar a ausência como zero afirmaria um patrimônio " +
+              "que a fonte não declarou." })
+          ]),
       cartao("Receitas, despesas e resultado de cada fundo",
         "SICONFI · RREO-Anexo 04",
         "Realizado até o " + c.periodo + "º bimestre",
@@ -1686,10 +1718,11 @@
             return h("tr", {}, [
               h("td", {}, [
                 h("div", { texto: f.rotulo }),
-                h("div", { class: "nota", texto: pct(f.perc, 1) + " dos recursos" })
+                h("div", { class: "nota", texto: f.perc === null ||
+                           f.perc === undefined ? "saldo não declarado"
+                           : pct(f.perc, 1) + " dos recursos" })
               ]),
-              h("td", { class: "n",
-                        texto: reais((f.investimentos || 0) + (f.caixa || 0)) }),
+              h("td", { class: "n", texto: reais(f.recursos) }),
               h("td", { class: "n", texto: reais(f.receitas) }),
               h("td", { class: "n", texto: reais(f.despesas) }),
               h("td", { class: "n" + (res === null || res === undefined ? ""
@@ -1698,6 +1731,17 @@
             ]);
           }), true))
     ];
+
+    if (!c.confronto && c.com_saldo && !c.saldo_completo) {
+      nos.push(h("div", { class: "aviso-linha" }, [
+        h("span", { class: "ico", texto: "\u26a0" }),
+        h("span", { texto:
+          "Um dos fundos movimenta receita sem declarar saldo, então a soma do " +
+          "SICONFI está incompleta e não pode ser confrontada com a carteira do " +
+          "CADPREV. Comparar um fragmento com o total produziria uma " +
+          "divergência que não existe." })
+      ]));
+    }
 
     if (c.confronto) {
       var d = c.confronto;
@@ -1713,14 +1757,14 @@
             kpi("Diferença", pct(d.perc, 2), reais(d.diferenca),
               grande ? "ruim" : "bom")
           ]),
-          h("p", { class: "nota", texto: grande
+          h("p", { class: "nota", texto: (grande
             ? "Diferença acima de 5%. As duas apurações têm datas de posição e " +
               "critérios distintos, então alguma diferença é esperada — mas " +
               "desta ordem vale conferir na fonte. O painel mostra as duas e " +
               "não escolhe entre elas."
             : "As duas apurações convergem. O painel mostra ambas em vez de " +
               "escolher uma: a discordância entre fontes públicas é, ela " +
-              "própria, informação." })
+              "própria, informação.") + reguaNacionalDaDivergencia() })
         ]));
     }
     return nos;
@@ -1918,6 +1962,42 @@
             ])
           ]));
         });
+
+        var dv = q.divergencia_entre_fontes || {};
+        if (dv.disponivel) {
+          nos.push(h("h3", { texto: "As duas fontes sobre o mesmo patrimônio" }));
+          nos.push(h("p", { class: "nota", html:
+            "O CADPREV traz a carteira declarada pelo RPPS; o SICONFI, a " +
+            "contabilidade do ente. São apurações independentes, e a distância " +
+            "entre elas é informação sobre o cadastro. Nenhuma das duas é " +
+            "corrigida pela outra." }));
+          nos.push(h("div", { class: "kpis" }, [
+            kpi("Divergência típica", pct(dv.mediana, 2),
+              "mediana entre os " + num(dv.confrontados, 0) + " confrontáveis"),
+            kpi("Dentro de 5%", num(dv.ate_5, 0),
+              pct(dv.perc_ate_5, 0) + " dos confrontáveis",
+              dv.perc_ate_5 >= 50 ? "bom" : ""),
+            kpi("Acima de 5%", num(dv.acima_5, 0), "vale conferir na fonte",
+              dv.acima_5 ? "ruim" : "bom"),
+            kpi("Sem confronto possível", num(dv.sem_saldo + dv.saldo_parcial, 0),
+              "de " + num(dv.com_anexo, 0) + " com Anexo 04")
+          ]));
+          nos.push(tabela([{ t: "Situação" }, { t: "Entes", n: true }], [
+            ["Entregaram o Anexo 04 sem o saldo das aplicações", dv.sem_saldo],
+            ["Declararam saldo de um fundo e omitiram o de outro", dv.saldo_parcial],
+            ["Confrontáveis com a carteira do CADPREV", dv.confrontados]
+          ].map(function (l) {
+            return h("tr", {}, [
+              h("td", { texto: l[0] }),
+              h("td", { class: "n", texto: num(l[1], 0) })
+            ]);
+          }), true));
+          nos.push(h("p", { class: "nota", texto:
+            "Ausência de saldo não é saldo zero, e soma parcial não é soma. Os " +
+            "dois casos saem do confronto em vez de virar divergência: tratá-los " +
+            "como zero acusaria um em cada seis RPPS de uma diferença que a " +
+            "fonte nunca declarou." }));
+        }
 
         nos.push(h("h3", { texto: "Atualidade do dado" }));
         nos.push(h("p", { class: "nota", html:

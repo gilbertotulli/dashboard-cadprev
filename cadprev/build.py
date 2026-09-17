@@ -398,6 +398,55 @@ def _dias_desde(validade: Optional[str], hoje: str) -> Optional[int]:
 # Conformidade — o que o regulador registrou
 # ---------------------------------------------------------------------------
 
+def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, Any]:
+    """Como as duas fontes se comportam no país, para o leitor julgar a sua.
+
+    Uma divergência isolada não diz nada sem a distribuição ao lado: 4% parece
+    muito até se saber que setenta por cento dos RPPS ficam abaixo de cinco.
+
+    Conta também quem não pôde ser confrontado, e por quê. São duas razões
+    distintas e nenhuma delas é divergência: o ente que entregou o Anexo 04 sem
+    o saldo das aplicações, e o que declarou saldo de um fundo e omitiu o de
+    outro que movimenta receita.
+    """
+    desvios, sem_saldo, parcial, com_anexo = [], 0, 0, 0
+    for ficha in fichas.values():
+        contabil = ficha.get("contabil") or {}
+        if not contabil.get("disponivel"):
+            continue
+        com_anexo += 1
+        if not contabil.get("com_saldo"):
+            sem_saldo += 1
+        elif not contabil.get("saldo_completo"):
+            parcial += 1
+        confronto = contabil.get("confronto")
+        if confronto:
+            desvios.append(abs(confronto["perc"]))
+    if not desvios:
+        return {"disponivel": False, "com_anexo": com_anexo,
+                "sem_saldo": sem_saldo, "saldo_parcial": parcial}
+    desvios.sort()
+
+    def _faixa(limite):
+        return sum(1 for d in desvios if d <= limite)
+
+    meio = len(desvios) // 2
+    mediana = (desvios[meio] if len(desvios) % 2
+               else (desvios[meio - 1] + desvios[meio]) / 2)
+    return {
+        "disponivel": True,
+        "com_anexo": com_anexo,
+        "sem_saldo": sem_saldo,
+        "saldo_parcial": parcial,
+        "confrontados": len(desvios),
+        "mediana": round(mediana, 2),
+        "ate_1": _faixa(1.0),
+        "ate_5": _faixa(5.0),
+        "acima_5": len(desvios) - _faixa(5.0),
+        "perc_ate_5": _pct(_faixa(5.0), len(desvios)),
+    }
+
+
 def montar_conformidade_nacional(store: Store,
                                  entes: Mapping[str, Dict[str, Any]],
                                  fora: Optional[AbstractSet[str]] = None,
@@ -708,7 +757,7 @@ def _montar_contabil(store: Store, cnpj: str,
                   if (l["exercicio"], l["periodo"]) == recente]
     por_conta = {(l["coluna"], l["cod_conta"]): l["valor"] for l in do_periodo}
 
-    fundos, investido, caixa = [], 0.0, 0.0
+    fundos, investido, caixa, com_saldo = [], 0.0, 0.0, False
     for chave, rotulo, cod_inv, cod_caixa, cod_rec, cod_desp in _FUNDOS_DO_RREO:
         inv = por_conta.get((_COLUNA_SALDO, cod_inv))
         cx = por_conta.get((_COLUNA_SALDO, cod_caixa))
@@ -716,8 +765,10 @@ def _montar_contabil(store: Store, cnpj: str,
         despesa = por_conta.get((_COLUNA_DESPESA, cod_desp))
         if inv is None and cx is None and receita is None and despesa is None:
             continue
-        investido += inv or 0.0
-        caixa += cx or 0.0
+        if inv is not None or cx is not None:
+            com_saldo = True
+            investido += inv or 0.0
+            caixa += cx or 0.0
         fundos.append({
             "chave": chave, "rotulo": rotulo,
             "investimentos": inv, "caixa": cx,
@@ -728,10 +779,27 @@ def _montar_contabil(store: Store, cnpj: str,
     if not fundos:
         return {"disponivel": False}
 
-    total = investido + caixa
+    # Ausência de saldo não é saldo zero. Em 17/09/2026, 280 dos 1.712 entes com
+    # Anexo 04 declaravam receitas e despesas sem declarar o saldo das
+    # aplicações. Somar `inv or 0` transformava esse silêncio em zero e produzia
+    # um confronto de −100% contra a carteira do CADPREV: uma divergência que a
+    # fonte nunca afirmou, em um de cada seis RPPS.
+    # Um fundo que movimenta receita e não declara saldo é um buraco no total.
+    # Sem esta conferência o confronto compara um fragmento do SICONFI contra a
+    # carteira inteira do CADPREV: Doutor Maurício Cardoso/RS declarava só os
+    # setenta e cinco mil da taxa de administração, e o painel anunciava 99,8%
+    # de divergência contra os quarenta e sete milhões da carteira.
+    completo = com_saldo and all(
+        fundo["investimentos"] is not None or fundo["caixa"] is not None
+        for fundo in fundos
+        if fundo["receitas"] is not None or fundo["despesas"] is not None)
+    total = round(investido + caixa, 2) if com_saldo else None
     for fundo in fundos:
-        fundo["perc"] = _pct((fundo["investimentos"] or 0.0) + (fundo["caixa"] or 0.0),
-                             total)
+        recursos = (None if fundo["investimentos"] is None and fundo["caixa"] is None
+                    else (fundo["investimentos"] or 0.0) + (fundo["caixa"] or 0.0))
+        fundo["recursos"] = None if recursos is None else round(recursos, 2)
+        fundo["perc"] = (_pct(recursos, total)
+                         if recursos is not None and total else None)
 
     resultado = {
         "disponivel": True,
@@ -739,16 +807,18 @@ def _montar_contabil(store: Store, cnpj: str,
         "periodo": recente[1],
         "demonstrativo": do_periodo[0].get("demonstrativo"),
         "fundos": fundos,
-        "investimentos": round(investido, 2),
-        "caixa": round(caixa, 2),
-        "total": round(total, 2),
+        "com_saldo": com_saldo,
+        "saldo_completo": completo,
+        "investimentos": round(investido, 2) if com_saldo else None,
+        "caixa": round(caixa, 2) if com_saldo else None,
+        "total": total,
     }
 
     # O confronto. A carteira do CADPREV inclui disponibilidades financeiras
     # como segmento, e é por isso que a comparação soma investimentos e caixa do
     # lado do SICONFI: comparar só os investimentos deixaria de fora justamente
     # a parte que o outro lado conta.
-    if total_da_carteira:
+    if total_da_carteira and total is not None and completo:
         diferenca = total - total_da_carteira
         resultado["confronto"] = {
             "cadprev": round(total_da_carteira, 2),
@@ -1434,6 +1504,7 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
 
     gerados.append(_gravar("qualidade.json", {
         "referencia": qual["referencia"],
+        "divergencia_entre_fontes": resumir_divergencia(fichas),
         "achados": [dict(a, ente=(entes.get(a["cnpj"]) or {}).get("ente"),
                          uf=(entes.get(a["cnpj"]) or {}).get("uf"))
                     for a in qual["achados"]],
