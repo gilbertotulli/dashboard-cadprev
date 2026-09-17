@@ -557,6 +557,77 @@ def _rreo_militar(store: Store) -> Dict[str, Dict[str, Any]]:
     return fichas
 
 
+def _fundo_militar(store: Store) -> Dict[str, Dict[str, Any]]:
+    """Ativos garantidores e provisões da massa militar, por ente.
+
+    Aqui a ausência e o zero se separam sozinhos, porque a fonte não deixa
+    dúvida: em 17/09/2026 nenhum dos 26 Estados com massa militar omitia o
+    item 500000 — **todos declaravam um valor**, e 14 declaravam exatamente
+    zero. Zero declarado é declaração, não lacuna, e diz o que a lei diz: o
+    sistema de proteção social dos militares é de repartição, custeado pelo
+    tesouro estadual, sem fundo capitalizado próprio.
+
+    Entre os 12 que declaram algo, a distância importa mais que o rótulo: Amapá
+    cobre 31,5% das provisões e Roraima 30,1% — fundos de verdade —, o Rio
+    Grande do Sul está em 5,1% e os outros nove ficam abaixo de 1%, com a Bahia
+    em 0,004%. Por isso a tela publica a cobertura, e não um "tem fundo: sim/não"
+    que colocaria a Bahia e o Amapá do mesmo lado.
+    """
+    if not store.tem_tabela("DRAA_VALORES_COMPROMISSOS"):
+        return {}
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT cnpj_ente, exercicio, plano, massa, codigo, geracao_atual, envio"
+        " FROM draa_valores_compromissos WHERE codigo IN (?, ?, ?)",
+        (codigos.COMPROMISSO_ATIVOS_GARANTIDORES,
+         codigos.COMPROMISSO_PROVISAO_CONCEDIDOS,
+         codigos.COMPROMISSO_PROVISAO_A_CONCEDER))] if _tem_coluna(
+            store, "draa_valores_compromissos", "envio") else [
+        dict(l, envio=None) for l in store.consultar(
+            "SELECT cnpj_ente, exercicio, plano, massa, codigo, geracao_atual"
+            " FROM draa_valores_compromissos WHERE codigo IN (?, ?, ?)",
+            (codigos.COMPROMISSO_ATIVOS_GARANTIDORES,
+             codigos.COMPROMISSO_PROVISAO_CONCEDIDOS,
+             codigos.COMPROMISSO_PROVISAO_A_CONCEDER))]
+
+    militares = [l for l in linhas if massas.eh_militar(l.get("massa"))]
+    recente: Dict[str, Any] = {}
+    for linha in militares:
+        cnpj, exercicio = linha["cnpj_ente"], linha.get("exercicio")
+        if exercicio is not None and (cnpj not in recente or exercicio > recente[cnpj]):
+            recente[cnpj] = exercicio
+
+    fichas: Dict[str, Dict[str, Any]] = {}
+    for linha in militares:
+        cnpj = linha["cnpj_ente"]
+        if linha.get("exercicio") != recente.get(cnpj):
+            continue
+        ficha = fichas.setdefault(cnpj, {
+            "exercicio": recente[cnpj], "ativos_garantidores": None,
+            "provisoes": 0.0, "planos": set()})
+        valor = linha.get("geracao_atual")
+        if linha["codigo"] == codigos.COMPROMISSO_ATIVOS_GARANTIDORES:
+            if valor is not None:
+                ficha["ativos_garantidores"] = (
+                    (ficha["ativos_garantidores"] or 0.0) + float(valor))
+        elif valor is not None:
+            ficha["provisoes"] += float(valor)
+        if linha.get("plano"):
+            ficha["planos"].add(linha["plano"].strip())
+
+    for ficha in fichas.values():
+        ativos = ficha["ativos_garantidores"]
+        ficha["provisoes"] = round(ficha["provisoes"], 2)
+        ficha["ativos_garantidores"] = (round(ativos, 2)
+                                        if ativos is not None else None)
+        ficha["cobertura"] = (round(ativos / ficha["provisoes"] * 100, 2)
+                              if ativos is not None and ficha["provisoes"] else None)
+        # A leitura é da fonte: ela declarou zero, ou não declarou nada.
+        ficha["declara_fundo"] = bool(ativos)
+        ficha["declarou_zero"] = ativos is not None and not ativos
+        ficha["planos"] = sorted(ficha["planos"])
+    return fichas
+
+
 def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                             fora: Optional[AbstractSet[str]] = None
                             ) -> Dict[str, Any]:
@@ -606,6 +677,7 @@ def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
             ficha["tem_militar"] = True
 
     rreo = _rreo_militar(store)
+    fundo = _fundo_militar(store)
     fichas = []
     for cnpj, dados in contas.items():
         if not dados["tem_militar"]:
@@ -634,6 +706,12 @@ def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                             if (civ["inativo"] + civ["pensionista"]) else None),
             "participacao": (round(total_mil / (total_mil + total_civ) * 100, 1)
                              if (total_mil + total_civ) else None),
+            "planos": (fundo.get(cnpj) or {}).get("planos") or [],
+            "ativos_garantidores": (fundo.get(cnpj) or {}).get("ativos_garantidores"),
+            "provisoes": (fundo.get(cnpj) or {}).get("provisoes"),
+            "cobertura": (fundo.get(cnpj) or {}).get("cobertura"),
+            "declara_fundo": (fundo.get(cnpj) or {}).get("declara_fundo"),
+            "declarou_zero": (fundo.get(cnpj) or {}).get("declarou_zero"),
             "exercicio_rreo": orcamento.get("exercicio"),
             "periodo_rreo": orcamento.get("periodo"),
             "contribuicoes": orcamento.get("contribuicoes"),
@@ -667,6 +745,17 @@ def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         "estados_com_pessoas": sum(1 for f in fichas if f["pessoas"]),
         "sem_rreo": sorted(f["uf"] or "?" for f in fichas
                            if f["contribuicoes"] is None and f["pessoas"]),
+        # O fundo militar, onde ele existe. Zero declarado entra na conta dos
+        # que não têm — e é o que a fonte diz, não uma dedução —, enquanto a
+        # ausência de declaração fica à parte, porque não diz nada.
+        "com_fundo": sum(1 for f in fichas if f.get("declara_fundo")),
+        "declararam_zero": sum(1 for f in fichas if f.get("declarou_zero")),
+        "sem_declaracao_de_fundo": sorted(
+            f["uf"] or "?" for f in fichas
+            if f["pessoas"] and f.get("ativos_garantidores") is None),
+        "ativos_garantidores": round(
+            sum(f["ativos_garantidores"] or 0.0 for f in fichas), 2),
+        "provisoes": round(sum(f["provisoes"] or 0.0 for f in fichas), 2),
         "ativos": ativos,
         "inativos": sum(f["inativos"] for f in fichas),
         "pensionistas": sum(f["pensionistas"] for f in fichas),
@@ -1642,30 +1731,36 @@ def _montar_carteira_ente(store: Store, cnpj: str,
 
 
 def _montar_atuaria(store: Store, cnpj: str) -> Dict[str, Any]:
-    """Resultado atuarial, fluxo projetado, custeio e hipóteses.
+    """Resultado atuarial, fluxo projetado, custeio e hipóteses — por fundo.
 
     Uma correção em relação ao anteprojeto: ``DRAA_FLUXO_ATUARIAL`` **não é
     série temporal**. Cada linha é um item do fluxo com um único valor
     projetado — receitas por origem, despesas por tipo de benefício, e os
     totais nos códigos 190000 e 240000. A projeção ano a ano, que renderia a
     curva de cruzamento, existe nos arquivos de dados abertos da SPREV e não
-    nesta API. Em vez de forjar uma série, a tela mostra o que há: a comparação
-    entre receitas e despesas projetadas e a composição de cada lado.
+    nesta API. Em vez de forjar uma série, a tela mostra o que há.
+
+    **Um bloco por plano e por massa.** O DRAA avalia cada fundo à parte, e
+    somá-los produz números que não descrevem nenhum deles. Nos 26 governos
+    estaduais isso juntava a avaliação civil com a militar — que não tem
+    contribuição patronal e, em 14 Estados, não tem ativo garantidor nenhum: o
+    tesouro paga direto. Um "resultado atuarial" somando os dois não é o
+    resultado de coisa alguma.
     """
     fluxo = _varios(store, "draa_fluxo_atuarial",
-                    "exercicio, plano, codigo, descricao, valor", cnpj,
-                    ordem="exercicio DESC, codigo", limite=2000)
+                    "exercicio, plano, massa, codigo, descricao, valor", cnpj,
+                    ordem="exercicio DESC, codigo", limite=4000)
     compromissos = _varios(store, "draa_valores_compromissos",
-                           "exercicio, plano, codigo, descricao, categoria,"
-                           " geracao_atual, geracao_futura", cnpj,
-                           ordem="exercicio DESC, codigo", limite=2000)
+                           "exercicio, plano, massa, codigo, descricao,"
+                           " categoria, geracao_atual, geracao_futura", cnpj,
+                           ordem="exercicio DESC, codigo", limite=6000)
     hipoteses = _varios(store, "draa_hipotese_atuarial",
                         "exercicio, descricao, unidade, valor, longo_prazo",
                         cnpj, ordem="exercicio DESC", limite=400)
     custeio = _varios(store, "draa_plano_custeio",
-                      "exercicio, plano, tipo_contribuicao, aliquota,"
+                      "exercicio, plano, massa, tipo_contribuicao, aliquota,"
                       " aliquota_definida, contribuicao_definida", cnpj,
-                      ordem="exercicio DESC", limite=200)
+                      ordem="exercicio DESC", limite=600)
 
     if not (fluxo or compromissos or hipoteses or custeio):
         return {"disponivel": False}
@@ -1676,21 +1771,55 @@ def _montar_atuaria(store: Store, cnpj: str) -> Dict[str, Any]:
     def _do_exercicio(linhas):
         return [l for l in linhas if l["exercicio"] == exercicio]
 
+    do_fluxo = _do_exercicio(fluxo)
+    do_compromisso = _do_exercicio(compromissos)
+    do_custeio = _do_exercicio(custeio)
+
+    # A chave de um bloco é (plano, massa). Nem todo fundo aparece nas quatro
+    # tabelas, então a união das chaves é quem manda.
+    chaves: Dict[tuple, Dict[str, Any]] = {}
+    for conjunto in (do_compromisso, do_fluxo, do_custeio):
+        for fundo in _por_fundo(conjunto):
+            chaves.setdefault((fundo["plano"], fundo["massa"]), fundo)
+
+    def _daquele(linhas, plano, massa):
+        return [l for l in linhas
+                if (l.get("plano") or None) == plano
+                and (massas.normalizar(l.get("massa")) or None) == massa]
+
+    blocos = []
+    for (plano, massa), fundo in chaves.items():
+        blocos.append({
+            "rotulo": _rotulo_do_fundo(plano, massa),
+            "plano": plano,
+            "massa": massa,
+            "militar": massas.normalizar(massa) == massas.MILITAR,
+            "resultado": _resultado_atuarial(
+                _daquele(do_compromisso, plano, massa)),
+            "fluxo": _resumir_fluxo(_daquele(do_fluxo, plano, massa)),
+            "compromissos": [
+                {"descricao": l["descricao"], "plano": l["plano"],
+                 "geracao_atual": l["geracao_atual"],
+                 "geracao_futura": l["geracao_futura"]}
+                for l in _daquele(do_compromisso, plano, massa)
+                if _normalizar_situacao(l["categoria"]) != codigos.CATEGORIA_TITULO
+                and (l["geracao_atual"] or l["geracao_futura"])
+            ][:14],
+            "custeio": _resumir_custeio(_daquele(do_custeio, plano, massa)),
+        })
+    blocos.sort(key=lambda b: (b["militar"],
+                               -(b["resultado"]["provisoes"] or 0.0), b["rotulo"]))
+    if not blocos:
+        return {"disponivel": False}
+
     return {
         "disponivel": True,
         "exercicio": exercicio,
-        "resultado": _resultado_atuarial(_do_exercicio(compromissos)),
-        "fluxo": _resumir_fluxo(_do_exercicio(fluxo)),
-        "compromissos": [
-            {"descricao": l["descricao"], "plano": l["plano"],
-             "geracao_atual": l["geracao_atual"],
-             "geracao_futura": l["geracao_futura"]}
-            for l in _do_exercicio(compromissos)
-            if _normalizar_situacao(l["categoria"]) != codigos.CATEGORIA_TITULO
-            and (l["geracao_atual"] or l["geracao_futura"])
-        ][:14],
+        "blocos": blocos,
+        "tem_militar": any(b["militar"] for b in blocos),
+        # Hipóteses são da avaliação, não do fundo: juros e inflação de longo
+        # prazo valem para o conjunto.
         "hipoteses": _hipoteses_destaque(_do_exercicio(hipoteses)),
-        "custeio": _resumir_custeio(_do_exercicio(custeio)),
     }
 
 

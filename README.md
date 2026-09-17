@@ -386,6 +386,42 @@ Duas regras de leitura nasceram aqui:
   idênticas em todas as colunas; exibi-las duas vezes sugeriria dois
   apontamentos onde há um.
 
+## Limites de aplicação: o teto é da classe, não do segmento
+
+O painel acusava 390 dos 1.821 RPPS com carteira de exceder o limite legal.
+Excedem 20.
+
+A Resolução do CMN não fixa teto por segmento, e sim por classe de ativo. Em
+17/09/2026 o segmento Renda Fixa reunia classes com teto de 5%, 20%, 80% e
+100%, e o painel comparava o total do segmento com o teto de uma delas — a da
+maior posição, porque era a primeira linha na ordem de valor. Um RPPS com 55,7%
+em título público (teto de 100%) aparecia estourando um teto de 80% que é de
+outra classe. Das 390 acusações, 371 eram assim; e um excesso real passava
+despercebido.
+
+Quem declara o teto de cada classe é a própria API, em `pc_cmn`, no registro de
+cada ativo. **O projeto não mantém tabela de limites** — é assim que ele
+acompanha a norma sem depender de alguém vir atualizá-lo quando ela muda. A
+constante `NORMA_DOS_INVESTIMENTOS` existe só para nomear a norma na tela.
+
+Pelo mesmo motivo o percentual é o que a fonte calcula (`pc_recursos`, que soma
+100% em 1.820 dos 1.821 entes), e não uma derivação do painel. Ele só é refeito
+quando alguma linha do ente foi excluída pela regra de impossibilidade
+aritmética — aí o percentual da fonte passa a se referir a um total que a tela
+não mostra mais, e a ficha diz qual dos dois está ali.
+
+Uma distinção que a regra antiga apagava: ativo que a fonte classifica como
+**não enquadrado na resolução** não é teto estourado, é ativo fora do rol. São
+coisas diferentes e agora aparecem separadas.
+
+**DPIN e Pró-Gestão não entram porque a API não os expõe**: `DPIN`,
+`POLITICA_INVESTIMENTO`, `PRO_GESTAO` e variantes retornam 404, enquanto
+endpoints conhecidos retornam 200 na mesma sondagem. O `DAIR_GOVERNANCA` traz a
+certificação individual dos responsáveis (CPA-10 e afins, com validade), não a
+certificação institucional do RPPS nem a estratégia-alvo. O teto por classe que
+a API já declara é base melhor que as duas alternativas, e estava disponível
+desde o começo.
+
 ## Militares
 
 Só os Estados têm massa militar. Em 17/09/2026 ela aparecia em 26 dos 27

@@ -93,6 +93,12 @@ _CLASSES = [
     ("Disponibilidades Financeiras", None, None, 0.045),
 ]
 
+#: Os Estados que declaram ativo garantidor para a massa militar. Na base real
+#: são 2 de 26 com cobertura relevante (Amapá, 31,5%; Roraima, 30,1%) e um
+#: terceiro começando (Rio Grande do Sul, 5,1%); os outros 14 declaram zero e os
+#: 9 restantes declaram valores simbólicos, abaixo de 1% das provisões.
+_ESTADOS_COM_FUNDO_MILITAR = frozenset({4})
+
 #: O ente que estoura um teto de verdade: BDR bem acima dos 10% da classe.
 _ENTE_EXCEDE_CLASSE = 8
 
@@ -467,7 +473,10 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
 
         deficit = patrimonio * rnd.uniform(1.8, 4.6)
         for codigo, descricao, categoria, atual, futura in (
-                (300000, "PROVISÃO MATEMÁTICA DOS BENEFÍCIOS CONCEDIDOS", "Titulo", 0, 0),
+                (300000, "PROVISÃO MATEMÁTICA DOS BENEFÍCIOS CONCEDIDOS",
+                 "Resultado", deficit * 0.62, 0),
+                (400000, "PROVISÃO MATEMÁTICA DOS BENEFÍCIOS A CONCEDER",
+                 "Resultado", deficit * 0.46, deficit * 0.18),
                 (500000, "ATIVOS GARANTIDORES DOS COMPROMISSOS DO PLANO", "Resultado",
                  patrimonio, 0),
                 (600100, "Déficit Atuarial", "Resultado", deficit, 0),
@@ -500,6 +509,67 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 vl_aliquota=aliquota, vl_contribuicao_esperada=folha * 12 * aliquota / 100,
                 vl_aliquota_definida=aliquota,
                 vl_contribuicao_definida=folha * 12 * aliquota / 100))
+
+        # A avaliação atuarial da massa militar, que existe só nos Estados e é
+        # uma avaliação à parte — outro fundo, outro resultado, outro custeio.
+        #
+        # Dois traços que a amostra precisa ter, porque descrevem o regime e não
+        # o desempenho: não há contribuição patronal (o tesouro estadual arca
+        # com toda a despesa), e na maioria dos Estados não há ativo garantidor
+        # nenhum. Em 17/09/2026, 14 dos 26 Estados com massa militar declaravam
+        # ZERO ativo garantidor — declaravam, não omitiam. Só o Amapá (31,5%) e
+        # Roraima (30,1%) têm cobertura relevante, e o Rio Grande do Sul começa
+        # a formar a dele (5,1%).
+        if eh_governo_estadual:
+            tem_fundo_militar = indice in _ESTADOS_COM_FUNDO_MILITAR
+            receitas_mil = receitas * 0.33
+            despesas_mil = despesas * 0.41
+            for codigo, descricao, valor in (
+                    (109001, "Base de Cálculo da Contribuição Normal", receitas_mil * 2.4),
+                    (122000, "Benefícios a Conceder - Contribuições dos Segurados Ativos", receitas_mil * 0.55),
+                    (111000, "Benefícios Concedidos - Contribuições dos Aposentados", receitas_mil * 0.45),
+                    (190000, "TOTAL DAS RECEITAS COM CONTRIBUIÇÕES E COMPENSAÇÃO PREVIDENCIÁRIA", receitas_mil),
+                    (211001, "Benefícios Concedidos - Encargos - Aposentadorias Programadas", despesas_mil * 0.8),
+                    (215001, "Benefícios Concedidos - Encargos - Pensões Por Morte", despesas_mil * 0.2),
+                    (240000, "TOTAL  DAS DESPESAS COM BENEFÍCIOS DO PLANO", despesas_mil)):
+                tabelas["DRAA_FLUXO_ATUARIAL"].append(dict(
+                    ident, dt_exercicio=ANO, tp_plano="Previdenciário",
+                    tp_massa="Militar", nr_fluxo=codigo, no_fluxo=descricao,
+                    vl_projetado=round(valor, 2)))
+
+            deficit_mil = patrimonio * rnd.uniform(1.2, 2.8)
+            garantidores = patrimonio * 0.31 if tem_fundo_militar else 0.0
+            for codigo, descricao, categoria, atual, futura in (
+                    (300000, "PROVISÃO MATEMÁTICA DOS BENEFÍCIOS CONCEDIDOS",
+                     "Resultado", deficit_mil * 0.71, 0),
+                    (400000, "PROVISÃO MATEMÁTICA DOS BENEFÍCIOS A CONCEDER",
+                     "Resultado", deficit_mil * 0.29, 0),
+                    (500000, "ATIVOS GARANTIDORES DOS COMPROMISSOS DO PLANO",
+                     "Resultado", garantidores, 0),
+                    (600100, "Déficit Atuarial", "Resultado", deficit_mil, 0),
+                    (211000, "Benefícios Concedidos - Encargos - Aposentadorias Programadas",
+                     "Resultado", deficit_mil * 0.88, 0)):
+                tabelas["DRAA_VALORES_COMPROMISSOS"].append(dict(
+                    ident, dt_exercicio=ANO, tp_plano="Previdenciário",
+                    tp_massa="Militar", cd_demonstrativo=codigo,
+                    ds_item_resultado=descricao,
+                    no_categoria_demonstrativo=categoria,
+                    vl_geracao_atual="{:.2f}".format(atual),
+                    vl_geracao_futura="{:.2f}".format(futura) if futura else None))
+
+            # 10,5% sobre o valor integral, e nenhuma linha de ente: a
+            # contribuição patronal não existe neste sistema.
+            for tipo, aliquota in (("Segurados Ativos", 10.5),
+                                   ("Aposentados", 10.5),
+                                   ("Pensionistas", 10.5)):
+                tabelas["DRAA_PLANO_CUSTEIO"].append(dict(
+                    ident, dt_exercicio=ANO, tp_plano="Previdenciário",
+                    tp_massa="Militar", tp_contribuicao=tipo,
+                    vl_anual_base_calculo=folha * 4,
+                    vl_aliquota=aliquota,
+                    vl_contribuicao_esperada=folha * 4 * aliquota / 100,
+                    vl_aliquota_definida=aliquota,
+                    vl_contribuicao_definida=folha * 4 * aliquota / 100))
 
         # --- encaminhamento do DRAA, com reenvio para alguns ---
         envio_valido = "{}-04-{:02d} 10:12:00.000".format(ANO, rnd.randint(3, 28))

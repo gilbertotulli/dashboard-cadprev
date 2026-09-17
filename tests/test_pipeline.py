@@ -155,19 +155,29 @@ class TestPipeline(unittest.TestCase):
         """
         entes = self._json("entes.json")
         ficha = self._json(os.path.join("ente", entes[0]["cnpj"] + ".json"))
-        fluxo = ficha["atuaria"]["fluxo"]
-        self.assertTrue(fluxo["disponivel"])
-        soma_receitas = sum(i["valor"] for i in fluxo["itens_receita"])
-        self.assertAlmostEqual(soma_receitas, fluxo["receitas"], places=0)
-        soma_despesas = sum(i["valor"] for i in fluxo["itens_despesa"])
-        self.assertAlmostEqual(soma_despesas, fluxo["despesas"], places=0)
+        conferidos = 0
+        for bloco in ficha["atuaria"]["blocos"]:
+            fluxo = bloco["fluxo"]
+            if not fluxo["disponivel"]:
+                continue
+            conferidos += 1
+            soma_receitas = sum(i["valor"] for i in fluxo["itens_receita"])
+            self.assertAlmostEqual(soma_receitas, fluxo["receitas"], places=0)
+            soma_despesas = sum(i["valor"] for i in fluxo["itens_despesa"])
+            self.assertAlmostEqual(soma_despesas, fluxo["despesas"], places=0)
+        self.assertTrue(conferidos)
 
     def test_resultado_atuarial_vem_do_codigo(self):
         entes = self._json("entes.json")
         ficha = self._json(os.path.join("ente", entes[0]["cnpj"] + ".json"))
-        resultado = ficha["atuaria"]["resultado"]
-        self.assertIn(resultado["situacao"], ("deficit", "superavit", "equilibrio"))
-        self.assertGreater(resultado["ativos_garantidores"], 0)
+        blocos = ficha["atuaria"]["blocos"]
+        self.assertTrue(blocos)
+        for bloco in blocos:
+            resultado = bloco["resultado"]
+            self.assertIn(resultado["situacao"],
+                          ("deficit", "superavit", "equilibrio"))
+        self.assertTrue(any(b["resultado"]["ativos_garantidores"] > 0
+                            for b in blocos))
 
     def test_mes_sem_rubrica_nao_vira_zero(self):
         """Ausência de declaração e valor zero são coisas diferentes."""
@@ -888,6 +898,7 @@ class TestMassaMilitar(unittest.TestCase):
             ingest.ingerir_varios(cliente, store, [
                 "RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA",
                 "DIPR", "DRAA_ESTATISTICA", "DRAA_VALORES_COMPROMISSOS",
+                "DRAA_FLUXO_ATUARIAL", "DRAA_PLANO_CUSTEIO",
                 "DRAA_COMPARATIVO_RECEITA", "DRAA_PLANO_AMORTIZACAO"])
             # O SICONFI é outra API, com outro envelope: o bloco militar do
             # Anexo 04 só existe lá.
@@ -1070,6 +1081,64 @@ class TestMassaMilitar(unittest.TestCase):
             if ficha["uf"] in m["sem_rreo"]:
                 self.assertIsNone(ficha["contribuicoes"])
                 self.assertIsNone(ficha["despesas"])
+
+    def test_fundo_militar_zero_declarado_nao_e_ausencia(self):
+        """Zero aqui é o que a lei diz, e a fonte declara — não uma lacuna.
+
+        Em 17/09/2026 nenhum dos 26 Estados com massa militar omitia o item
+        500000: todos declaravam um valor, e 14 declaravam exatamente zero. O
+        sistema de proteção social dos militares é de repartição, custeado pelo
+        tesouro estadual; só o Amapá (31,5%) e Roraima (30,1%) têm cobertura
+        relevante, e o Rio Grande do Sul começa a formar a dele (5,1%).
+        """
+        m = self._nacional("militar.json")
+        self.assertIn("com_fundo", m)
+        self.assertTrue(m["declararam_zero"],
+                        "o demo precisa de Estado que declara zero")
+        self.assertTrue(m["com_fundo"], "o demo precisa de Estado com fundo")
+        for ficha in m["entes"]:
+            if not ficha["pessoas"]:
+                continue
+            # Declarar zero e não declarar são estados distintos, e nenhum dos
+            # dois vira o outro.
+            if ficha["declarou_zero"]:
+                self.assertEqual(ficha["ativos_garantidores"], 0)
+                self.assertFalse(ficha["declara_fundo"])
+            if ficha["ativos_garantidores"] is None:
+                self.assertIsNone(ficha["cobertura"])
+                self.assertIn(ficha["uf"], m["sem_declaracao_de_fundo"])
+
+    def test_cobertura_militar_so_para_quem_tem_massa_militar(self):
+        with open(os.path.join(self.saida, "benchmark.json"),
+                  encoding="utf-8") as fh:
+            b = json.load(fh)
+        self.assertIn("cobertura_militar", [i["chave"] for i in b["indicadores"]])
+        for cnpj, rpps in b["rpps"].items():
+            atuaria = self._ficha(cnpj).get("atuaria") or {}
+            tem = any(x.get("militar") for x in atuaria.get("blocos") or [])
+            if not tem:
+                self.assertIsNone(rpps["valores"].get("cobertura_militar"))
+
+    def test_atuaria_separa_os_fundos(self):
+        """Somar avaliações de fundos diferentes produz um resultado que não é
+        de nenhum deles — e a militar não tem contribuição patronal."""
+        achou = False
+        for ente in self._entes():
+            atuaria = self._ficha(ente["cnpj"]).get("atuaria") or {}
+            if not atuaria.get("tem_militar"):
+                continue
+            achou = True
+            mil = next(b for b in atuaria["blocos"] if b["militar"])
+            civ = next(b for b in atuaria["blocos"] if not b["militar"])
+            self.assertNotEqual(mil["resultado"]["provisoes"],
+                                civ["resultado"]["provisoes"])
+            # sem linha de ente no custeio militar
+            sujeitos = [c["rotulo"].lower() for c in mil["custeio"]]
+            self.assertFalse([x for x in sujeitos if "ente" in x],
+                             "custeio militar não tem contribuição patronal")
+            self.assertTrue([x for x in (c["rotulo"].lower() for c in civ["custeio"])
+                             if "ente" in x])
+        self.assertTrue(achou)
 
     def test_carteira_nao_e_atribuida_a_nenhuma_massa(self):
         """O DAIR não separa a carteira por massa, e o painel diz isso.

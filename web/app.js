@@ -256,7 +256,11 @@
             h("td", {}, [v.ente || "—", h("span", { class: "uf", texto: v.uf || "" })]),
             h("td", { class: "n", texto: num(v.dias, 0) })
           ]);
-        }));
+        }).concat([
+          linhaTotal(p.vencidos_ha_mais_tempo.length + " de " +
+            num(k.entes - Math.round(k.entes * k.perc_valido / 100), 0) +
+            " sem certificado vigente", [""])
+        ]));
 
       var no = [
         h("h2", { class: "secao", texto: "Panorama nacional" }),
@@ -280,15 +284,16 @@
         ]),
         h("div", { class: "grade larga" }, [
           cartao("Situação do CRP por região", "RPPS_CRP",
-            "Entes com RPPS, por situação do certificado",
+            "Entes com RPPS, por situação do certificado · situação em " +
+            data(p.referencia) + " · " + num(k.entes, 0) + " entes no total",
             [alvoBarras, legenda([
               { cor: cores.valido, rotulo: "✓ Válido" },
               { cor: cores.judicial, rotulo: "§ Judicial" },
               { cor: cores.vencido, rotulo: "✕ Vencido" }
             ])]),
           cartao("Vencidos há mais tempo", "RPPS_CRP",
-            "Dias desde o fim da validade · clique para abrir a ficha",
-            tabelaVencidos)
+            "Dias desde o fim da validade em " + data(p.referencia) +
+            " · clique para abrir a ficha", tabelaVencidos)
         ])
       ];
 
@@ -854,7 +859,7 @@
       var a = e.atuaria || {};
       // Amortização e comparativo vêm de endpoints próprios e existem mesmo
       // quando o resultado atuarial falta. Um retorno cedo os escondia.
-      if (!a.disponivel) {
+      if (!a.disponivel || !(a.blocos || []).length) {
         var soltos = cartoesDeAmortizacao(e).concat(cartaoProjetadoExecutado(e));
         return [h("h2", { class: "secao", texto: "Situação atuarial" }),
                 cabecalhoEnte(e),
@@ -862,124 +867,160 @@
                ].concat(soltos);
       }
 
-      var r = a.resultado || {};
-      var f = a.fluxo || {};
-      /* Tudo nesta aba vem da mesma avaliação anual. Repetir o exercício em
-       * cada quadro parece redundante até a tela ficar aberta ao lado de outra
-       * de exercício diferente — e aí é a única coisa que distingue as duas. */
       var exAtuaria = " · avaliação de " + (a.exercicio || "—");
-      var deficit = r.deficit || 0, superavit = r.superavit || 0;
-      var alvo = f.disponivel ? grafico(118) : null;
+      var varios = a.blocos.length > 1;
 
       var nos = [
         h("h2", { class: "secao", texto: "Situação atuarial" }),
         cabecalhoEnte(e),
         h("div", { class: "contexto" }, [
-          h("span", { class: "pilula" }, ["Exercício ", h("b", { texto: String(a.exercicio || "—") })])
-        ]),
-        h("div", { class: "kpis" }, [
-          kpi("Resultado atuarial",
-            reais(deficit > 0 ? deficit : superavit),
-            deficit > 0 ? "déficit — provisões a cobrir"
-              : superavit > 0 ? "superávit" : "equilíbrio",
-            deficit > 0 ? "ruim" : superavit > 0 ? "bom" : ""),
-          kpi("Ativos garantidores", reais(r.ativos_garantidores),
-            "recursos que lastreiam o plano"),
-          kpi("Receitas projetadas", reais(f.receitas), "total do fluxo atuarial"),
-          kpi("Despesas projetadas", reais(f.despesas), "total do fluxo atuarial",
-            (f.saldo || 0) < 0 ? "ruim" : "bom")
-        ])
+          h("span", { class: "pilula" },
+            ["Exercício ", h("b", { texto: String(a.exercicio || "—") })]),
+          varios ? h("span", { class: "pilula" },
+            [a.blocos.length + " fundos avaliados à parte"]) : null
+        ].filter(Boolean))
       ];
 
-      if (f.disponivel) {
-        nos.push(cartao("Fluxo atuarial projetado", "DRAA_FLUXO_ATUARIAL",
-          "Totais projetados do plano" + exAtuaria + " — a API não devolve a " +
-          "projeção ano a ano, então não há curva de cruzamento aqui",
-          [alvo, legenda([
-            { cor: "var(--s1)", rotulo: "Receitas projetadas" },
-            { cor: "var(--s2)", rotulo: "Despesas projetadas" }
-          ])]));
-        nos.push(h("div", { class: "grade duas" }, [
-          cartao("Composição das receitas", "DRAA_FLUXO_ATUARIAL",
-            "Maiores itens projetados" + exAtuaria,
-            tabelaItens(f.itens_receita, f.receitas)),
-          cartao("Composição das despesas", "DRAA_FLUXO_ATUARIAL",
-            "Maiores itens projetados" + exAtuaria,
-            tabelaItens(f.itens_despesa, f.despesas))
-        ]));
+      if (varios) {
+        nos.push(h("p", { class: "nota", texto:
+          "O DRAA avalia cada fundo separadamente, por plano e por massa. Os " +
+          "quadros abaixo não se somam: um resultado atuarial que junta dois " +
+          "fundos não é o resultado de nenhum dos dois." +
+          (a.tem_militar
+            ? " A massa militar não tem contribuição patronal, e o sistema dela " +
+              "é de proteção social, não plano de previdência."
+            : "") }));
       }
 
-      nos.push(h("div", { class: "grade duas" }, [
-        cartao("Hipóteses da avaliação", "DRAA_HIPOTESE_ATUARIAL",
-          "O que sustenta os números acima" + exAtuaria,
-          (a.hipoteses || []).length
-            ? h("div", { class: "campos" }, a.hipoteses.map(function (hp) {
-                return campo(hp.descricao, hp.valor === null || hp.valor === undefined
-                  ? "—" : String(hp.valor));
-              }))
-            : h("p", { class: "sub", texto: "Sem hipóteses no banco." })),
-        cartao("Plano de custeio", "DRAA_PLANO_CUSTEIO",
-          "Alíquota definida na avaliação atuarial" + exAtuaria,
-          (a.custeio || []).length
-            ? tabela([{ t: "Contribuição" }, { t: "Alíquota", n: true },
-                { t: "Valor definido", n: true }],
-              a.custeio.map(function (cu) {
-                return h("tr", {}, [
-                  h("td", { texto: cu.rotulo || "—" }),
-                  h("td", { class: "n", texto: pct(cu.aliquota, 2) }),
-                  h("td", { class: "n", texto: cu.contribuicao ? reais(cu.contribuicao) : "—" })
-                ]);
-              }).concat([
-                linhaTotal("Total do custeio", [
-                  pct(a.custeio.reduce(function (t, cu) { return t + (cu.aliquota || 0); }, 0), 2),
-                  reais(a.custeio.reduce(function (t, cu) { return t + (cu.contribuicao || 0); }, 0))
-                ])
-              ]))
-            : h("p", { class: "sub", texto: "Sem plano de custeio no banco." }))
-      ]));
+      a.blocos.forEach(function (b) {
+        nos = nos.concat(blocoAtuarial(b, a.exercicio, varios));
+      });
 
-      if ((a.compromissos || []).length) {
-        nos.push(cartao("Compromissos do plano", "DRAA_VALORES_COMPROMISSOS",
-          "Valor presente, por geração" + exAtuaria,
-          tabela([{ t: "Item" }, { t: "Plano" }, { t: "Geração atual", n: true },
-            { t: "Geração futura", n: true }],
-            a.compromissos.map(function (co) {
-              return h("tr", {}, [
-                h("td", { texto: co.descricao || "—" }),
-                h("td", { texto: co.plano || "—" }),
-                h("td", { class: "n", texto: co.geracao_atual ? reais(co.geracao_atual) : "—" }),
-                h("td", { class: "n", texto: co.geracao_futura ? reais(co.geracao_futura) : "—" })
-              ]);
-            }).concat([
-              linhaTotal("Soma dos itens declarados", ["",
-                reais(a.compromissos.reduce(function (t, co) { return t + (co.geracao_atual || 0); }, 0)),
-                reais(a.compromissos.reduce(function (t, co) { return t + (co.geracao_futura || 0); }, 0))
-              ])
-            ]), true)));
-      }
+      nos.push(cartao("Hipóteses da avaliação", "DRAA_HIPOTESE_ATUARIAL",
+        "O que sustenta os números acima" + exAtuaria +
+        " · valem para a avaliação inteira",
+        (a.hipoteses || []).length
+          ? h("div", { class: "campos" }, a.hipoteses.map(function (hp) {
+              return campo(hp.descricao, hp.valor === null || hp.valor === undefined
+                ? "—" : String(hp.valor));
+            }))
+          : h("p", { class: "sub", texto: "Sem hipóteses no banco." })));
 
       nos = nos.concat(cartoesDeAmortizacao(e));
       nos = nos.concat(cartaoProjetadoExecutado(e));
-
-      if (f.disponivel) {
-        depoisDeMontar(function () {
-          Charts.desenhar(alvo, "barraUnica", {
-            altura: 118, alturaBarra: 30, titulo: "Fluxo atuarial projetado",
-            partes: [
-              { rotulo: "Receitas projetadas", valor: f.receitas || 0, cor: "var(--s1)" },
-              { rotulo: "Despesas projetadas", valor: f.despesas || 0, cor: "var(--s2)" }
-            ],
-            descricao: "Receitas e despesas projetadas do plano"
-          });
-        });
-      }
       return nos;
     });
   }
 
-  /* `total` é o total do fluxo, que não é a soma dos itens mostrados: a lista é
-   * dos maiores. Dizer os dois deixa claro quanto ficou de fora — sem isso, a
-   * soma das linhas visíveis passa por total e não bate com o KPI acima. */
+  /* Um fundo: resultado, fluxo projetado, compromissos e custeio. Cada bloco é
+   * uma avaliação fechada — é por isso que ele repete a estrutura inteira em
+   * vez de acrescentar uma coluna a quadros compartilhados. */
+  function blocoAtuarial(b, exercicio, nomear) {
+    var r = b.resultado || {};
+    var f = b.fluxo || {};
+    var deficit = r.deficit || 0, superavit = r.superavit || 0;
+    var alvo = f.disponivel ? grafico(118) : null;
+    var ex = " · avaliação de " + (exercicio || "—");
+    var sufixo = nomear ? " · " + b.rotulo : "";
+
+    var nos = [];
+    if (nomear) nos.push(h("p", { class: "rotulo-massa", texto: b.rotulo }));
+
+    /* Cobertura: quanto do compromisso está lastreado. Para a massa militar,
+     * zero é o normal — o sistema é de repartição e quem paga é o tesouro —,
+     * e por isso o texto ao lado muda: um zero que descreve o regime não pode
+     * ser lido como um zero que descreve desempenho. */
+    var cobertura = r.provisoes ? r.ativos_garantidores / r.provisoes * 100 : null;
+    nos.push(h("div", { class: "kpis" }, [
+      kpi("Resultado atuarial" + (nomear ? "" : ""),
+        reais(deficit > 0 ? deficit : superavit),
+        deficit > 0 ? "déficit — provisões a cobrir"
+          : superavit > 0 ? "superávit" : "equilíbrio",
+        deficit > 0 ? "ruim" : superavit > 0 ? "bom" : ""),
+      kpi("Ativos garantidores", reais(r.ativos_garantidores),
+        b.militar && !r.ativos_garantidores
+          ? "a fonte declara zero: sem fundo próprio, o tesouro paga direto"
+          : "recursos que lastreiam o plano"),
+      kpi("Cobertura das provisões",
+        cobertura === null ? "—" : pct(cobertura, 2),
+        r.provisoes ? "sobre " + reais(r.provisoes) + " de provisões"
+                    : "sem provisão declarada",
+        b.militar && !r.ativos_garantidores ? "" :
+          (cobertura !== null && cobertura >= 100 ? "bom" : "")),
+      kpi("Receitas − despesas projetadas",
+        f.disponivel ? reais(f.saldo) : "—",
+        f.disponivel ? "fluxo atuarial do fundo" : "sem fluxo no banco",
+        f.disponivel ? ((f.saldo || 0) < 0 ? "ruim" : "bom") : "")
+    ]));
+
+    if (f.disponivel) {
+      nos.push(cartao("Fluxo atuarial projetado" + sufixo, "DRAA_FLUXO_ATUARIAL",
+        "Totais projetados do fundo" + ex + " — a API não devolve a projeção " +
+        "ano a ano, então não há curva de cruzamento aqui",
+        [alvo, legenda([
+          { cor: "var(--s1)", rotulo: "Receitas projetadas" },
+          { cor: "var(--s2)", rotulo: "Despesas projetadas" }
+        ])]));
+      nos.push(h("div", { class: "grade duas" }, [
+        cartao("Composição das receitas" + sufixo, "DRAA_FLUXO_ATUARIAL",
+          "Maiores itens projetados" + ex, tabelaItens(f.itens_receita, f.receitas)),
+        cartao("Composição das despesas" + sufixo, "DRAA_FLUXO_ATUARIAL",
+          "Maiores itens projetados" + ex, tabelaItens(f.itens_despesa, f.despesas))
+      ]));
+      depoisDeMontar(function () {
+        Charts.desenhar(alvo, "barraUnica", {
+          altura: 118, alturaBarra: 30, titulo: "Fluxo atuarial projetado",
+          partes: [
+            { rotulo: "Receitas projetadas", valor: f.receitas || 0, cor: "var(--s1)" },
+            { rotulo: "Despesas projetadas", valor: f.despesas || 0, cor: "var(--s2)" }
+          ],
+          descricao: "Receitas e despesas projetadas do fundo " + b.rotulo
+        });
+      });
+    }
+
+    if ((b.custeio || []).length) {
+      nos.push(cartao("Plano de custeio" + sufixo, "DRAA_PLANO_CUSTEIO",
+        "Alíquota definida na avaliação atuarial" + ex +
+        (b.militar ? " · sem contribuição patronal: o tesouro arca com a despesa"
+                   : ""),
+        tabela([{ t: "Contribuição" }, { t: "Alíquota", n: true },
+                { t: "Valor definido", n: true }],
+          b.custeio.map(function (cu) {
+            return h("tr", {}, [
+              h("td", { texto: cu.rotulo || "—" }),
+              h("td", { class: "n", texto: pct(cu.aliquota, 2) }),
+              h("td", { class: "n", texto: cu.contribuicao ? reais(cu.contribuicao) : "—" })
+            ]);
+          }).concat([
+            linhaTotal("Total do custeio", [
+              pct(b.custeio.reduce(function (t, cu) { return t + (cu.aliquota || 0); }, 0), 2),
+              reais(b.custeio.reduce(function (t, cu) { return t + (cu.contribuicao || 0); }, 0))
+            ])
+          ]))));
+    }
+
+    if ((b.compromissos || []).length) {
+      nos.push(cartao("Compromissos do plano" + sufixo, "DRAA_VALORES_COMPROMISSOS",
+        "Valor presente, por geração" + ex,
+        tabela([{ t: "Item" }, { t: "Geração atual", n: true },
+                { t: "Geração futura", n: true }],
+          b.compromissos.map(function (co) {
+            return h("tr", {}, [
+              h("td", { texto: co.descricao || "—" }),
+              h("td", { class: "n", texto: co.geracao_atual ? reais(co.geracao_atual) : "—" }),
+              h("td", { class: "n", texto: co.geracao_futura ? reais(co.geracao_futura) : "—" })
+            ]);
+          }).concat([
+            linhaTotal("Soma dos itens declarados", [
+              reais(b.compromissos.reduce(function (t, co) { return t + (co.geracao_atual || 0); }, 0)),
+              reais(b.compromissos.reduce(function (t, co) { return t + (co.geracao_futura || 0); }, 0))
+            ])
+          ]), true)));
+    }
+    return nos;
+  }
+
   function tabelaItens(itens, total) {
     if (!itens || !itens.length) return h("p", { class: "sub", texto: "Sem itens no banco." });
     var soma = itens.reduce(function (a, i) { return a + (i.valor || 0); }, 0);
@@ -1486,7 +1527,7 @@
    * própria massa. */
   function indicadoresVisiveis(b, meu) {
     return b.indicadores.filter(function (ind) {
-      if (ind.chave !== "razao_militar") return true;
+      if (ind.chave !== "razao_militar" && ind.chave !== "cobertura_militar") return true;
       var v = meu.valores[ind.chave];
       return v !== null && v !== undefined;
     });
@@ -1572,6 +1613,28 @@
               "não errou nada: apenas descreve uma situação mais antiga. Se " +
               "isso desqualifica o número depende da pergunta que você está " +
               "fazendo, e quem decide é quem pergunta."
+          })
+        ]),
+        cartao("Limites de aplicação: o teto é da classe", null, null, [
+          h("p", {
+            texto: "A norma do CMN não fixa um teto por segmento, e sim por " +
+              "classe de ativo. Dentro de Renda Fixa convivem classes com teto " +
+              "de 5%, 20%, 80% e 100%: comparar o total do segmento com um " +
+              "desses tetos acusava 390 dos 1.821 RPPS com carteira de exceder " +
+              "o limite legal quando apenas 20 excedem de fato."
+          }),
+          h("p", {
+            texto: "Quem declara o teto de cada classe é a própria API, no " +
+              "registro de cada ativo. O painel não mantém tabela de limites — " +
+              "é assim que ele acompanha a norma sem depender de alguém vir " +
+              "atualizá-lo. O percentual também é o que a fonte calcula, e só " +
+              "é refeito quando o painel exclui alguma linha do ente; quando " +
+              "isso acontece, a tela avisa."
+          }),
+          h("p", {
+            texto: "Ativo que a fonte classifica como não enquadrado na " +
+              "resolução aparece à parte: não é teto estourado, é ativo fora " +
+              "do rol, e somar os dois casos apagaria a diferença."
           })
         ]),
         cartao("Militares, e por que eles ficam à parte", null, null, [
@@ -2460,13 +2523,17 @@
                       ? "—" : num(e.razao_civil, 2) }),
           h("td", { class: "n", texto: e.participacao === null ||
                     e.participacao === undefined
-                      ? "—" : pct(e.participacao, 1) })
+                      ? "—" : pct(e.participacao, 1) }),
+          h("td", { class: "n", texto: e.cobertura === null ||
+                    e.cobertura === undefined
+                      ? "—" : (e.cobertura ? pct(e.cobertura, 2) : "sem fundo") })
         ]);
       }).concat([
         linhaTotal(comPessoas.length + " Estados com massa militar", [
           num(m.ativos, 0), num(m.inativos, 0), num(m.pensionistas, 0),
           m.razao_ativos_inativos === null ? "—" : num(m.razao_ativos_inativos, 2),
-          "", ""
+          "", "",
+          m.provisoes ? pct(m.ativos_garantidores / m.provisoes * 100, 2) : "—"
         ])
       ]);
 
@@ -2529,6 +2596,22 @@
               : "sem grupo para mediana",
             (m.razao_ativos_inativos || 0) >= 1 ? "bom" : "ruim")
         ]),
+        /* Sem cor: zero aqui descreve o regime, não o desempenho. Um Estado
+         * que não constituiu fundo militar não está atrasado em relação a
+         * outro — está num arranjo diferente, em que o tesouro paga direto. */
+        h("div", { class: "kpis" }, [
+          kpi("Estados com fundo militar constituído", num(m.com_fundo, 0),
+            m.declararam_zero + " declaram zero ativo garantidor: o sistema é " +
+            "de repartição e o tesouro paga direto"),
+          kpi("Ativos garantidores da massa militar",
+            reais(m.ativos_garantidores),
+            "declarados no DRAA, somando os Estados que têm fundo"),
+          kpi("Provisões da massa militar", reais(m.provisoes),
+            "compromisso atuarial dos " + comPessoas.length + " Estados"),
+          kpi("Cobertura do compromisso militar",
+            m.provisoes ? pct(m.ativos_garantidores / m.provisoes * 100, 2) : "—",
+            "no conjunto dos Estados")
+        ]),
         cartao("Ativos por beneficiário, Estado a Estado" + exercicioMilitar,
           "DRAA_ESTATISTICA",
           "Militares na ativa para cada militar na reserva, reformado ou " +
@@ -2545,7 +2628,37 @@
                   { t: "Pensionistas", n: true },
                   { t: "Razão militar", n: true },
                   { t: "Razão civil", n: true },
-                  { t: "% da massa", n: true }], linhas, true))
+                  { t: "% da massa", n: true },
+                  { t: "Cobertura do fundo", n: true }], linhas, true)),
+        cartao("Fundo militar, onde ele existe",
+          "DRAA_VALORES_COMPROMISSOS" + exercicioMilitar,
+          "Ativos garantidores contra provisões da massa militar · zero " +
+          "declarado é declaração, não lacuna: diz que o sistema é de " +
+          "repartição, custeado pelo tesouro estadual" +
+          (m.sem_declaracao_de_fundo.length
+            ? " · sem declaração do item: " + m.sem_declaracao_de_fundo.join(", ")
+            : ""),
+          tabela([{ t: "Estado" }, { t: "Ativos garantidores", n: true },
+                  { t: "Provisões", n: true }, { t: "Cobertura", n: true }],
+            comPessoas.slice().sort(function (a, b) {
+              return (b.cobertura || 0) - (a.cobertura || 0);
+            }).map(function (e) {
+              return linhaClicavel(e.cnpj, [
+                h("td", { class: "nome-ente" },
+                  [e.ente, h("span", { class: "uf", texto: e.uf || "" })]),
+                h("td", { class: "n", texto: e.ativos_garantidores === null ||
+                          e.ativos_garantidores === undefined
+                            ? "não declarado" : reais(e.ativos_garantidores) }),
+                h("td", { class: "n", texto: reais(e.provisoes) }),
+                h("td", { class: "n", texto: e.cobertura === null ||
+                          e.cobertura === undefined ? "—" : pct(e.cobertura, 2) })
+              ]);
+            }).concat([
+              linhaTotal(m.com_fundo + " de " + comPessoas.length +
+                " Estados com fundo constituído",
+                [reais(m.ativos_garantidores), reais(m.provisoes),
+                 m.provisoes ? pct(m.ativos_garantidores / m.provisoes * 100, 2) : "—"])
+            ]), true))
       ];
       if (orcamento) nos.push(orcamento);
       if (m.sem_rreo && m.sem_rreo.length) {

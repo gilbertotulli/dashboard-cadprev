@@ -61,8 +61,15 @@ class TestIndicadores(unittest.TestCase):
             {"rotulo": "Renda Variável", "perc": 20.0, "alocacao": True}]},
         "caixa": {"disponivel": True, "total_receita": 50_000_000.0,
                   "total_despesa": 30_000_000.0, "meses_declarados": 12},
-        "atuaria": {"disponivel": True, "resultado": {
-            "provisoes": 400_000_000.0, "ativos_garantidores": 100_000_000.0}},
+        # A atuária vem por fundo: cada plano e cada massa é uma avaliação
+        # fechada, e a cobertura do ente é a soma dos dois lados de cada uma.
+        "atuaria": {"disponivel": True, "blocos": [
+            {"rotulo": "Previdenciário · civil", "militar": False,
+             "resultado": {"provisoes": 300_000_000.0,
+                           "ativos_garantidores": 100_000_000.0}},
+            {"rotulo": "Financeiro · civil", "militar": False,
+             "resultado": {"provisoes": 100_000_000.0,
+                           "ativos_garantidores": 0.0}}]},
         "aliquotas": [{"sujeito_passivo": "Ente", "aliquota": 22.0,
                        "vigente": "VIGENTE"},
                       {"sujeito_passivo": "Ente-suplementar", "aliquota": 9.0,
@@ -74,6 +81,8 @@ class TestIndicadores(unittest.TestCase):
         self.assertEqual(v["razao_ativos_inativos"], 2.0)
         self.assertEqual(v["patrimonio_por_beneficiario"], 200_000.0)
         self.assertEqual(v["cobertura_atuarial"], 25.0)
+        # Ente sem massa militar não devolve zero: devolve indefinido.
+        self.assertIsNone(v["cobertura_militar"])
         self.assertEqual(v["resultado_sobre_ingressos"], 40.0)
         self.assertEqual(v["perc_renda_fixa"], 80.0)
 

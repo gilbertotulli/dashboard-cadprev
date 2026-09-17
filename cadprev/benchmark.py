@@ -87,7 +87,15 @@ INDICADORES: Sequence[Indicador] = (
     Indicador("cobertura_atuarial", "Cobertura das provisões", "percentual",
               "maior",
               "Quanto dos compromissos já está lastreado por ativos "
-              "garantidores.", "DRAA_VALORES_COMPROMISSOS"),
+              "garantidores, somando os fundos do ente.",
+              "DRAA_VALORES_COMPROMISSOS"),
+    Indicador("cobertura_militar", "Cobertura das provisões — militares",
+              "percentual", "maior",
+              "Quanto do compromisso com os militares está lastreado. Existe "
+              "só nos Estados, e em 14 dos 26 com massa militar a própria "
+              "fonte declara zero: o sistema é de repartição e o tesouro paga "
+              "direto. Zero aqui é regime, não desempenho.",
+              "DRAA_VALORES_COMPROMISSOS"),
     Indicador("resultado_sobre_ingressos", "Resultado sobre ingressos",
               "percentual", None,
               "Quanto sobrou do que entrou no período. Depende do estágio do "
@@ -173,6 +181,7 @@ def calcular(ficha: Mapping[str, Any]) -> Dict[str, Optional[float]]:
             round(patrimonio / inativos, 2)
             if patrimonio and inativos else None),
         "cobertura_atuarial": _cobertura(atuaria),
+        "cobertura_militar": _cobertura_militar(atuaria),
         "resultado_sobre_ingressos": (
             round((receita - despesa) / receita * 100, 2)
             if receita and despesa is not None and receita > 0 else None),
@@ -188,12 +197,46 @@ def calcular(ficha: Mapping[str, Any]) -> Dict[str, Optional[float]]:
 
 
 def _cobertura(atuaria: Mapping[str, Any]) -> Optional[float]:
+    """Ativos garantidores sobre provisões, somando os fundos do ente.
+
+    A soma é legítima aqui, e só aqui: o indicador pergunta quanto do
+    compromisso *do ente* está lastreado, e o numerador e o denominador vêm da
+    mesma soma — cada fundo contribui com os seus dois lados. O que não se pode
+    somar é resultado com resultado, que é o que a ficha separa em blocos.
+    """
     if not atuaria.get("disponivel"):
         return None
-    r = atuaria.get("resultado") or {}
-    provisoes = r.get("provisoes") or 0
-    ativos = r.get("ativos_garantidores") or 0
+    provisoes = ativos = 0.0
+    for bloco in atuaria.get("blocos") or []:
+        resultado = bloco.get("resultado") or {}
+        provisoes += resultado.get("provisoes") or 0.0
+        ativos += resultado.get("ativos_garantidores") or 0.0
     if not provisoes:
+        return None
+    return round(ativos / provisoes * 100, 2)
+
+
+def _cobertura_militar(atuaria: Mapping[str, Any]) -> Optional[float]:
+    """A mesma razão, só na massa militar — indefinida para quem não a tem.
+
+    Em 17/09/2026, 14 dos 26 Estados com massa militar declaravam **zero**
+    ativo garantidor para ela: o sistema é de repartição e o tesouro paga
+    direto. Zero declarado não é ausência, e a diferença importa — um Estado
+    com 0% de cobertura militar e outro com 31% (Amapá) estão em regimes
+    diferentes, não em graus diferentes do mesmo.
+    """
+    if not atuaria.get("disponivel"):
+        return None
+    provisoes = ativos = 0.0
+    achou = False
+    for bloco in atuaria.get("blocos") or []:
+        if not bloco.get("militar"):
+            continue
+        achou = True
+        resultado = bloco.get("resultado") or {}
+        provisoes += resultado.get("provisoes") or 0.0
+        ativos += resultado.get("ativos_garantidores") or 0.0
+    if not achou or not provisoes:
         return None
     return round(ativos / provisoes * 100, 2)
 
