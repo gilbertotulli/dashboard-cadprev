@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from . import build, demo, endpoints, fieldmap, ingest, store as store_mod
 from .client import Cliente
@@ -145,6 +145,26 @@ def cmd_demo(args) -> int:
         store.registrar_execucao("SICONFI_ENTE", {}, linhas, resolucao)
         print("  {:<28} {:>8} linhas".format("SICONFI_ENTE", linhas))
 
+        rreo = siconfi.ClienteRREO(fixtures=demo.DIR_DEMO, pausa=0)
+        do_anexo = []
+        for alvo in store.consultar(
+                "SELECT cnpj_ente, cod_ibge, esfera_siconfi FROM siconfi_ente"):
+            itens = rreo.anexo_rpps(alvo["cod_ibge"], alvo["esfera_siconfi"],
+                                    demo.ANO, 3)
+            for item in itens:
+                item["cnpj_ente"] = alvo["cnpj_ente"]
+            do_anexo.extend(itens)
+        if do_anexo:
+            resolucao = fieldmap.resolver("SICONFI_RREO", do_anexo[0].keys())
+            linhas = store.gravar(
+                "SICONFI_RREO",
+                (fieldmap.aplicar(resolucao, l) for l in do_anexo),
+                {"exercicio": demo.ANO, "periodo": 3})
+            store.registrar_execucao("SICONFI_RREO",
+                                     {"exercicio": demo.ANO, "periodo": 3},
+                                     linhas, resolucao)
+            print("  {:<28} {:>8} linhas".format("SICONFI_RREO", linhas))
+
         saida = build.construir(store, dir_saida=args.saida, origem="demonstracao")
 
     print("\n  painel pronto em {} (origem: demonstracao)".format(args.saida))
@@ -211,6 +231,81 @@ def cmd_siconfi(args) -> int:
         store.marcar_origem("demonstracao" if args.fixtures else "api")
     capitais = sum(1 for r in registros if r.get("capital"))
     print("SICONFI_ENTE: {} entes ({} capitais)".format(linhas, capitais))
+    return 0
+
+
+def cmd_siconfi_rreo(args) -> int:
+    """Traz o Anexo 04 do RREO — o demonstrativo previdenciário — ente a ente.
+
+    A API do SICONFI exige `id_ente`: não há varredura em bloco, é uma
+    requisição por ente e por competência. Por isso só os entes com RPPS entram,
+    e não os 5.598 da federação.
+
+    Ausência não é erro. Quem não entregou o demonstrativo simplesmente não
+    aparece, e a contagem final diz quantos foram.
+    """
+    from cadprev import siconfi
+    with store_mod.Store(args.banco) as store:
+        if not store.tem_tabela("SICONFI_ENTE"):
+            print("rode `python -m cadprev siconfi` antes: o Anexo 04 é "
+                  "consultado por código IBGE, que vem da tabela de entes.",
+                  file=sys.stderr)
+            return 1
+        sql = ("SELECT s.cnpj_ente, s.cod_ibge, s.esfera_siconfi, s.ente "
+               "FROM siconfi_ente s WHERE s.cod_ibge IS NOT NULL")
+        parametros: List[Any] = []
+        if store.tem_tabela("DAIR_CARTEIRA"):
+            sql += (" AND s.cnpj_ente IN "
+                    "(SELECT DISTINCT cnpj_ente FROM dair_carteira)")
+        if args.uf:
+            sql += " AND s.uf = ?"
+            parametros.append(args.uf.upper())
+        sql += " ORDER BY s.cnpj_ente"
+        alvos = [dict(l) for l in store.consultar(sql, tuple(parametros))]
+
+    if args.limite:
+        alvos = alvos[:args.limite]
+    if not alvos:
+        print("nenhum ente com RPPS e código IBGE no banco", file=sys.stderr)
+        return 1
+
+    cliente = siconfi.ClienteRREO(pausa=args.pausa, fixtures=args.fixtures)
+    linhas: List[Dict[str, Any]] = []
+    com, sem, falhas = 0, 0, 0
+    for n, alvo in enumerate(alvos, 1):
+        try:
+            itens = cliente.anexo_rpps(alvo["cod_ibge"], alvo["esfera_siconfi"],
+                                       args.exercicio, args.periodo)
+        except Exception as erro:
+            falhas += 1
+            log.warning("%s (%s): %s", alvo["ente"], alvo["cod_ibge"], erro)
+            continue
+        if not itens:
+            sem += 1
+            continue
+        com += 1
+        for item in itens:
+            item["cnpj_ente"] = alvo["cnpj_ente"]
+        linhas.extend(itens)
+        if n % 200 == 0:
+            print("  {}/{} entes · {} com demonstrativo".format(n, len(alvos), com),
+                  flush=True)
+
+    if not linhas:
+        print("nenhum ente entregou o Anexo 04 nesta competência", file=sys.stderr)
+        return 1
+
+    resolucao = fieldmap.resolver("SICONFI_RREO", linhas[0].keys())
+    fieldmap.exigir(resolucao, list(linhas[0].keys()))
+    traduzidas = [fieldmap.aplicar(resolucao, l) for l in linhas]
+    escopo = {"exercicio": args.exercicio, "periodo": args.periodo}
+    with store_mod.Store(args.banco) as store:
+        gravadas = store.gravar("SICONFI_RREO", traduzidas, escopo)
+        store.registrar_execucao("SICONFI_RREO", escopo, gravadas, resolucao)
+        store.marcar_origem("demonstracao" if args.fixtures else "api")
+    print("SICONFI_RREO {}º bimestre/{}: {} linhas · {} entes com "
+          "demonstrativo, {} sem, {} falhas".format(
+              args.periodo, args.exercicio, gravadas, com, sem, falhas))
     return 0
 
 
@@ -333,6 +428,17 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--pausa", type=float, default=0.5)
     p.add_argument("--fixtures")
     p.set_defaults(func=cmd_siconfi)
+
+    p = sub.add_parser("siconfi-rreo",
+                       help="traz o Anexo 04 do RREO, ente a ente")
+    p.add_argument("--exercicio", type=int, required=True)
+    p.add_argument("--periodo", type=int, required=True,
+                   help="bimestre, de 1 a 6")
+    p.add_argument("--uf")
+    p.add_argument("--limite", type=int)
+    p.add_argument("--pausa", type=float, default=0.5)
+    p.add_argument("--fixtures")
+    p.set_defaults(func=cmd_siconfi_rreo)
 
     p = sub.add_parser("marco",
                        help="anota o carimbo de atualização da fonte")

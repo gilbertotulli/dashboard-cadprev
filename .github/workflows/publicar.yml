@@ -128,7 +128,16 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ] && [ -s cadprev.sqlite3 ]; then
             echo "Push de código com banco em cache: republicando sem reingerir."
             echo "varreu=nao" >> "$GITHUB_OUTPUT"
-            python -m cadprev status
+            # O Anexo 04 do SICONFI: a decomposição por fundo que o CADPREV não
+          # expõe. É uma requisição por ente — cerca de meia hora para o país —
+          # e por isso vem depois de tudo, quando o essencial já está no banco.
+          # O bimestre é o que contém o mês da competência do DAIR.
+          BIMESTRE=$(( (MES + 1) / 2 ))
+          python -m cadprev siconfi-rreo \
+            --exercicio "$ANO" --periodo "$BIMESTRE" $FILTRO_UF \
+            2>&1 | tee -a ingest.log || true
+
+          python -m cadprev status
             exit 0
           fi
 

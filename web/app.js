@@ -669,7 +669,7 @@
           linhas: alocacao, altura: Math.max(160, alocacao.length * 46 + 22),
           descricao: "Alocação por segmento contra o limite da Resolução CMN 3.922/10"
         });
-      }) || []);
+      }) || []).concat(cartoesContabeis(e));
     });
   }
 
@@ -1387,6 +1387,35 @@
               "vez e mil vezes ela devolve exatamente as mesmas linhas, o que " +
               "mostra que o resultado não vem do parâmetro escolhido." })
         ]),
+        cartao("A segunda fonte, e o que fazer quando elas discordam", null, null, [
+          h("p", {
+            texto: "O SICONFI, do Tesouro Nacional, é a contabilidade do ente " +
+              "federativo. O que casa as duas bases é o CNPJ, e ele casa em " +
+              "5.594 dos 5.596 entes que o CADPREV conhece — igualdade de " +
+              "chave, sem correspondência aproximada."
+          }),
+          h("p", {
+            texto: "Dele vem a separação dos recursos entre fundo em " +
+              "capitalização, fundo em repartição e taxa de administração. O " +
+              "CADPREV traz a carteira ativo a ativo, mas sem o plano de cada " +
+              "ativo, e por isso esta decomposição estava fora do alcance do " +
+              "painel até agora."
+          }),
+          h("p", {
+            texto: "Quando as duas fontes discordam sobre o mesmo patrimônio, " +
+              "as duas aparecem. Não há como escolher entre elas sem esconder " +
+              "o achado: são apurações independentes, com datas de posição e " +
+              "critérios distintos, e a distância entre elas é informação sobre " +
+              "o cadastro. Em Vitória, na competência de junho de 2026, elas " +
+              "diferem em 0,18%."
+          }),
+          h("p", { class: "nota",
+            texto: "Municípios com menos de cinquenta mil habitantes entregam " +
+              "o RREO Simplificado, sob outro nome de demonstrativo. Consultar " +
+              "só o comum faz 45% dos RPPS parecerem ausentes — foi o que " +
+              "aconteceu na primeira medição deste projeto, que concluiu 53% " +
+              "de cobertura onde há 96%." })
+        ]),
         cartao("Como o comparativo funciona", null, null, [
           h("p", {
             texto: "Os indicadores são normalizados por tamanho — percentuais e " +
@@ -1606,6 +1635,94 @@
                       i.desvio === undefined ? "—" : pct(i.desvio, 1) })
           ]);
         }), true)));
+    return nos;
+  }
+
+  /* A decomposição por fundo, que o CADPREV não entrega e a contabilidade do
+   * ente sim. E o confronto entre as duas apurações do mesmo patrimônio —
+   * mostrado, não resolvido: quando duas fontes públicas discordam, publicar um
+   * número só esconde o achado mais interessante do cruzamento. */
+  var COR_DO_FUNDO = {
+    capitalizado: "var(--s1)", reparticao: "var(--s2)",
+    administracao: "var(--s3)"
+  };
+
+  function cartoesContabeis(e) {
+    var c = e.contabil || {};
+    if (!c.disponivel || !(c.fundos || []).length) return [];
+
+    var alvo = grafico(118);
+    depoisDeMontar(function () {
+      Charts.desenhar(alvo, "barraUnica", {
+        altura: 118, alturaBarra: 30, titulo: "Recursos por fundo",
+        partes: c.fundos.map(function (f) {
+          return { rotulo: f.rotulo, cor: COR_DO_FUNDO[f.chave] || "var(--s4)",
+                   valor: (f.investimentos || 0) + (f.caixa || 0) };
+        }),
+        descricao: "Recursos separados entre os três fundos do RPPS"
+      });
+    });
+
+    var nos = [
+      h("h3", { class: "secao", texto: "Composição contábil por fundo" }),
+      h("p", { class: "nota", texto:
+        "Do RREO Anexo 04 do SICONFI — " + (c.demonstrativo || "RREO") + ", " +
+        c.periodo + "º bimestre de " + c.exercicio + ". É a separação entre " +
+        "capitalização, repartição e taxa de administração que o CADPREV não " +
+        "expõe: a carteira dele vem ativo a ativo, sem o plano de cada ativo." }),
+      cartao("Recursos por fundo", "SICONFI · RREO-Anexo 04",
+        "Investimentos e disponibilidades somados",
+        [alvo, legenda(c.fundos.map(function (f) {
+          return { cor: COR_DO_FUNDO[f.chave] || "var(--s4)", rotulo: f.rotulo };
+        }))]),
+      cartao("Receitas, despesas e resultado de cada fundo",
+        "SICONFI · RREO-Anexo 04",
+        "Realizado até o " + c.periodo + "º bimestre",
+        tabela([{ t: "Fundo" }, { t: "Recursos", n: true },
+                { t: "Receitas", n: true }, { t: "Despesas", n: true },
+                { t: "Resultado", n: true }],
+          c.fundos.map(function (f) {
+            var res = f.resultado;
+            return h("tr", {}, [
+              h("td", {}, [
+                h("div", { texto: f.rotulo }),
+                h("div", { class: "nota", texto: pct(f.perc, 1) + " dos recursos" })
+              ]),
+              h("td", { class: "n",
+                        texto: reais((f.investimentos || 0) + (f.caixa || 0)) }),
+              h("td", { class: "n", texto: reais(f.receitas) }),
+              h("td", { class: "n", texto: reais(f.despesas) }),
+              h("td", { class: "n" + (res === null || res === undefined ? ""
+                                      : (res < 0 ? " ruim" : " bom")),
+                        texto: reais(res) })
+            ]);
+          }), true))
+    ];
+
+    if (c.confronto) {
+      var d = c.confronto;
+      var grande = Math.abs(d.perc) > 5;
+      nos.push(cartao("As duas fontes, lado a lado", "DAIR_CARTEIRA · SICONFI",
+        "Mesmo patrimônio, duas apurações independentes",
+        [
+          h("div", { class: "kpis" }, [
+            kpi("CADPREV · declarado pelo RPPS", reais(d.cadprev),
+              "carteira ativo a ativo"),
+            kpi("SICONFI · contabilidade do ente", reais(d.siconfi),
+              "investimentos e disponibilidades"),
+            kpi("Diferença", pct(d.perc, 2), reais(d.diferenca),
+              grande ? "ruim" : "bom")
+          ]),
+          h("p", { class: "nota", texto: grande
+            ? "Diferença acima de 5%. As duas apurações têm datas de posição e " +
+              "critérios distintos, então alguma diferença é esperada — mas " +
+              "desta ordem vale conferir na fonte. O painel mostra as duas e " +
+              "não escolhe entre elas."
+            : "As duas apurações convergem. O painel mostra ambas em vez de " +
+              "escolher uma: a discordância entre fontes públicas é, ela " +
+              "própria, informação." })
+        ]));
+    }
     return nos;
   }
 

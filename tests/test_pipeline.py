@@ -623,3 +623,92 @@ class TestSiconfiNoIndice(unittest.TestCase):
     def test_capital_vem_declarada(self):
         capitais = [e for e in self._entes() if e["esfera"] == "capital"]
         self.assertTrue(capitais)
+
+
+class TestComposicaoContabil(unittest.TestCase):
+    """O Anexo 04 do SICONFI e o confronto com a carteira do CADPREV."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.dir = tempfile.mkdtemp(prefix="cadprev-contabil-")
+        cls.fixtures = os.path.join(cls.dir, "fx")
+        demo.escrever(cls.fixtures)
+        from cadprev import ingest, siconfi, fieldmap
+        cls.banco = os.path.join(cls.dir, "t.sqlite3")
+        cls.saida = os.path.join(cls.dir, "data")
+        with Store(cls.banco) as store:
+            ingest.ingerir_varios(
+                Cliente(fixtures=cls.fixtures, pausa=0), store,
+                ["RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA"])
+            brutos = siconfi.Cliente(fixtures=cls.fixtures, pausa=0).entes()
+            resolucao = fieldmap.resolver("SICONFI_ENTE", brutos[0].keys())
+            store.gravar("SICONFI_ENTE",
+                         (fieldmap.aplicar(resolucao, b) for b in brutos))
+            rreo = siconfi.ClienteRREO(fixtures=cls.fixtures, pausa=0)
+            linhas = []
+            for alvo in store.consultar(
+                    "SELECT cnpj_ente, cod_ibge, esfera_siconfi FROM siconfi_ente"):
+                itens = rreo.anexo_rpps(alvo["cod_ibge"], alvo["esfera_siconfi"],
+                                        demo.ANO, 3)
+                for item in itens:
+                    item["cnpj_ente"] = alvo["cnpj_ente"]
+                linhas.extend(itens)
+            resolucao = fieldmap.resolver("SICONFI_RREO", linhas[0].keys())
+            store.gravar("SICONFI_RREO",
+                         (fieldmap.aplicar(resolucao, l) for l in linhas))
+            build.construir(store, dir_saida=cls.saida, origem="demonstracao")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.dir, ignore_errors=True)
+
+    def _fichas(self):
+        with open(os.path.join(self.saida, "entes.json"), encoding="utf-8") as fh:
+            indice = json.load(fh)
+        for ente in indice:
+            caminho = os.path.join(self.saida, "ente", ente["cnpj"] + ".json")
+            with open(caminho, encoding="utf-8") as fh:
+                yield json.load(fh)
+
+    def test_amostra_e_recortada_por_ente(self):
+        """Sem o recorte, todo ente receberia as linhas do mesmo município — e o
+        confronto entre fontes compararia coisas de RPPS diferentes."""
+        totais = set()
+        for ficha in self._fichas():
+            c = ficha.get("contabil") or {}
+            if c.get("disponivel"):
+                totais.add(c["total"])
+        self.assertGreater(len(totais), 1)
+
+    def test_tres_fundos_somam_o_total(self):
+        vistos = 0
+        for ficha in self._fichas():
+            c = ficha.get("contabil") or {}
+            if not c.get("disponivel"):
+                continue
+            vistos += 1
+            soma = sum((f["investimentos"] or 0) + (f["caixa"] or 0)
+                       for f in c["fundos"])
+            self.assertAlmostEqual(soma, c["total"], places=2)
+            self.assertAlmostEqual(
+                sum(f["perc"] for f in c["fundos"]), 100.0, places=1)
+        self.assertTrue(vistos)
+
+    def test_confronto_compara_as_duas_fontes(self):
+        for ficha in self._fichas():
+            c = ficha.get("contabil") or {}
+            confronto = c.get("confronto")
+            if not confronto:
+                continue
+            carteira = (ficha.get("carteira") or {}).get("total")
+            self.assertAlmostEqual(confronto["cadprev"], carteira, places=2)
+            self.assertAlmostEqual(
+                confronto["diferenca"],
+                confronto["siconfi"] - confronto["cadprev"], places=2)
+
+    def test_divergencia_grande_existe_na_amostra(self):
+        """Sem um caso fora da faixa, o aviso da tela nunca seria exercitado."""
+        grandes = [f for f in self._fichas()
+                   if abs((((f.get("contabil") or {}).get("confronto") or {})
+                           .get("perc")) or 0) > 5]
+        self.assertTrue(grandes)

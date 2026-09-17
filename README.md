@@ -273,6 +273,31 @@ mexeria no denominador nacional.
 Veio de brinde a população de cada ente, que abre indicadores per capita ainda
 não explorados.
 
+### O Anexo 04, e o Nível A por outro caminho
+
+O RREO Anexo 04 é o demonstrativo previdenciário do RPPS dentro da contabilidade
+do ente. Ele traz o que este README documentava como inalcançável: a separação
+dos recursos entre **fundo em capitalização**, **fundo em repartição** e **taxa
+de administração**. Não por ativo — o CADPREV é que traz a carteira ativo a
+ativo, sem o plano de cada um —, mas por total de fundo, que é o que a tela de
+composição precisa.
+
+Quem separa é o `cod_conta`, e ele é semântico: `InvestimentosDoRPPSPrevidenciario`
+é a capitalização, `InvestimentosEAplicacoesFundoEmReparticao` é a repartição,
+`InvestimentosEAplicacoesAdministracaoDoRPPS` é a taxa de administração.
+
+A coleta é uma requisição por ente e por competência — a API exige `id_ente`,
+não há varredura em bloco —, o que dá cerca de meia hora para os RPPS do país.
+Municípios com menos de cinquenta mil habitantes entregam o **RREO Simplificado**,
+sob outro nome de demonstrativo; consultar só o comum faz 45% dos RPPS parecerem
+ausentes. A primeira medição deste projeto caiu exatamente nessa armadilha e
+concluiu 53% de cobertura onde há 96%.
+
+E quando as duas fontes discordam sobre o mesmo patrimônio, **as duas aparecem**.
+Escolher uma esconderia o achado: são apurações independentes, com datas de
+posição e critérios distintos, e a distância entre elas diz algo sobre o
+cadastro. Em Vitória, junho de 2026, elas diferem em 0,18%.
+
 ## O agendamento
 
 A carga roda às segundas, 06:17 UTC. A competência **não** é deduzida do

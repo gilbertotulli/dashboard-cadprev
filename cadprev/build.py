@@ -606,6 +606,8 @@ def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
     ficha["amortizacao"] = _montar_amortizacao(store, cnpj)
     ficha["projetado_executado"] = _montar_projetado_executado(store, cnpj)
     ficha["conformidade"] = _montar_conformidade(store, cnpj)
+    ficha["contabil"] = _montar_contabil(
+        store, cnpj, (ficha["carteira"] or {}).get("total"))
     return ficha
 
 
@@ -654,6 +656,107 @@ def _classificar_notificacao(situacao: Optional[str]) -> str:
     if any(marca in termo for marca in _SITUACAO_ENCERRADA):
         return "encerrado"
     return "em_curso"
+
+
+#: Os três fundos do RPPS, como o SICONFI os codifica no Anexo 04. É este mapa
+#: que responde à pergunta que o CADPREV não responde: quanto do patrimônio está
+#: em cada regime. O CADPREV traz a carteira ativo a ativo, mas sem o plano de
+#: cada ativo — o projeto chama isso de Nível B e documenta a limitação. O
+#: Anexo 04 não dá o plano de cada ativo, dá o total de cada fundo, que é
+#: exatamente o que a tela de composição precisa.
+_FUNDOS_DO_RREO = (
+    ("capitalizado", "Fundo em capitalização",
+     "InvestimentosDoRPPSPrevidenciario", "RREO4CaixaDoRPPSPrevidenciario",
+     "TotalReceitasRPPSPrevidenciario", "TotalDasDespesasRPPSPrevidenciario"),
+    ("reparticao", "Fundo em repartição",
+     "InvestimentosEAplicacoesFundoEmReparticao",
+     "CaixaEEquivalenteDeCaixaFundoEmReparticao",
+     "TotalReceitasRPPSFinanceiro", "TotalDasDespesasRPPSFinanceiro"),
+    ("administracao", "Taxa de administração",
+     "InvestimentosEAplicacoesAdministracaoDoRPPS",
+     "CaixaEEquivalenteDeCaixaAdministracaoDoRPPS",
+     "TotalDasReceitasDaAdministracaoRPPS", "TotalDasDespesasDaAdministracaoRPPS"),
+)
+
+_COLUNA_SALDO = "SALDO ATUAL"
+_COLUNA_RECEITA = "RECEITAS REALIZADAS ATÉ O BIMESTRE (b)"
+_COLUNA_DESPESA = "DESPESAS PAGAS ATÉ O BIMESTRE (f)"
+
+
+def _montar_contabil(store: Store, cnpj: str,
+                     total_da_carteira: Optional[float] = None) -> Dict[str, Any]:
+    """O demonstrativo previdenciário do SICONFI, e o confronto com o CADPREV.
+
+    Duas apurações independentes do mesmo patrimônio: o CADPREV pela declaração
+    do RPPS, ativo a ativo; o SICONFI pela contabilidade do ente, fundo a fundo.
+    Em Vitória, na competência de junho de 2026, elas diferem em 0,18%.
+
+    A divergência é mostrada, não resolvida. Quando duas fontes públicas
+    discordam sobre o mesmo fato, apresentar um número só — qualquer que seja —
+    é esconder o achado mais interessante que o cruzamento produz.
+    """
+    if not store.tem_tabela("SICONFI_RREO"):
+        return {"disponivel": False}
+    linhas = _varios(store, "siconfi_rreo",
+                     "exercicio, periodo, coluna, cod_conta, valor, demonstrativo",
+                     cnpj, ordem="exercicio DESC, periodo DESC", limite=800)
+    if not linhas:
+        return {"disponivel": False}
+
+    recente = max((l["exercicio"], l["periodo"]) for l in linhas)
+    do_periodo = [l for l in linhas
+                  if (l["exercicio"], l["periodo"]) == recente]
+    por_conta = {(l["coluna"], l["cod_conta"]): l["valor"] for l in do_periodo}
+
+    fundos, investido, caixa = [], 0.0, 0.0
+    for chave, rotulo, cod_inv, cod_caixa, cod_rec, cod_desp in _FUNDOS_DO_RREO:
+        inv = por_conta.get((_COLUNA_SALDO, cod_inv))
+        cx = por_conta.get((_COLUNA_SALDO, cod_caixa))
+        receita = por_conta.get((_COLUNA_RECEITA, cod_rec))
+        despesa = por_conta.get((_COLUNA_DESPESA, cod_desp))
+        if inv is None and cx is None and receita is None and despesa is None:
+            continue
+        investido += inv or 0.0
+        caixa += cx or 0.0
+        fundos.append({
+            "chave": chave, "rotulo": rotulo,
+            "investimentos": inv, "caixa": cx,
+            "receitas": receita, "despesas": despesa,
+            "resultado": (None if receita is None and despesa is None
+                          else (receita or 0.0) - (despesa or 0.0)),
+        })
+    if not fundos:
+        return {"disponivel": False}
+
+    total = investido + caixa
+    for fundo in fundos:
+        fundo["perc"] = _pct((fundo["investimentos"] or 0.0) + (fundo["caixa"] or 0.0),
+                             total)
+
+    resultado = {
+        "disponivel": True,
+        "exercicio": recente[0],
+        "periodo": recente[1],
+        "demonstrativo": do_periodo[0].get("demonstrativo"),
+        "fundos": fundos,
+        "investimentos": round(investido, 2),
+        "caixa": round(caixa, 2),
+        "total": round(total, 2),
+    }
+
+    # O confronto. A carteira do CADPREV inclui disponibilidades financeiras
+    # como segmento, e é por isso que a comparação soma investimentos e caixa do
+    # lado do SICONFI: comparar só os investimentos deixaria de fora justamente
+    # a parte que o outro lado conta.
+    if total_da_carteira:
+        diferenca = total - total_da_carteira
+        resultado["confronto"] = {
+            "cadprev": round(total_da_carteira, 2),
+            "siconfi": round(total, 2),
+            "diferenca": round(diferenca, 2),
+            "perc": round(diferenca / total_da_carteira * 100, 2),
+        }
+    return resultado
 
 
 def _montar_conformidade(store: Store, cnpj: str,

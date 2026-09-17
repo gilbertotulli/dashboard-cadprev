@@ -97,6 +97,7 @@ class Cliente:
     # -- API pública ------------------------------------------------------
 
     def pagina(self, caminho: str, offset: int = 0, **filtros: Any) -> Dict[str, Any]:
+        limpos = {k: v for k, v in filtros.items() if v is not None and v != ""}
         if self.fixtures:
             import os
             arquivo = os.path.join(self.fixtures, caminho.strip("/") + ".json")
@@ -104,8 +105,18 @@ class Cliente:
                 raise ErroDoSiconfi("modo offline: falta a amostra " + arquivo)
             with open(arquivo, encoding="utf-8") as fh:
                 dados = json.load(fh)
-            return dados if isinstance(dados, dict) else {"items": dados,
-                                                          "hasMore": False}
+            if not isinstance(dados, dict):
+                dados = {"items": dados, "hasMore": False}
+            # A amostra guarda as linhas de todos os entes num arquivo só; o
+            # recorte por ente é feito aqui, como a API faz. Sem isso o demo
+            # daria a mesma resposta para todo mundo, e o confronto entre
+            # fontes compararia a carteira de cada RPPS com os números de um só.
+            alvo = limpos.get("id_ente")
+            if alvo is not None:
+                dados = dict(dados, items=[
+                    i for i in dados.get("items") or []
+                    if str(i.get("cod_ibge")) == str(alvo)])
+            return dados
         return self._get(caminho, dict(filtros, offset=offset))
 
     def registros(self, caminho: str, **filtros: Any) -> Iterator[Dict[str, Any]]:
@@ -123,3 +134,35 @@ class Cliente:
     def entes(self) -> List[Dict[str, Any]]:
         """A tabela de entes da federação: uma requisição, o país inteiro."""
         return list(self.registros("entes"))
+
+
+#: O demonstrativo previdenciário do RPPS dentro do RREO.
+ANEXO_RPPS = "RREO-Anexo 04"
+
+#: Municípios com menos de cinquenta mil habitantes entregam a versão
+#: simplificada, sob outro nome de demonstrativo. Consultar só o primeiro faz
+#: 45% dos RPPS parecerem ausentes — foi o que aconteceu na primeira medição
+#: deste projeto, que concluiu 53% de cobertura onde há 96%.
+TIPOS_RREO = ("RREO", "RREO Simplificado")
+
+
+class ClienteRREO(Cliente):
+    """O cliente, com o que é preciso saber sobre o Anexo 04."""
+
+    def anexo_rpps(self, cod_ibge: int, esfera: str, exercicio: int,
+                   periodo: int) -> List[Dict[str, Any]]:
+        """As linhas do Anexo 04 de um ente, tentando os dois demonstrativos.
+
+        Devolve lista vazia quando o ente não entregou — ausência é resposta, e
+        não erro.
+        """
+        for tipo in TIPOS_RREO:
+            itens = list(self.registros(
+                "rreo", an_exercicio=exercicio, nr_periodo=periodo,
+                co_tipo_demonstrativo=tipo, no_anexo=ANEXO_RPPS,
+                co_esfera=(esfera or "M").strip() or "M", id_ente=cod_ibge))
+            if itens:
+                for item in itens:
+                    item["demonstrativo"] = tipo
+                return itens
+        return []

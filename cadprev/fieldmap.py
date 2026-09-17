@@ -258,6 +258,34 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
         _c("exercicio", "exercicio", tipo="inteiro", obrigatorio=False),
     ),
 
+    # O RREO Anexo 04 é o demonstrativo previdenciário do RPPS. A resposta não
+    # traz CNPJ — só o código IBGE —, então quem ingere acrescenta o `cnpj_ente`
+    # a partir da tabela de entes, que é o que casa as duas bases.
+    #
+    # O `cod_conta` é semântico e é ele que separa os três fundos:
+    # ...RPPSPrevidenciario é a capitalização, ...FundoEmReparticao é a
+    # repartição e ...AdministracaoDoRPPS é a taxa de administração. Essa é a
+    # decomposição que o CADPREV não expõe e que este projeto documentava como
+    # inalcançável.
+    "SICONFI_RREO": (
+        _c("cnpj_ente", "cnpj_ente", tipo="cnpj"),
+        _c("cod_ibge", "cod_ibge", tipo="inteiro"),
+        _c("ente", "instituicao", obrigatorio=False),
+        _c("uf", "uf", obrigatorio=False),
+        _c("exercicio", "exercicio", tipo="inteiro"),
+        _c("periodo", "periodo", tipo="inteiro"),
+        _c("anexo", "anexo", obrigatorio=False),
+        _c("demonstrativo", "demonstrativo", obrigatorio=False,
+           nota="RREO ou RREO Simplificado; municípios menores usam o segundo, "
+                "e consultar só o primeiro esconde 45% dos entes"),
+        _c("coluna", "coluna",
+           nota="PREVISÃO ATUALIZADA, RECEITAS REALIZADAS ATÉ O BIMESTRE, "
+                "DESPESAS PAGAS ATÉ O BIMESTRE, SALDO ATUAL e congêneres"),
+        _c("cod_conta", "cod_conta"),
+        _c("conta", "conta", obrigatorio=False),
+        _c("valor", "valor", tipo="decimal", obrigatorio=False),
+    ),
+
     # --- o que a SPREV apontou, e o que o próprio demonstrativo confronta ---
     "DRAA_ENCAMINHAMENTO": _IDENT + (
         _c("exercicio", "dt_exercicio", tipo="inteiro"),

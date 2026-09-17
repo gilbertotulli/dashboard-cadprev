@@ -514,15 +514,73 @@ def entes_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str,
     return saida
 
 
+#: Como o SICONFI nomeia, no Anexo 04, as contas de cada um dos três fundos.
+#: São os códigos reais, observados em 17/09/2026.
+_CONTAS_DO_RREO = (
+    ("InvestimentosDoRPPSPrevidenciario", "RREO4CaixaDoRPPSPrevidenciario",
+     "TotalReceitasRPPSPrevidenciario", "TotalDasDespesasRPPSPrevidenciario", 0.47),
+    ("InvestimentosEAplicacoesFundoEmReparticao",
+     "CaixaEEquivalenteDeCaixaFundoEmReparticao",
+     "TotalReceitasRPPSFinanceiro", "TotalDasDespesasRPPSFinanceiro", 0.50),
+    ("InvestimentosEAplicacoesAdministracaoDoRPPS",
+     "CaixaEEquivalenteDeCaixaAdministracaoDoRPPS",
+     "TotalDasReceitasDaAdministracaoRPPS",
+     "TotalDasDespesasDaAdministracaoRPPS", 0.03),
+)
+
+
+def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
+                    entes_siconfi: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """O Anexo 04 de cada ente, coerente com a carteira que ele declarou.
+
+    Coerente de propósito: o painel confronta as duas apurações do mesmo
+    patrimônio, e uma amostra em que elas não conversam não testaria esse
+    confronto — testaria só que a tela desenha.
+    """
+    carteira: Dict[str, float] = {}
+    for registro in tabelas["DAIR_CARTEIRA"]:
+        carteira[registro["nr_cnpj_entidade"]] = carteira.get(
+            registro["nr_cnpj_entidade"], 0.0) + float(registro["vl_total_atual"])
+
+    linhas: List[Dict[str, Any]] = []
+    for n, ente in enumerate(entes_siconfi):
+        total = carteira.get(ente["cnpj"])
+        if not total:
+            continue
+        # Uma diferença pequena entre as fontes é o esperado: datas de posição e
+        # critérios distintos. Um ente foge da faixa para que a tela tenha o que
+        # sinalizar.
+        desvio = 1.12 if n == 2 else 1.0 + (n % 5) * 0.004
+        for cod_inv, cod_caixa, cod_rec, cod_desp, fatia in _CONTAS_DO_RREO:
+            recursos = total * desvio * fatia
+            base = {"exercicio": ANO, "periodo": 3, "cod_ibge": ente["cod_ibge"],
+                    "uf": ente["uf"], "instituicao": ente["ente"],
+                    "anexo": "RREO-Anexo 04", "populacao": ente["populacao"]}
+            for coluna, cod, valor in (
+                    ("SALDO ATUAL", cod_inv, recursos * 0.98),
+                    ("SALDO ATUAL", cod_caixa, recursos * 0.02),
+                    ("RECEITAS REALIZADAS ATÉ O BIMESTRE (b)", cod_rec,
+                     recursos * 0.11),
+                    ("DESPESAS PAGAS ATÉ O BIMESTRE (f)", cod_desp,
+                     recursos * 0.09)):
+                linhas.append(dict(base, coluna=coluna, cod_conta=cod,
+                                   conta=cod, valor=round(valor, 2)))
+    return linhas
+
+
 def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     """Grava as amostras no formato de página da API."""
     os.makedirs(destino, exist_ok=True)
     tabelas = gerar(nivel_a=nivel_a)
     # O SICONFI é outra API e tem outro envelope: o cliente dele procura o
     # arquivo pelo caminho do recurso, não pelo nome do endpoint.
+    entes_siconfi = entes_do_siconfi(tabelas)
     with open(os.path.join(destino, "entes.json"), "w", encoding="utf-8") as fh:
-        json.dump({"items": entes_do_siconfi(tabelas), "hasMore": False},
-                  fh, ensure_ascii=False)
+        json.dump({"items": entes_siconfi, "hasMore": False}, fh,
+                  ensure_ascii=False)
+    with open(os.path.join(destino, "rreo.json"), "w", encoding="utf-8") as fh:
+        json.dump({"items": rreo_do_siconfi(tabelas, entes_siconfi),
+                   "hasMore": False}, fh, ensure_ascii=False)
     contagem = {}
     for nome, registros in tabelas.items():
         caminho = os.path.join(destino, nome + ".json")
