@@ -508,6 +508,33 @@ quem não tem a massa, e a regra dos três declarantes que já regia todo o rest
 mantém os grupos municipais sem mediana militar. No comparativo de um município
 a linha nem aparece — indicador sem assunto não é indicador sem dado.
 
+## Carteira detalhada, e a competência que os agregados escolhem
+
+A aba Carteira responde "como está a carteira". A tela detalhada responde "o
+que exatamente há nela": todos os ativos declarados, os totais de cada segmento
+e de cada classe, e a posição de meses anteriores ao lado da atual. Vem em
+arquivo próprio por ente, carregado só quando alguém a abre — um RPPS grande
+declara centenas de ativos, e embutir isso na ficha faria toda visita pagar o
+custo de uma tela que poucas visitas abrem.
+
+Guardar mais de uma competência destapou um defeito latente: os agregados liam
+`dair_carteira` inteira, sem filtrar mês. Com uma competência no banco isso
+passava; com três, o patrimônio nacional seria quase o triplo do real e
+cresceria a cada carga sem que um centavo tivesse sido aplicado. Hoje a ficha, o
+agregado nacional e a amostra do RREO usam a competência mais recente, e a régua
+de impossibilidade roda uma competência por vez — o consenso sobre o tamanho de
+um fundo é de um mês.
+
+## Certificação de quem responde pelos recursos
+
+O `DAIR_GOVERNANCA` traz uma linha por pessoa **e por certificação**. Quem tem
+duas aparece duas vezes, e é comum ter uma CPA vencida ao lado de uma vigente —
+nesse caso o requisito de regularidade está atendido. Ler linha a linha
+acusaria de irregular quem está em ordem, e por isso a leitura é por pessoa: o
+alerta só aparece para quem **não tem nenhuma** certificação dentro da validade,
+entre quem ainda está em exercício. Certificação vencida de quem já deixou o
+colegiado não diz nada sobre a gestão de hoje.
+
 ## O que ainda falta
 
 - **Endpoints sem mapa de campos.** Dezesseis dos 39 têm mapa; `python -m cadprev

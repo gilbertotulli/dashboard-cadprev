@@ -49,6 +49,17 @@ class TestOrdemDaCarga(unittest.TestCase):
         self.assertLess(self.passo.index("cadprev siconfi 2>&1"),
                         self.passo.index("cadprev siconfi-rreo"))
 
+    def test_carteira_traz_mais_de_uma_competencia(self):
+        """A tela detalhada compara meses; sem três no banco não há o que
+        comparar. E a mais recente vem primeiro: se a API cansar no meio, o
+        painel fica com a competência que sustenta os agregados."""
+        passo = self.passo
+        self.assertIn("for VOLTA in 0 1 2", passo)
+        self.assertIn("DAIR_CARTEIRA", passo)
+        # A volta do ano é tratada: dezembro para janeiro não pode pedir mês 0.
+        self.assertIn("M + 12", passo)
+        self.assertIn("ANO - 1", passo)
+
     def test_guarda_de_essenciais_e_a_ultima_palavra(self):
         """Ela precisa ver tudo o que foi ingerido antes de decidir."""
         for comando in ("cadprev ingest DAIR_CARTEIRA", "cadprev siconfi-rreo"):

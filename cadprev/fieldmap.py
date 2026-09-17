@@ -156,6 +156,30 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
         _c("motivo_retificacao", "te_motivo_retificacao", obrigatorio=False),
     ),
 
+    # Colegiados, comitê de investimentos e certificação de quem responde pelos
+    # recursos. Uma linha por pessoa **e por certificação**: a mesma pessoa
+    # aparece várias vezes quando tem mais de uma, e é por isso que a leitura de
+    # regularidade é por pessoa, nunca por linha.
+    "DAIR_GOVERNANCA": _IDENT + (
+        _c("ano", "dt_ano", tipo="inteiro"),
+        _c("mes", "dt_mes", tipo="inteiro"),
+        _c("envio", "dt_envio", tipo="data", obrigatorio=False),
+        _c("pessoa", "no_pessoa", obrigatorio=False),
+        _c("cargo", "no_cargo", obrigatorio=False),
+        _c("vinculo", "tp_vinculo", obrigatorio=False),
+        _c("atribuicao", "no_atribuicao", obrigatorio=False),
+        _c("colegiado", "no_entidade_governanca", obrigatorio=False,
+           nota="gestor de recursos, comitê de investimentos, conselhos"),
+        _c("inicio_atuacao", "dt_inicio_atuacao", tipo="data", obrigatorio=False),
+        _c("fim_atuacao", "dt_fim_atuacao", tipo="data", obrigatorio=False,
+           nota="vazio = ainda em exercício"),
+        _c("tipo_certificacao", "no_tipo_certificacao", obrigatorio=False),
+        _c("validade_certificacao", "dt_validade_certificacao", tipo="data",
+           obrigatorio=False),
+        _c("entidade_certificadora", "no_entidade_certificadora",
+           obrigatorio=False),
+    ),
+
     "DAIR_CARTEIRA": _IDENT + (
         _c("ano", "dt_ano", tipo="inteiro"),
         _c("mes", "dt_mes_bimestre", tipo="inteiro"),

@@ -26,7 +26,8 @@ class TestPipeline(unittest.TestCase):
         with Store(cls.banco) as store:
             cls.resultado = ingest.ingerir_varios(cliente, store, [
                 "RPPS_REGIME_PREVIDENCIARIO", "RPPS_CRP", "RPPS_ALIQUOTA", "DIPR",
-                "DAIR_CARTEIRA", "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
+                "DAIR_CARTEIRA", "DAIR_GOVERNANCA",
+                "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
                 "DRAA_FLUXO_ATUARIAL", "DRAA_VALORES_COMPROMISSOS",
                 "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO"])
             cls.saida = os.path.join(cls.dir, "data")
@@ -353,6 +354,66 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(meta["norma_dos_investimentos"],
                          b.NORMA_DOS_INVESTIMENTOS)
         self.assertIn("CMN", meta["norma_dos_investimentos"])
+
+    # ------------------------------------------ governança e certificação
+
+    def test_certificacao_vencida_so_conta_sem_outra_vigente(self):
+        """A API devolve uma linha por certificação, não por pessoa.
+
+        É comum alguém ter uma CPA vencida ao lado de uma vigente, e nesse caso
+        o requisito de regularidade está atendido. Ler linha a linha acusaria de
+        irregular quem está em ordem.
+        """
+        achou_conviventes = achou_irregular = False
+        for ente in self._json("entes.json"):
+            g = self._json(
+                os.path.join("ente", ente["cnpj"] + ".json")).get("governanca") or {}
+            if not g.get("disponivel"):
+                continue
+            for pessoa in g["pessoas"]:
+                vigentes = [c for c in pessoa["certificacoes"] if c["vigente"]]
+                vencidas = [c for c in pessoa["certificacoes"] if not c["vigente"]]
+                self.assertEqual(pessoa["regular"], bool(vigentes), pessoa["pessoa"])
+                if vigentes and vencidas:
+                    achou_conviventes = True
+                    self.assertFalse(pessoa["so_vencidas"],
+                                     "vencida ao lado de vigente não é achado")
+                if pessoa["so_vencidas"]:
+                    achou_irregular = True
+                    self.assertFalse(vigentes)
+            self.assertEqual(g["so_vencidas"],
+                             sum(1 for p in g["pessoas"] if p["so_vencidas"]))
+            self.assertEqual(g["regulares"],
+                             sum(1 for p in g["pessoas"] if p["regular"]))
+        self.assertTrue(achou_conviventes,
+                        "o demo precisa de alguém com vencida e vigente juntas")
+        self.assertTrue(achou_irregular,
+                        "o demo precisa de alguém só com vencidas")
+
+    def test_governanca_ignora_quem_ja_saiu(self):
+        """Certificação vencida de quem deixou o colegiado não diz nada sobre a
+        gestão de hoje."""
+        from cadprev import build as b
+        from cadprev.store import Store as _Store
+        with _Store(self.banco) as store:
+            g = b._montar_governanca(store, self._json("entes.json")[0]["cnpj"],
+                                     hoje="2026-09-17")
+        self.assertTrue(g["disponivel"])
+        for pessoa in g["pessoas"]:
+            self.assertIn("colegiado", pessoa)
+
+    def test_ativos_fora_do_rol_tem_agregado_nacional(self):
+        """Ativo que a fonte marca como não enquadrado não é teto estourado."""
+        nacional = self._nacional("carteira-nacional.json")
+        fora = nacional["fora_da_norma"]
+        self.assertTrue(fora["entes"], "o demo precisa de ativo fora do rol")
+        self.assertGreater(fora["valor"], 0)
+        self.assertEqual(
+            fora["valor"],
+            round(sum(m["valor"] for m in fora["maiores"]), 2)
+            if len(fora["maiores"]) == fora["entes"] else fora["valor"])
+        for maior in fora["maiores"]:
+            self.assertLessEqual(maior["perc_da_carteira"], 100.0)
 
     def test_ente_sem_rpps_nao_conta_como_rpps(self):
         """O CRP é do ente federativo: a base cobre quem migrou para o RGPS."""

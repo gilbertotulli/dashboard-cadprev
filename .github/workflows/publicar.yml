@@ -150,15 +150,24 @@ jobs:
           # de milhares de linhas, e deixar a carteira por último foi o que fez
           # a primeira tentativa terminar sem o dado que sustenta o painel.
           #
-          # A carteira é de uma competência só: o ano inteiro seriam mais de um
-          # milhão de linhas sem ganho de leitura.
+          # Três competências da carteira, não o ano inteiro: o ano seriam mais
+          # de um milhão de linhas, e três meses é o que a tela detalhada usa
+          # para mostrar como a carteira se moveu. Os agregados nacionais usam
+          # só a mais recente — quem soma competências conta o mesmo dinheiro
+          # duas vezes.
           # A tabela de entes da federação do Tesouro: uma requisição para o
           # país inteiro. Dá população e marca de capital autoritativas, no
           # lugar da dedução por nome que promovia município a governo estadual.
           python -m cadprev siconfi 2>&1 | tee -a ingest.log || true
 
-          python -m cadprev ingest DAIR_CARTEIRA \
-            $FILTRO_UF --ano "$ANO" --mes "$MES" 2>&1 | tee ingest.log || true
+          # A mais recente primeiro: se a API cansar no meio, o painel fica com
+          # a competência que importa e sem as anteriores, em vez do contrário.
+          for VOLTA in 0 1 2; do
+            M=$(( MES - VOLTA )); A="$ANO"
+            if [ "$M" -le 0 ]; then M=$(( M + 12 )); A=$(( ANO - 1 )); fi
+            python -m cadprev ingest DAIR_CARTEIRA \
+              $FILTRO_UF --ano "$A" --mes "$M" 2>&1 | tee -a ingest.log || true
+          done
 
           # O cabeçalho do DAIR é mensal e pequeno — treze mil linhas no ano
           # inteiro. Vem sem --mes de propósito: é da série completa que sai a
@@ -168,6 +177,13 @@ jobs:
 
           python -m cadprev ingest RPPS_CRP RPPS_REGIME_PREVIDENCIARIO \
             RPPS_ALIQUOTA $FILTRO_UF 2>&1 | tee -a ingest.log || true
+
+          # Governança: quem responde pelos recursos e a validade da
+          # certificação de cada um. Uma linha por pessoa E por certificação —
+          # a leitura de regularidade é por pessoa, porque vencida ao lado de
+          # vigente não é irregularidade.
+          python -m cadprev ingest DAIR_GOVERNANCA \
+            $FILTRO_UF --ano "$ANO" 2>&1 | tee -a ingest.log || true
 
           # O DIPR vem com o ano inteiro, para que a aba de caixa tenha a série
           # mensal completa. É a maior carga, e vai por último de propósito.

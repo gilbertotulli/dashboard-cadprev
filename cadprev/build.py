@@ -659,6 +659,56 @@ def _fundo_militar(store: Store) -> Dict[str, Dict[str, Any]]:
     return fichas
 
 
+def _custeio_militar(store: Store) -> Dict[str, Dict[str, Any]]:
+    """A alíquota que cada Estado fixou para a massa militar.
+
+    Os Estados têm autonomia para decidir: 10,5% foi a decisão federal, que
+    muitos seguiram, e divergir dela não é irregularidade — é a competência
+    legislativa de cada um sendo exercida. Por isso o painel publica a
+    distribuição e não marca ninguém: quem sinaliza "fora do padrão" sem base
+    legal para o padrão está inventando uma regra.
+
+    Também não há contribuição patronal neste sistema. A ausência da linha do
+    ente é o normal, não uma falta.
+    """
+    if not store.tem_tabela("DRAA_PLANO_CUSTEIO"):
+        return {}
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT cnpj_ente, exercicio, massa, tipo_contribuicao, aliquota,"
+        " aliquota_definida FROM draa_plano_custeio")]
+    militares = [l for l in linhas if massas.eh_militar(l.get("massa"))]
+    recente: Dict[str, Any] = {}
+    for linha in militares:
+        cnpj, exercicio = linha["cnpj_ente"], linha.get("exercicio")
+        if exercicio is not None and (cnpj not in recente or exercicio > recente[cnpj]):
+            recente[cnpj] = exercicio
+
+    fichas: Dict[str, Dict[str, Any]] = {}
+    for linha in militares:
+        cnpj = linha["cnpj_ente"]
+        if linha.get("exercicio") != recente.get(cnpj):
+            continue
+        aliquota = linha.get("aliquota_definida")
+        if aliquota is None:
+            aliquota = linha.get("aliquota")
+        if aliquota is None:
+            continue
+        ficha = fichas.setdefault(cnpj, {"exercicio": recente[cnpj], "itens": {}})
+        ficha["itens"][(linha.get("tipo_contribuicao") or "").strip()] = aliquota
+
+    for ficha in fichas.values():
+        itens = ficha.pop("itens")
+        ficha["contribuicoes"] = [
+            {"rotulo": rotulo, "aliquota": valor}
+            for rotulo, valor in sorted(itens.items())]
+        # A do segurado ativo é a que a norma federal fixou em 10,5% e a que os
+        # Estados replicaram ou não; é ela que a comparação entre Estados usa.
+        ativos = [v for r, v in itens.items() if "ativ" in r.lower()]
+        ficha["aliquota_ativos"] = ativos[0] if ativos else None
+        ficha["tem_patronal"] = any("ente" in r.lower() for r in itens)
+    return fichas
+
+
 def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                             fora: Optional[AbstractSet[str]] = None
                             ) -> Dict[str, Any]:
@@ -709,6 +759,7 @@ def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
 
     rreo = _rreo_militar(store)
     fundo = _fundo_militar(store)
+    custeio = _custeio_militar(store)
     fichas = []
     for cnpj, dados in contas.items():
         if not dados["tem_militar"]:
@@ -738,6 +789,9 @@ def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
             "participacao": (round(total_mil / (total_mil + total_civ) * 100, 1)
                              if (total_mil + total_civ) else None),
             "planos": (fundo.get(cnpj) or {}).get("planos") or [],
+            "aliquota_militar": (custeio.get(cnpj) or {}).get("aliquota_ativos"),
+            "contribuicoes_militares": (custeio.get(cnpj) or {}).get("contribuicoes") or [],
+            "tem_patronal": (custeio.get(cnpj) or {}).get("tem_patronal"),
             "ativos_garantidores": (fundo.get(cnpj) or {}).get("ativos_garantidores"),
             "provisoes": (fundo.get(cnpj) or {}).get("provisoes"),
             "cobertura": (fundo.get(cnpj) or {}).get("cobertura"),
@@ -787,6 +841,18 @@ def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         "ativos_garantidores": round(
             sum(f["ativos_garantidores"] or 0.0 for f in fichas), 2),
         "provisoes": round(sum(f["provisoes"] or 0.0 for f in fichas), 2),
+        # A alíquota dos militares ativos, Estado a Estado. Sem juízo: os
+        # Estados têm competência para fixá-la, e 10,5% é a referência federal
+        # que muitos adotaram, não um piso nem um teto legal.
+        "aliquota_referencia": ALIQUOTA_MILITAR_FEDERAL,
+        "com_aliquota": sum(1 for f in fichas
+                            if f.get("aliquota_militar") is not None),
+        "na_referencia": sum(
+            1 for f in fichas
+            if f.get("aliquota_militar") is not None
+            and abs(f["aliquota_militar"] - ALIQUOTA_MILITAR_FEDERAL) < 0.005),
+        "com_patronal": sorted(f["uf"] or "?" for f in fichas
+                               if f.get("tem_patronal")),
         "ativos": ativos,
         "inativos": sum(f["inativos"] for f in fichas),
         "pensionistas": sum(f["pensionistas"] for f in fichas),
@@ -849,13 +915,19 @@ def montar_carteira_nacional(store: Store,
     por_regiao: Dict[str, float] = defaultdict(float)
     por_ente: Dict[str, float] = defaultdict(float)
 
+    # Ativo que a própria fonte marca como fora do rol da resolução. Não é teto
+    # estourado — é outra coisa, e some se for tratada como ausência de limite.
+    fora_da_norma: Dict[str, float] = defaultdict(float)
     for linha in linhas:
         valor = linha.get("valor_total") or 0.0
-        por_segmento[(linha.get("segmento") or "Não informado").strip()] += valor
+        segmento = (linha.get("segmento") or "Não informado").strip()
+        por_segmento[segmento] += valor
         por_ente[linha["cnpj_ente"]] += valor
         ente = entes.get(linha["cnpj_ente"], {})
         por_esfera[ente.get("esfera") or "municipal"] += valor
         por_regiao[ente.get("regiao") or "Não classificado"] += valor
+        if "nao enquadrad" in _normalizar_situacao(segmento):
+            fora_da_norma[linha["cnpj_ente"]] += valor
 
     def _nomear(cnpj: str) -> Dict[str, Any]:
         ente = entes.get(cnpj, {})
@@ -896,6 +968,18 @@ def montar_carteira_nacional(store: Store,
         # e ela não se lê linha a linha.
         "total_maiores": round(sum(por_ente[c] for c in ordenados[:5]), 2),
         "perc_maiores": _pct(sum(por_ente[c] for c in ordenados[:5]), total),
+        "fora_da_norma": {
+            "entes": len(fora_da_norma),
+            "valor": round(sum(fora_da_norma.values()), 2),
+            "perc": _pct(sum(fora_da_norma.values()), total),
+            "maiores": [
+                {"cnpj": c, "ente": (entes.get(c) or {}).get("ente") or c,
+                 "uf": (entes.get(c) or {}).get("uf"),
+                 "valor": round(v, 2),
+                 "perc_da_carteira": _pct(v, por_ente[c])}
+                for c, v in sorted(fora_da_norma.items(),
+                                   key=lambda kv: kv[1], reverse=True)[:10]],
+        },
         **competencia,
     }
 
@@ -956,6 +1040,7 @@ def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
     ficha["amortizacao"] = _montar_amortizacao(store, cnpj)
     ficha["projetado_executado"] = _montar_projetado_executado(store, cnpj)
     ficha["conformidade"] = _montar_conformidade(store, cnpj)
+    ficha["governanca"] = _montar_governanca(store, cnpj)
     ficha["contabil"] = _montar_contabil(
         store, cnpj, (ficha["carteira"] or {}).get("total"))
     return ficha
@@ -1612,6 +1697,12 @@ MARGEM_DO_LIMITE = 0.05
 #: único lugar a mudar quando ela for substituída.
 NORMA_DOS_INVESTIMENTOS = "Resolução CMN 5.272/2025"
 
+#: A alíquota que a União fixou para a contribuição do militar, e que muitos
+#: Estados adotaram. **Não é um piso nem um teto**: cada Estado legisla sobre a
+#: sua, e divergir daqui não é irregularidade. Serve para a tela dizer quantos
+#: seguiram a referência — informação —, nunca para marcar quem não seguiu.
+ALIQUOTA_MILITAR_FEDERAL = 10.5
+
 
 def _da_competencia_recente(linhas: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Só as linhas da competência mais recente do conjunto.
@@ -1769,8 +1860,8 @@ def _montar_carteira_ente(store: Store, cnpj: str,
     # está fora da norma. Não é um limite estourado — é outra coisa, e some se
     # for tratada como ausência de limite.
     fora_da_norma = [c for c in classes
-                     if "não enquadrad" in c["segmento"].lower()
-                     or "não enquadrad" in (c["rotulo"] or "").lower()]
+                     if "nao enquadrad" in _normalizar_situacao(c["segmento"])
+                     or "nao enquadrad" in _normalizar_situacao(c["rotulo"])]
     return {
         "disponivel": True,
         "total": round(total, 2),
@@ -1913,6 +2004,101 @@ def montar_carteira_detalhe(store: Store, cnpj: str,
     if not competencias:
         return {"disponivel": False}
     return {"disponivel": True, "cnpj": cnpj, "competencias": competencias}
+
+
+def _montar_governanca(store: Store, cnpj: str,
+                       hoje: Optional[str] = None) -> Dict[str, Any]:
+    """Quem responde pelos recursos, e se a certificação está em dia.
+
+    **A leitura é por pessoa, não por linha.** A API devolve uma linha por
+    certificação, e quem tem duas aparece duas vezes: é comum ter uma CPA
+    vencida e outra vigente ao lado, e nesse caso o requisito de regularidade
+    está atendido. Marcar a linha vencida acusaria de irregular quem está em
+    ordem — o alerta só vale para quem **não tem nenhuma** certificação dentro
+    da validade.
+
+    Vale só para quem ainda está em exercício: certificação vencida de quem já
+    saiu do colegiado não diz nada sobre a gestão de hoje.
+    """
+    if not store.tem_tabela("DAIR_GOVERNANCA"):
+        return {"disponivel": False}
+    linhas = _varios(
+        store, "dair_governanca",
+        "ano, mes, pessoa, cargo, vinculo, atribuicao, colegiado,"
+        " inicio_atuacao, fim_atuacao, tipo_certificacao,"
+        " validade_certificacao, entidade_certificadora", cnpj,
+        ordem="ano DESC, mes DESC", limite=4000)
+    if not linhas:
+        return {"disponivel": False}
+
+    hoje = hoje or _hoje()
+    # Uma competência por vez, como no resto do DAIR.
+    competencias = [(l.get("ano"), l.get("mes")) for l in linhas
+                    if l.get("ano") is not None and l.get("mes") is not None]
+    if competencias:
+        recente = max(competencias)
+        linhas = [l for l in linhas if (l.get("ano"), l.get("mes")) == recente]
+    else:
+        recente = (None, None)
+
+    pessoas: Dict[tuple, Dict[str, Any]] = {}
+    for linha in linhas:
+        # Quem já deixou o colegiado não responde pela gestão de hoje.
+        fim = linha.get("fim_atuacao")
+        if fim and str(fim)[:10] < hoje:
+            continue
+        chave = ((linha.get("pessoa") or "").strip().upper(),
+                 (linha.get("colegiado") or "").strip())
+        ficha = pessoas.setdefault(chave, {
+            "pessoa": (linha.get("pessoa") or "").strip(),
+            "colegiado": (linha.get("colegiado") or "").strip(),
+            "cargo": linha.get("cargo"),
+            "vinculo": linha.get("vinculo"),
+            "atribuicao": linha.get("atribuicao"),
+            "certificacoes": [],
+        })
+        tipo = (linha.get("tipo_certificacao") or "").strip()
+        validade = linha.get("validade_certificacao")
+        if not tipo and not validade:
+            continue
+        ficha["certificacoes"].append({
+            "tipo": tipo or "Não informada",
+            "validade": validade,
+            "vigente": bool(validade and str(validade)[:10] >= hoje),
+            "entidade": linha.get("entidade_certificadora"),
+        })
+
+    fichas = []
+    for dados in pessoas.values():
+        certificacoes = dados["certificacoes"]
+        # Sem nenhuma certificação cadastrada é caso diferente de ter só
+        # vencidas, e as duas coisas são diferentes de estar em ordem.
+        vigentes = [c for c in certificacoes if c["vigente"]]
+        dados["certificacoes"] = sorted(
+            certificacoes, key=lambda c: (not c["vigente"], c["validade"] or ""))
+        dados["regular"] = bool(vigentes)
+        dados["sem_certificacao"] = not certificacoes
+        dados["so_vencidas"] = bool(certificacoes) and not vigentes
+        dados["validade_mais_longa"] = max(
+            (c["validade"] for c in vigentes if c["validade"]), default=None)
+        fichas.append(dados)
+    fichas.sort(key=lambda f: (f["regular"], f["pessoa"]))
+
+    irregulares = [f for f in fichas if f["so_vencidas"]]
+    return {
+        "disponivel": True,
+        "ano": recente[0],
+        "mes": recente[1],
+        "competencia": ("{:04d}-{:02d}".format(recente[0], recente[1])
+                        if recente[0] and recente[1] else None),
+        "referencia": hoje,
+        "pessoas": fichas,
+        "total": len(fichas),
+        "regulares": sum(1 for f in fichas if f["regular"]),
+        "so_vencidas": len(irregulares),
+        "sem_certificacao": sum(1 for f in fichas if f["sem_certificacao"]),
+        "nomes_so_vencidas": [f["pessoa"] for f in irregulares][:10],
+    }
 
 
 def _montar_atuaria(store: Store, cnpj: str) -> Dict[str, Any]:

@@ -98,6 +98,31 @@ _CLASSES = [
     ("Disponibilidades Financeiras", None, None, 0.045),
 ]
 
+#: A classe que a própria fonte marca como fora do rol da resolução. Não é teto
+#: estourado: é ativo que a norma não prevê. Em 17/09/2026 eram 45 entes.
+_CLASSE_FORA_DA_NORMA = ("Demais ativos não enquadrados na Resolução CMN",
+                         "Outros Ativos Não Enquadrados na Resolução CMN", None, 0.03)
+
+#: Governança: (pessoa, colegiado, [(certificação, mês de validade)]).
+#: Mês positivo = vence no ano seguinte (vigente); negativo = venceu no anterior.
+#: O segundo caso é o que o painel não pode acusar: uma certificação vencida
+#: convivendo com outra vigente atende o requisito.
+_GOVERNANCA = (
+    ("ANA PAULA SOUZA", "GESTOR DE RECURSOS DO RPPS",
+     (("CPA 20", 6), ("CGRPPS", -5))),
+    ("CARLOS EDUARDO LIMA", "COMITÊ DE INVESTIMENTOS",
+     (("CPA 10", -3), ("CPA 20", -11))),
+    ("MARIA DE FÁTIMA ROCHA", "COMITÊ DE INVESTIMENTOS",
+     (("CPA 10", 9),)),
+)
+
+#: Entes que carregam ativo fora do rol.
+_ENTES_FORA_DA_NORMA = frozenset({7, 14, 23})
+
+#: Estados que fixaram alíquota militar diferente da referência federal de
+#: 10,5%. Não é irregularidade: é competência legislativa deles.
+_ALIQUOTAS_MILITARES = {2: 14.0, 5: 11.0}
+
 #: Os Estados que declaram ativo garantidor para a massa militar. Na base real
 #: são 2 de 26 com cobertura relevante (Amapá, 31,5%; Roraima, 30,1%) e um
 #: terceiro começando (Rio Grande do Sul, 5,1%); os outros 14 declaram zero e os
@@ -241,7 +266,7 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
     tabelas: Dict[str, List[Dict[str, Any]]] = {
         nome: [] for nome in (
             "RPPS_REGIME_PREVIDENCIARIO", "RPPS_CRP", "RPPS_ALIQUOTA", "DIPR",
-            "DAIR_CARTEIRA", "DAIR_IDENTIFICACAO",
+            "DAIR_CARTEIRA", "DAIR_IDENTIFICACAO", "DAIR_GOVERNANCA",
             "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
             "DRAA_FLUXO_ATUARIAL", "DRAA_VALORES_COMPROMISSOS",
             "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO",
@@ -337,7 +362,10 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # de um ente soma 100% (1.820 dos 1.821 entes em 17/09/2026), e uma
         # amostra em que ele não soma não exercita o enquadramento.
         fatias = []
-        for segmento, classe, teto, fatia in _CLASSES:
+        catalogo = list(_CLASSES)
+        if indice in _ENTES_FORA_DA_NORMA:
+            catalogo.append(_CLASSE_FORA_DA_NORMA)
+        for segmento, classe, teto, fatia in catalogo:
             peso = fatia * rnd.uniform(0.85, 1.15)
             if indice == _ENTE_FALSO_EXCESSO:
                 # Renda Variável em 47% do total, com 38% em ações (teto 40%) e
@@ -417,6 +445,29 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 te_finalidade="ENCERRAMENTO_MES", te_justificativa=None,
                 te_motivo_retificacao=None, te_descricao_retificacao=None,
                 te_justicativa_retificacao=None))
+
+        # DAIR_GOVERNANCA: uma linha por pessoa E POR CERTIFICAÇÃO. Quem tem
+        # duas aparece duas vezes, e é comum ter uma vencida ao lado de uma
+        # vigente — nesse caso o requisito está atendido e o painel não pode
+        # acusar ninguém. A amostra traz os três casos: em ordem, vencida com
+        # outra vigente, e só vencidas.
+        for pessoa, papel, certificacoes in _GOVERNANCA:
+            for tipo, meses in certificacoes:
+                validade = (
+                    None if meses is None
+                    else "{}-{:02d}-15 03:00:00.000".format(
+                        ANO + (1 if meses > 0 else -1), abs(meses)))
+                tabelas["DAIR_GOVERNANCA"].append(dict(
+                    ident, dt_ano=ANO, dt_mes=MES_DAIR,
+                    dt_envio="{}-{:02d}-14 22:53:30.503".format(ANO, MES_DAIR),
+                    no_pessoa="{} · {}".format(pessoa, nome[:18]),
+                    no_cargo=None, tp_vinculo="SERVIDOR EFETIVO",
+                    no_atribuicao="OUTROS", no_entidade_governanca=papel,
+                    dt_inicio_atuacao="2021-01-01 03:00:00.000",
+                    dt_fim_atuacao=None,
+                    no_tipo_certificacao=tipo,
+                    dt_validade_certificacao=validade,
+                    no_entidade_certificadora="Outros"))
 
         # DRAA_ESTATISTICA: uma linha por grupo populacional, contagem por sexo.
         # A razão civil também varia entre entes — de 0,43 a 5,43 na base real.
@@ -574,9 +625,14 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
 
             # 10,5% sobre o valor integral, e nenhuma linha de ente: a
             # contribuição patronal não existe neste sistema.
-            for tipo, aliquota in (("Segurados Ativos", 10.5),
-                                   ("Aposentados", 10.5),
-                                   ("Pensionistas", 10.5)):
+            #
+            # Nem todos no mesmo percentual: 10,5% foi a decisão federal, que
+            # muitos Estados seguiram, e cada um legisla sobre a sua. Uma
+            # amostra em que todos coincidem esconderia que divergir é legítimo.
+            aliquota_militar = _ALIQUOTAS_MILITARES.get(indice, 10.5)
+            for tipo, aliquota in (("Segurados Ativos", aliquota_militar),
+                                   ("Aposentados", aliquota_militar),
+                                   ("Pensionistas", aliquota_militar)):
                 tabelas["DRAA_PLANO_CUSTEIO"].append(dict(
                     ident, dt_exercicio=ANO, tp_plano="Previdenciário",
                     tp_massa="Militar", tp_contribuicao=tipo,

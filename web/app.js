@@ -395,6 +395,29 @@
           cartao("Por esfera e por região", "DAIR_CARTEIRA · sg_uf · no_ente",
             "Dois cortes independentes, cada um somando 100%", alvoGrupos)
         ]),
+        (c.fora_da_norma && c.fora_da_norma.entes)
+          ? cartao("Ativos fora do rol da resolução", "DAIR_CARTEIRA",
+              num(c.fora_da_norma.entes, 0) + " RPPS carregam ativo que a " +
+              "própria fonte classifica como não enquadrado na norma, somando " +
+              reais(c.fora_da_norma.valor) + " — " + pct(c.fora_da_norma.perc, 2) +
+              " do patrimônio do país. Não é teto estourado: é ativo que a " +
+              "norma não prevê" + referencia(c.competencia),
+              tabela([{ t: "RPPS" }, { t: "Valor fora do rol", n: true },
+                      { t: "% da carteira dele", n: true }],
+                c.fora_da_norma.maiores.map(function (m) {
+                  return linhaClicavel(m.cnpj, [
+                    h("td", {}, [m.ente, h("span", { class: "uf", texto: m.uf || "" })]),
+                    h("td", { class: "n", texto: reais(m.valor) }),
+                    h("td", { class: "n", texto: pct(m.perc_da_carteira, 2) })
+                  ]);
+                }).concat([
+                  linhaTotal(c.fora_da_norma.maiores.length < c.fora_da_norma.entes
+                    ? "Os " + c.fora_da_norma.maiores.length + " maiores, de " +
+                      num(c.fora_da_norma.entes, 0) + " RPPS"
+                    : "Todos os " + num(c.fora_da_norma.entes, 0) + " RPPS",
+                    [reais(c.fora_da_norma.valor), pct(c.fora_da_norma.perc, 2)])
+                ]), true))
+          : null,
         h("div", { class: "grade duas" }, [
           cartao("Maiores patrimônios", "DAIR_CARTEIRA",
             "Clique na linha para abrir a carteira do RPPS" +
@@ -547,6 +570,32 @@
     return nos;
   }
 
+  /* Certificação vencida só é achado quando a pessoa não tem nenhuma outra
+   * dentro da validade. A API devolve uma linha por certificação, e é comum
+   * alguém ter uma CPA vencida ao lado de uma vigente — quem lê linha a linha
+   * acusa de irregular quem está em ordem. A leitura aqui é por pessoa, e só
+   * quem não tem nenhuma válida aparece. */
+  function alertaDeCertificacao(g) {
+    if (!g || !g.disponivel || !g.so_vencidas) return null;
+    var quem = (g.nomes_so_vencidas || []).join(", ");
+    return h("div", { class: "aviso-linha" }, [
+      h("span", { class: "ico", texto: "\u26a0" }),
+      h("span", { texto:
+        g.so_vencidas + (g.so_vencidas > 1
+          ? " pessoas em exercício na governança do RPPS estão"
+          : " pessoa em exercício na governança do RPPS está") +
+        " sem nenhuma certificação dentro da validade" +
+        (quem ? ": " + quem : "") + ". " +
+        "De " + num(g.total, 0) + " em exercício, " + num(g.regulares, 0) +
+        " têm certificação vigente" +
+        (g.sem_certificacao
+          ? " e " + num(g.sem_certificacao, 0) + " não têm certificação cadastrada"
+          : "") +
+        " · DAIR_GOVERNANCA, competência " +
+        (competencia(g.competencia) || "—") + "." })
+    ]);
+  }
+
   function abaFicha() {
     if (!estado.cnpj) return Promise.resolve([semEnte("Ficha do RPPS")]);
     return carregarEnte().then(function (e) {
@@ -570,6 +619,7 @@
           campo("Segregação da massa", seg.segregacao || "—"),
           campo("Exercício do DRAA", est.exercicio || "—")
         ]),
+        alertaDeCertificacao(e.governanca),
         h("div", { class: "grade duas" }, [
           cartao("Alíquotas vigentes", "RPPS_ALIQUOTA",
             vigentes.length ? "Declaradas como vigentes na fonte"
@@ -2681,7 +2731,8 @@
             ? " · sem declaração do item: " + m.sem_declaracao_de_fundo.join(", ")
             : ""),
           tabela([{ t: "Estado" }, { t: "Ativos garantidores", n: true },
-                  { t: "Provisões", n: true }, { t: "Cobertura", n: true }],
+                  { t: "Provisões", n: true }, { t: "Cobertura", n: true },
+                  { t: "Alíquota do militar", n: true }],
             comPessoas.slice().sort(function (a, b) {
               return (b.cobertura || 0) - (a.cobertura || 0);
             }).map(function (e) {
@@ -2693,14 +2744,19 @@
                             ? "não declarado" : reais(e.ativos_garantidores) }),
                 h("td", { class: "n", texto: reais(e.provisoes) }),
                 h("td", { class: "n", texto: e.cobertura === null ||
-                          e.cobertura === undefined ? "—" : pct(e.cobertura, 2) })
+                          e.cobertura === undefined ? "—" : pct(e.cobertura, 2) }),
+                h("td", { class: "n", texto: e.aliquota_militar === null ||
+                          e.aliquota_militar === undefined
+                            ? "—" : pct(e.aliquota_militar, 2) })
               ]);
             }).concat([
               linhaTotal(m.com_fundo + " de " + comPessoas.length +
                 " Estados com fundo constituído",
                 [reais(m.ativos_garantidores), reais(m.provisoes),
-                 m.provisoes ? pct(m.ativos_garantidores / m.provisoes * 100, 2) : "—"])
-            ]), true))
+                 m.provisoes ? pct(m.ativos_garantidores / m.provisoes * 100, 2) : "\u2014",
+                 m.na_referencia + " de " + m.com_aliquota + " em " +
+                   pct(m.aliquota_referencia, 1)])
+            ]), "extra"))
       ];
       if (orcamento) nos.push(orcamento);
       if (m.sem_rreo && m.sem_rreo.length) {
@@ -2709,6 +2765,26 @@
           m.sem_rreo.join(", ") + ". Ausência de linha não é ausência de " +
           "despesa — é ausência de declaração nessa fonte." }));
       }
+      /* Cobertura baixa num sistema de repartição não é fundo malformado: é o
+       * dinheiro que fica aplicado entre a arrecadação da contribuição e o
+       * pagamento do benefício. Sem esta frase, uma cobertura de 0,1% lê-se
+       * como fundo fracassado em vez de fluxo de caixa. */
+      nos.push(h("p", { class: "nota", texto:
+        "Cobertura pequena não indica fundo constituído nem erro: num sistema " +
+        "de repartição é normal que uma fração das provisões fique aplicada " +
+        "entre a arrecadação das contribuições e o pagamento dos benefícios. " +
+        "Cobertura relevante é outra coisa — é fundo capitalizado." }));
+      nos.push(h("p", { class: "nota", texto:
+        "A alíquota é decisão de cada Estado. Os " + pct(m.aliquota_referencia, 1) +
+        " são a referência que a União fixou e que " + m.na_referencia +
+        " dos " + m.com_aliquota + " Estados que declararam seguiram; os demais " +
+        "exerceram a própria competência legislativa, e o painel não marca " +
+        "ninguém por isso." +
+        (m.com_patronal && m.com_patronal.length
+          ? " Declaram contribuição patronal, que este sistema em regra não " +
+            "tem: " + m.com_patronal.join(", ") + "."
+          : " Nenhum declara contribuição patronal — o tesouro arca com a " +
+            "despesa em vez de contribuir.") }));
       nos.push(h("p", { class: "nota", texto: m.nota_carteira }));
       nos.push(h("p", { class: "nota", texto: m.nota_nomenclatura }));
       return nos;
