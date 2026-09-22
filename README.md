@@ -61,6 +61,8 @@ cadprev/        ingestão e agregação (Python, sem dependências)
   fundos.py       separação por natureza do fundo (Níveis A e B)
   qualidade.py    o que a própria base contradiz, e as chaves de recorte
   competencia.py  qual competência do DAIR já fechou, e a última de cada ente
+  ativos.py       o nome do ativo, e o vencimento do título quando há um
+  distribuicao.py mediana e quartis dos quadros consolidados
   siconfi.py      cliente da segunda fonte: o SICONFI, do Tesouro Nacional
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
@@ -566,6 +568,82 @@ fica **de fora** dos indicadores derivados da carteira — indefinido, nunca zer
 A carteira dele está na tela, com a data; o que não existe é carteira dele na
 data em que os outros são medidos, e um indicador derivado dela mediria a
 distância entre as datas junto com a diferença entre as carteiras.
+
+## O nome do ativo, e os dois campos que trocam de papel
+
+No `DAIR_CARTEIRA`, `no_fundo` é o nome e `id_ativo` é o CNPJ — **nos fundos**.
+Nos títulos públicos os dois se invertem: `id_ativo` traz a descrição que o RPPS
+escreveu à mão (`NTNB 15082040 (Compra em 06122024 Tx 67643)`) e `no_fundo` traz
+um número de contrato. Em 22/09/2026 isso valia para **6.844 das 7.091 posições
+de título público do país**, e era por isso que a coluna "Ativo" mostrava um
+número.
+
+A regra é sobre o conteúdo, não sobre a classe: vale o primeiro dos dois campos
+que tenha letras. Assim continua valendo se outra classe repetir a inversão.
+
+O vencimento é outra história. A sigla aparece em 98% das descrições; a data de
+vencimento, em **12%** — 80% são o nome comercial do Tesouro Direto, sem data
+nenhuma. O painel mostra `NTN-B 15/08/2040` para quem a escreveu e `NTN-B` para
+quem não escreveu, **com a descrição original logo abaixo**: o rótulo é
+derivado, a descrição é o que a fonte afirmou, e as duas ficam à vista.
+
+Duas regras decidem a data, e as duas vêm do que a descrição traz: data
+precedida de "compra" não é vencimento, e entre as que sobram vale a mais
+distante — um título vence depois de ter sido comprado, sempre. Sobram seis
+descrições em 761 nas quais o próprio declarante inverteu os campos. Não há
+regra que as recupere; por isso a descrição original fica na tela.
+
+## O que cada fonte conta, e os imóveis
+
+O confronto entre a carteira do CADPREV e o Anexo 04 do SICONFI levanta a
+pergunta de o que entra em cada soma. Duas assimetrias candidatas, e elas não
+têm o mesmo destino:
+
+**Disponibilidades financeiras: resolvida.** Elas são um segmento da carteira no
+CADPREV, e por isso o painel soma caixa e equivalentes ao lado dos investimentos
+do lado do SICONFI. Comparar só os investimentos deixaria de fora justamente a
+parte que o outro lado conta, e produziria divergência de critério em quase todo
+RPPS.
+
+**Imóveis: em aberto, e o painel mostra os dois jeitos.** Dos 857 RPPS
+confrontáveis em 22/09/2026, 57 declaram imóveis. Tirá-los da conta aproxima as
+duas fontes em 40 deles e afasta nos outros 17 — não é erro de nenhum dos dois
+lados, é prática contábil que difere entre entes:
+
+| Ente | Imóveis na carteira | Divergência | Sem os imóveis |
+| --- | ---: | ---: | ---: |
+| Diadema/SP | 70,0% | −70,03% | −0,00% |
+| Rio de Janeiro/RJ | 59,9% | −0,29% | +148,93% |
+
+Diadema não leva os imóveis às contas de aplicação do Anexo 04; o Rio leva. Com
+um caso só, o painel teria de afirmar uma regra que a fonte não tem. Então a
+ficha de quem declara imóveis traz as duas contas, e a nota diz de que lado a
+segunda cai.
+
+## Quadros consolidados, e por que a mediana lidera
+
+As abas Ficha, Caixa e Atuária respondiam só sobre um RPPS por vez, e a pergunta
+que cada uma levanta é comparativa: 1,8 ativo por beneficiário é muito ou pouco?
+Sem RPPS escolhido, as três agora abrem o consolidado nacional.
+
+Três disciplinas valem em todos eles:
+
+- **A mediana lidera, com os quartis ao lado.** Uns poucos RPPS estaduais reúnem
+  a maior parte de tudo, e a média puxada por eles descreve um regime que não
+  existe. A média e o desvio ficam na segunda linha — a distância entre média e
+  mediana é, ela própria, a medida da concentração.
+- **Ausência não é zero.** Quem não declarou o indicador fica de fora da conta, e
+  o total diz quantos entraram nele: R$ 40 bilhões somados por 1.500 RPPS e por
+  300 são dois fatos diferentes.
+- **Compromisso soma, resultado não.** As provisões do país se acumulam; o
+  superávit de um RPPS não cobre o déficit de outro. Os dois lados aparecem
+  separados, com a contagem de quantos estão de cada lado — um resultado
+  nacional líquido afirmaria a compensação.
+
+O total de caixa soma só quem declarou os doze meses: a janela do DIPR varia de
+ente para ente, e somar meia série de um com a série cheia de outro daria um
+total que nenhum dos dois declarou. Os indicadores percentuais não têm esse
+problema e continuam com todo mundo.
 
 ## Certificação de quem responde pelos recursos
 

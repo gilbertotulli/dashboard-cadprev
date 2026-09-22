@@ -23,9 +23,10 @@ import os
 import unicodedata
 from collections import defaultdict
 from datetime import date, datetime, timezone
-from typing import AbstractSet, Any, Dict, List, Mapping, Optional
+from typing import AbstractSet, Any, Dict, List, Mapping, Optional, Sequence
 
-from . import benchmark, codigos, fundos, grupos, massas, qualidade
+from . import (ativos, benchmark, codigos, distribuicao, fundos, grupos,
+               massas, qualidade)
 from .store import Store
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -437,6 +438,7 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
     ou reclassificação contábil, que é número legítimo e não é carteira.
     """
     desvios, sem_saldo, parcial, negativo, com_anexo = [], 0, 0, 0, 0
+    com_imoveis = imoveis_aproxima = imoveis_afasta = 0
     for ficha in fichas.values():
         contabil = ficha.get("contabil") or {}
         if not contabil.get("disponivel"):
@@ -451,10 +453,25 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
         confronto = contabil.get("confronto")
         if confronto:
             desvios.append(abs(confronto["perc"]))
+            # Os imóveis são a assimetria que continua em aberto entre as duas
+            # fontes, e a contagem abaixo é o que diz que ela está em aberto:
+            # se tirá-los aproximasse sempre, seria regra e o painel a
+            # aplicaria; se afastasse sempre, não haveria ressalva a fazer.
+            if confronto.get("imoveis"):
+                com_imoveis += 1
+                sem = confronto.get("perc_sem_imoveis")
+                if sem is not None:
+                    if abs(sem) < abs(confronto["perc"]):
+                        imoveis_aproxima += 1
+                    elif abs(sem) > abs(confronto["perc"]):
+                        imoveis_afasta += 1
+    imoveis = {"com_imoveis": com_imoveis,
+               "imoveis_aproxima": imoveis_aproxima,
+               "imoveis_afasta": imoveis_afasta}
     if not desvios:
-        return {"disponivel": False, "com_anexo": com_anexo,
-                "sem_saldo": sem_saldo, "saldo_parcial": parcial,
-                "saldo_negativo": negativo}
+        return dict({"disponivel": False, "com_anexo": com_anexo,
+                     "sem_saldo": sem_saldo, "saldo_parcial": parcial,
+                     "saldo_negativo": negativo}, **imoveis)
     desvios.sort()
 
     def _faixa(limite):
@@ -463,7 +480,7 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
     meio = len(desvios) // 2
     mediana = (desvios[meio] if len(desvios) % 2
                else (desvios[meio - 1] + desvios[meio]) / 2)
-    return {
+    return dict(imoveis, **{
         "disponivel": True,
         "com_anexo": com_anexo,
         "sem_saldo": sem_saldo,
@@ -475,7 +492,7 @@ def resumir_divergencia(fichas: Mapping[str, Mapping[str, Any]]) -> Dict[str, An
         "ate_5": _faixa(5.0),
         "acima_5": len(desvios) - _faixa(5.0),
         "perc_ate_5": _pct(_faixa(5.0), len(desvios)),
-    }
+    })
 
 
 def montar_conformidade_nacional(store: Store,
@@ -707,6 +724,272 @@ def _custeio_militar(store: Store) -> Dict[str, Dict[str, Any]]:
         ficha["aliquota_ativos"] = ativos[0] if ativos else None
         ficha["tem_patronal"] = any("ente" in r.lower() for r in itens)
     return fichas
+
+
+def _consolidar(fichas: Mapping[str, Mapping[str, Any]],
+                fora: AbstractSet[str],
+                indicadores: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """A distribuição de cada indicador entre os RPPS que o declararam.
+
+    ``indicadores`` mapeia o nome publicado para uma função que lê a ficha e
+    devolve o número, ou ``None`` quando o ente não tem esse dado. ``None`` não
+    entra na conta: indicador indefinido não é indicador zero, e somá-lo como
+    zero premiaria quem não declarou na mediana de todo mundo.
+    """
+    valores: Dict[str, List[Any]] = {nome: [] for nome in indicadores}
+    for cnpj, ficha in fichas.items():
+        if cnpj in fora:
+            continue
+        for nome, ler in indicadores.items():
+            try:
+                valores[nome].append(ler(ficha))
+            except (TypeError, ZeroDivisionError):
+                valores[nome].append(None)
+    return {nome: distribuicao.resumir(lista) for nome, lista in valores.items()}
+
+
+def _soma_das_fichas(fichas: Mapping[str, Mapping[str, Any]],
+                     fora: AbstractSet[str], ler) -> Dict[str, Any]:
+    """Um total nacional e quantos entes entraram nele.
+
+    O total só significa alguma coisa ao lado do número de declarantes: R$ 40
+    bilhões somados por 1.500 RPPS e por 300 são dois fatos diferentes, e o
+    segundo não é o país.
+    """
+    valores = [ler(ficha) for cnpj, ficha in fichas.items() if cnpj not in fora]
+    presentes = [v for v in valores if v is not None]
+    return {"total": round(sum(presentes), 2) if presentes else None,
+            "entes": len(presentes),
+            "sem_dado": len(valores) - len(presentes)}
+
+
+def montar_ficha_nacional(fichas: Mapping[str, Mapping[str, Any]],
+                          fora: Optional[AbstractSet[str]] = None
+                          ) -> Dict[str, Any]:
+    """O consolidado da aba Ficha: massa, alíquota, CRP e certificação.
+
+    A aba respondia só sobre um RPPS por vez, e a pergunta que ela levanta é
+    comparativa: 1,8 ativo por beneficiário é muito ou pouco? Sem a
+    distribuição ao lado, cada ficha era um número sem régua.
+    """
+    fora = fora or frozenset()
+    presentes = {c: f for c, f in fichas.items() if c not in fora}
+    if not presentes:
+        return {"disponivel": False}
+
+    def _est(ficha, campo):
+        est = ficha.get("estatistica") or {}
+        return est.get(campo) if est.get("disponivel") else None
+
+    def _aliquota(ficha, quem):
+        for linha in ficha.get("aliquotas") or []:
+            vigente = (linha.get("vigente") or "").upper()
+            if vigente and "NÃO" in vigente.replace("NAO", "NÃO"):
+                continue
+            if (linha.get("sujeito_passivo") or "").strip().lower() == quem:
+                return linha.get("aliquota")
+        return None
+
+    indicadores = {
+        "ativos": lambda f: _est(f, "ativos"),
+        "inativos": lambda f: _est(f, "inativos"),
+        "razao_ativos_inativos": lambda f: _est(f, "razao_ativos_inativos"),
+        "aliquota_ente": lambda f: _aliquota(f, "ente"),
+        "aliquota_segurado": lambda f: _aliquota(f, "segurado"),
+    }
+    consolidado = _consolidar(presentes, frozenset(), indicadores)
+
+    # CRP e certificação são contagens, não distribuições: o que se pergunta é
+    # "quantos estão em dia", e a mediana de um sim/não não quer dizer nada.
+    com_crp = vencido = 0
+    governanca_regular = governanca_irregular = 0
+    com_militar = 0
+    for ficha in presentes.values():
+        crp = ficha.get("crp") or {}
+        if crp.get("validade"):
+            com_crp += 1
+            if crp.get("vencido"):
+                vencido += 1
+        gov = ficha.get("governanca") or {}
+        if gov.get("disponivel"):
+            if gov.get("so_vencidas") or gov.get("sem_certificacao"):
+                governanca_irregular += 1
+            else:
+                governanca_regular += 1
+        if (ficha.get("estatistica") or {}).get("tem_militar"):
+            com_militar += 1
+
+    return {
+        "disponivel": True,
+        "rpps": len(presentes),
+        "indicadores": consolidado,
+        "pessoas": {
+            "ativos": _soma_das_fichas(presentes, frozenset(),
+                                       lambda f: _est(f, "ativos")),
+            "inativos": _soma_das_fichas(presentes, frozenset(),
+                                         lambda f: _est(f, "inativos")),
+        },
+        "crp": {"com_validade": com_crp, "vencido": vencido,
+                "em_dia": com_crp - vencido},
+        "governanca": {"avaliados": governanca_regular + governanca_irregular,
+                       "regulares": governanca_regular,
+                       "irregulares": governanca_irregular},
+        "com_massa_militar": com_militar,
+    }
+
+
+def montar_caixa_nacional(fichas: Mapping[str, Mapping[str, Any]],
+                          fora: Optional[AbstractSet[str]] = None
+                          ) -> Dict[str, Any]:
+    """O consolidado da aba Caixa: ingressos, dispêndios e resultado.
+
+    **O total nacional soma só quem declarou o ano inteiro.** A janela do DIPR
+    varia de ente para ente — quem entregou seis meses tem metade do ano na
+    série —, e somar meia série de um com a série cheia de outro produz um
+    total que nenhum dos dois declarou. Os indicadores por ente (resultado
+    sobre ingressos, por exemplo) são percentuais e não têm esse problema:
+    entram todos.
+    """
+    fora = fora or frozenset()
+    presentes = {c: f for c, f in fichas.items() if c not in fora}
+    if not presentes:
+        return {"disponivel": False}
+
+    def _caixa(ficha):
+        c = ficha.get("caixa") or {}
+        return c if c.get("disponivel") else None
+
+    def _resultado_sobre_ingressos(ficha):
+        c = _caixa(ficha)
+        if not c or not c.get("total_receita"):
+            return None
+        return round((c["total_receita"] - (c.get("total_despesa") or 0.0))
+                     / c["total_receita"] * 100, 2)
+
+    def _mensal(ficha, campo):
+        c = _caixa(ficha)
+        meses = (c or {}).get("meses_declarados") or 0
+        if not c or not meses or c.get(campo) is None:
+            return None
+        return round(c[campo] / meses, 2)
+
+    indicadores = {
+        "resultado_sobre_ingressos": _resultado_sobre_ingressos,
+        "receita_mensal": lambda f: _mensal(f, "total_receita"),
+        "despesa_mensal": lambda f: _mensal(f, "total_despesa"),
+        "meses_declarados": lambda f: (_caixa(f) or {}).get("meses_declarados"),
+    }
+
+    doze = {c: f for c, f in presentes.items()
+            if ((f.get("caixa") or {}).get("meses_declarados") or 0) >= 12}
+    deficitarios = sum(
+        1 for f in presentes.values()
+        if (_caixa(f) or {}).get("resultado") is not None
+        and _caixa(f)["resultado"] < 0)
+    com_caixa = sum(1 for f in presentes.values() if _caixa(f))
+
+    return {
+        "disponivel": bool(com_caixa),
+        "rpps": len(presentes),
+        "com_dipr": com_caixa,
+        "deficitarios": deficitarios,
+        "indicadores": _consolidar(presentes, frozenset(), indicadores),
+        # O total só de quem entregou o ano inteiro, e a tela diz quantos são.
+        "ano_completo": {
+            "entes": len(doze),
+            "receita": _soma_das_fichas(
+                doze, frozenset(), lambda f: (f.get("caixa") or {}).get("total_receita")),
+            "despesa": _soma_das_fichas(
+                doze, frozenset(), lambda f: (f.get("caixa") or {}).get("total_despesa")),
+        },
+    }
+
+
+def montar_atuaria_nacional(fichas: Mapping[str, Mapping[str, Any]],
+                            fora: Optional[AbstractSet[str]] = None
+                            ) -> Dict[str, Any]:
+    """O consolidado da aba Atuária: provisões, lastro e cobertura.
+
+    A soma de provisões do país é legítima — são compromissos, e compromissos
+    somam. O que não soma é **resultado com resultado**: o superávit de um RPPS
+    não cobre o déficit de outro, e um "resultado nacional" líquido afirmaria
+    exatamente isso. Por isso os dois lados aparecem separados, com a contagem
+    de quantos estão de cada lado.
+    """
+    fora = fora or frozenset()
+    presentes = {c: f for c, f in fichas.items() if c not in fora}
+    if not presentes:
+        return {"disponivel": False}
+
+    def _somar(ficha, campo, militar=None):
+        a = ficha.get("atuaria") or {}
+        if not a.get("disponivel"):
+            return None
+        total = 0.0
+        achou = False
+        for bloco in a.get("blocos") or []:
+            if militar is not None and bool(bloco.get("militar")) != militar:
+                continue
+            valor = (bloco.get("resultado") or {}).get(campo)
+            if valor is not None:
+                total += valor
+                achou = True
+        return total if achou else None
+
+    def _cobertura(ficha):
+        provisoes = _somar(ficha, "provisoes")
+        ativos_g = _somar(ficha, "ativos_garantidores")
+        if not provisoes or ativos_g is None:
+            return None
+        return round(ativos_g / provisoes * 100, 2)
+
+    indicadores = {
+        "cobertura": _cobertura,
+        "provisoes": lambda f: _somar(f, "provisoes"),
+        "ativos_garantidores": lambda f: _somar(f, "ativos_garantidores"),
+    }
+
+    com_deficit = com_superavit = com_draa = 0
+    for ficha in presentes.values():
+        a = ficha.get("atuaria") or {}
+        if not a.get("disponivel"):
+            continue
+        com_draa += 1
+        # Por ente: basta um fundo em déficit para o ente ter déficit em algum
+        # fundo. Não se compensa um com o outro — são planos distintos.
+        blocos = a.get("blocos") or []
+        if any((b.get("resultado") or {}).get("situacao") == "deficit" for b in blocos):
+            com_deficit += 1
+        elif any((b.get("resultado") or {}).get("situacao") == "superavit"
+                 for b in blocos):
+            com_superavit += 1
+
+    return {
+        "disponivel": bool(com_draa),
+        "rpps": len(presentes),
+        "com_draa": com_draa,
+        "com_deficit": com_deficit,
+        "com_superavit": com_superavit,
+        "indicadores": _consolidar(presentes, frozenset(), indicadores),
+        "compromissos": {
+            "provisoes": _soma_das_fichas(presentes, frozenset(),
+                                          lambda f: _somar(f, "provisoes")),
+            "ativos_garantidores": _soma_das_fichas(
+                presentes, frozenset(), lambda f: _somar(f, "ativos_garantidores")),
+            # Somados à parte, de propósito: ver o docstring.
+            "deficit": _soma_das_fichas(presentes, frozenset(),
+                                        lambda f: _somar(f, "deficit")),
+            "superavit": _soma_das_fichas(presentes, frozenset(),
+                                          lambda f: _somar(f, "superavit")),
+        },
+        "militar": {
+            "provisoes": _soma_das_fichas(
+                presentes, frozenset(), lambda f: _somar(f, "provisoes", militar=True)),
+            "ativos_garantidores": _soma_das_fichas(
+                presentes, frozenset(),
+                lambda f: _somar(f, "ativos_garantidores", militar=True)),
+        },
+    }
 
 
 def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
@@ -1044,7 +1327,8 @@ def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
     ficha["conformidade"] = _montar_conformidade(store, cnpj)
     ficha["governanca"] = _montar_governanca(store, cnpj)
     ficha["contabil"] = _montar_contabil(
-        store, cnpj, (ficha["carteira"] or {}).get("total"))
+        store, cnpj, (ficha["carteira"] or {}).get("total"),
+        (ficha["carteira"] or {}).get("segmentos"))
     ficha["contabil_anual"] = _montar_contabil_anual(
         store, cnpj, ficha["atuaria"])
     return ficha
@@ -1122,8 +1406,22 @@ _COLUNA_RECEITA = "RECEITAS REALIZADAS ATÉ O BIMESTRE (b)"
 _COLUNA_DESPESA = "DESPESAS PAGAS ATÉ O BIMESTRE (f)"
 
 
+#: Segmentos da carteira do CADPREV cuja presença no Anexo 04 do SICONFI não é
+#: uniforme entre os entes. Imóveis é o caso medido: em 22/09/2026, dos 857 RPPS
+#: confrontáveis, 57 declaravam imóveis, e tirá-los da conta aproximava as duas
+#: fontes em 40 deles e afastava nos outros 17. Em Diadema/SP a carteira tem 70%
+#: em imóveis e a divergência é de −70,03%: tirando os imóveis, zero — o
+#: município não os leva ao Anexo 04. No Rio de Janeiro/RJ são 59,9% em imóveis
+#: e a divergência é de −0,29%: ali eles entram. Não é erro de nenhum dos dois,
+#: é prática contábil que difere entre entes, e por isso o painel mostra a conta
+#: dos dois jeitos em vez de escolher um.
+_SEGMENTO_IMOVEIS = "imoveis"
+
+
 def _montar_contabil(store: Store, cnpj: str,
-                     total_da_carteira: Optional[float] = None) -> Dict[str, Any]:
+                     total_da_carteira: Optional[float] = None,
+                     segmentos_da_carteira: Optional[Sequence[Mapping[str, Any]]] = None
+                     ) -> Dict[str, Any]:
     """O demonstrativo previdenciário do SICONFI, e o confronto com o CADPREV.
 
     Duas apurações independentes do mesmo patrimônio: o CADPREV pela declaração
@@ -1221,13 +1519,50 @@ def _montar_contabil(store: Store, cnpj: str,
     # a parte que o outro lado conta.
     if total_da_carteira and total is not None and completo:
         diferenca = total - total_da_carteira
-        resultado["confronto"] = {
+        confronto = {
             "cadprev": round(total_da_carteira, 2),
             "siconfi": round(total, 2),
             "diferenca": round(diferenca, 2),
             "perc": round(diferenca / total_da_carteira * 100, 2),
         }
+        confronto.update(_imoveis_no_confronto(segmentos_da_carteira,
+                                               total_da_carteira, total))
+        resultado["confronto"] = confronto
     return resultado
+
+
+def _imoveis_no_confronto(segmentos: Optional[Sequence[Mapping[str, Any]]],
+                          total_cadprev: float,
+                          total_siconfi: float) -> Dict[str, Any]:
+    """O que a diferença seria sem os imóveis — quando o ente tem imóveis.
+
+    O segmento existe na carteira do CADPREV e a conta de aplicações do Anexo
+    04 nem sempre o alcança. Em vez de decidir por conta própria qual dos dois
+    lados está certo, o painel oferece a segunda conta e deixa o leitor ver de
+    que lado ela cai: quando a divergência desaparece ao tirar os imóveis, o
+    ente não os levou ao balanço; quando ela aparece, levou.
+
+    As disponibilidades financeiras **não** entram nesta ressalva, e é de
+    propósito: o painel soma investimentos e caixa do lado do SICONFI
+    justamente para que os dois lados contem a mesma coisa. Elas são a
+    assimetria que já foi resolvida, não uma em aberto.
+    """
+    if not segmentos:
+        return {}
+    valor = sum(s.get("valor") or 0.0 for s in segmentos
+                if _normalizar_situacao(s.get("rotulo") or "")
+                .startswith(_SEGMENTO_IMOVEIS))
+    if valor <= 0:
+        return {}
+    restante = total_cadprev - valor
+    return {
+        "imoveis": round(valor, 2),
+        "perc_imoveis": _pct(valor, total_cadprev),
+        # Sem base positiva não há razão a calcular: um ente cuja carteira é
+        # só imóveis não tem "o resto" com que comparar.
+        "perc_sem_imoveis": (round((total_siconfi - restante) / restante * 100, 2)
+                             if restante > 0 else None),
+    }
 
 
 # O balanço patrimonial do ente, nas contas que dizem respeito ao RPPS. O
@@ -1890,6 +2225,33 @@ def _competencias_do_dair(store: Store) -> Dict[str, Any]:
     }
 
 
+def _identificar(linha: Mapping[str, Any]) -> Dict[str, Any]:
+    """Como o ativo aparece na tela: nome, descrição da fonte e, se for título
+    público, sigla e vencimento.
+
+    A escolha do nome está em ``cadprev.ativos`` e vale para as duas telas — a
+    ficha mostra as dez maiores posições e a tela detalhada mostra todas, e
+    dois critérios de nome para o mesmo ativo seriam duas respostas para a
+    mesma pergunta.
+    """
+    escolha = ativos.nome(linha.get("nome_ativo"),
+                          linha.get("identificacao_ativo"),
+                          linha.get("tipo_ativo"))
+    dados: Dict[str, Any] = {
+        "nome": escolha["rotulo"],
+        "nome_de": escolha["campo"],
+        "identificacao": linha.get("identificacao_ativo"),
+    }
+    # Só para quem a fonte descreve como título: num fundo, "NTN-B" no nome é
+    # a estratégia do fundo, não o papel que o RPPS tem em carteira.
+    classe = (linha.get("tipo_ativo") or "")
+    if "ítulos Públicos" in classe or "itulos Publicos" in classe:
+        reconhecido = ativos.titulo(escolha["rotulo"])
+        if reconhecido:
+            dados["titulo"] = reconhecido
+    return dados
+
+
 def _resumo_comparavel(linhas: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """Total e alocação por segmento de uma competência — o que o comparativo
     precisa, e nada além disso.
@@ -1962,7 +2324,8 @@ def _montar_carteira_ente(store: Store, cnpj: str,
     ficha do ente publica dois números incompatíveis sobre o mesmo fato.
     """
     colunas = ("rowid AS rowid, ano, mes, segmento, tipo_ativo, nome_ativo,"
-               " limite_cmn, valor_total, perc_recursos, pl_fundo, perc_pl_fundo")
+               " identificacao_ativo, limite_cmn, valor_total, perc_recursos,"
+               " pl_fundo, perc_pl_fundo")
     linhas = _varios(store, "dair_carteira", colunas, cnpj,
                      ordem="valor_total DESC", limite=40000)
     linhas_fora = linhas_fora or frozenset()
@@ -2039,14 +2402,13 @@ def _montar_carteira_ente(store: Store, cnpj: str,
             "folga": (round(limite - perc, 2) if limite is not None else None),
         })
 
-    posicoes = [{
-        "nome": linha.get("nome_ativo") or linha.get("tipo_ativo") or "—",
+    posicoes = [dict(_identificar(linha), **{
         "segmento": linha.get("segmento"),
         "classe": linha.get("tipo_ativo"),
         "valor": round(linha.get("valor_total") or 0.0, 2),
         "perc_carteira": round(_perc(linha), 2),
         "perc_pl_fundo": linha.get("perc_pl_fundo"),
-    } for linha in linhas[:10]]
+    }) for linha in linhas[:10]]
 
     concentrados = [p for p in posicoes if (p["perc_pl_fundo"] or 0) > 10]
     mostradas = sum(p["valor"] for p in posicoes)
@@ -2201,9 +2563,7 @@ def montar_carteira_detalhe(store: Store, cnpj: str,
             if item["limite"] is None:
                 item["limite"] = linha.get("limite_cmn")
 
-            itens.append({
-                "nome": linha.get("nome_ativo") or classe or "—",
-                "identificacao": linha.get("identificacao_ativo"),
+            itens.append(dict(_identificar(linha), **{
                 "segmento": segmento,
                 "classe": classe,
                 "cotas": linha.get("quantidade_cotas"),
@@ -2212,7 +2572,7 @@ def montar_carteira_detalhe(store: Store, cnpj: str,
                 "perc": round(perc, 2),
                 "pl_fundo": linha.get("pl_fundo"),
                 "perc_pl_fundo": linha.get("perc_pl_fundo"),
-            })
+            }))
 
         segmentos = [
             dict(d, valor=round(d["valor"], 2), perc=round(d["perc"], 2))
@@ -2659,6 +3019,22 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     # lista mais, mas o arquivo responde a quem tiver o link antigo — e responde
     # com números de uma carga que já não existe.
     _limpar_fichas_orfas(dir_saida, {cnpj for cnpj, _ in escolhidos})
+
+    # Os consolidados das abas de ente. Vêm das fichas já montadas, não de uma
+    # segunda leitura do banco: o número da tela consolidada tem de ser o mesmo
+    # que está na ficha, e duas leituras independentes do mesmo fato são duas
+    # chances de divergirem em silêncio.
+    gerados.append(_gravar("consolidado.json", {"variantes": {
+        combinacao: {
+            "ficha": montar_ficha_nacional(
+                fichas, qualidade.entes_fora(entes, marcas, combinacao)),
+            "caixa": montar_caixa_nacional(
+                fichas, qualidade.entes_fora(entes, marcas, combinacao)),
+            "atuaria": montar_atuaria_nacional(
+                fichas, qualidade.entes_fora(entes, marcas, combinacao)),
+        }
+        for combinacao in qualidade.combinacoes()
+    }}, dir_saida))
 
     comparativo = benchmark.montar(fichas)
     comparativo["grupos"] = {

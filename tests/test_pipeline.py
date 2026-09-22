@@ -30,8 +30,38 @@ class TestPipeline(unittest.TestCase):
                 "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
                 "DRAA_FLUXO_ATUARIAL", "DRAA_VALORES_COMPROMISSOS",
                 "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO"])
+            cls._siconfi(store)
             cls.saida = os.path.join(cls.dir, "data")
             build.construir(store, dir_saida=cls.saida, origem="demonstracao")
+
+    @classmethod
+    def _siconfi(cls, store):
+        """A segunda fonte, do Tesouro.
+
+        Sem ela o confronto entre as duas apurações do mesmo patrimônio não
+        existe na saída, e os testes que o guardam passariam por não ter o que
+        conferir — que é o pior jeito de um teste passar.
+        """
+        from cadprev import fieldmap, siconfi
+        brutos = siconfi.Cliente(fixtures=cls.fixtures, pausa=0).entes()
+        resolucao = fieldmap.resolver("SICONFI_ENTE", brutos[0].keys())
+        store.gravar("SICONFI_ENTE",
+                     (fieldmap.aplicar(resolucao, b) for b in brutos))
+
+        rreo = siconfi.ClienteRREO(fixtures=cls.fixtures, pausa=0)
+        do_anexo = []
+        for alvo in store.consultar(
+                "SELECT cnpj_ente, cod_ibge, esfera_siconfi FROM siconfi_ente"):
+            itens = rreo.anexo_rpps(alvo["cod_ibge"], alvo["esfera_siconfi"],
+                                    demo.ANO, 3)
+            for item in itens:
+                item["cnpj_ente"] = alvo["cnpj_ente"]
+            do_anexo.extend(itens)
+        if do_anexo:
+            resolucao = fieldmap.resolver("SICONFI_RREO", do_anexo[0].keys())
+            store.gravar("SICONFI_RREO",
+                         (fieldmap.aplicar(resolucao, l) for l in do_anexo),
+                         {"exercicio": demo.ANO, "periodo": 3})
 
     @classmethod
     def tearDownClass(cls):
@@ -470,6 +500,186 @@ class TestPipeline(unittest.TestCase):
             self.assertNotAlmostEqual(
                 indicadores["patrimonio_por_beneficiario"],
                 round(c["total"] / inativos, 2), places=2, msg=ente["ente"])
+
+    # ------------------------------ o que cada fonte conta, e os imóveis
+
+    def test_imoveis_sao_a_assimetria_que_o_painel_nao_resolve(self):
+        """A prática contábil difere entre entes, e a amostra tem as duas.
+
+        Em 22/09/2026, dos 857 RPPS confrontáveis, 57 declaravam imóveis:
+        tirá-los da conta aproximava as duas fontes em 40 deles e afastava nos
+        outros 17. Em Diadema/SP a divergência de −70,03% some ao tirar os
+        imóveis; no Rio de Janeiro/RJ ela aparece. Com um caso só, o painel
+        teria de afirmar uma regra que a fonte não tem.
+        """
+        aproxima = afasta = 0
+        for ente in self._json("entes.json"):
+            ficha = self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+            c = ((ficha.get("contabil") or {}).get("confronto") or {})
+            if not c.get("imoveis"):
+                continue
+            self.assertGreater(c["perc_imoveis"], 0, ente["ente"])
+            if abs(c["perc_sem_imoveis"]) < abs(c["perc"]):
+                aproxima += 1
+            else:
+                afasta += 1
+        self.assertTrue(aproxima, "falta o ente que não leva os imóveis ao Anexo 04")
+        self.assertTrue(afasta, "falta o ente que leva")
+
+        nacional = self._json("qualidade.json")["divergencia_entre_fontes"]
+        self.assertEqual(nacional["imoveis_aproxima"], aproxima)
+        self.assertEqual(nacional["imoveis_afasta"], afasta)
+        self.assertEqual(nacional["com_imoveis"], aproxima + afasta)
+
+    def test_disponibilidades_entram_dos_dois_lados(self):
+        """A assimetria que já foi resolvida, e que precisa continuar assim.
+
+        As disponibilidades financeiras são um segmento da carteira no CADPREV,
+        e por isso o confronto soma caixa e investimentos do lado do SICONFI.
+        Comparar só os investimentos deixaria de fora justamente a parte que o
+        outro lado conta — e produziria uma divergência de critério em quase
+        todo RPPS.
+        """
+        achou = False
+        for ente in self._json("entes.json"):
+            ficha = self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+            contabil = ficha.get("contabil") or {}
+            carteira = ficha.get("carteira") or {}
+            if not (contabil.get("confronto") and carteira.get("disponivel")):
+                continue
+            tem_disponibilidades = any(
+                "isponibilidade" in (s.get("rotulo") or "")
+                for s in carteira.get("segmentos") or [])
+            if not tem_disponibilidades:
+                continue
+            achou = True
+            # O total confrontado é investimentos + caixa, não só investimentos.
+            self.assertAlmostEqual(
+                contabil["confronto"]["siconfi"],
+                round((contabil["investimentos"] or 0.0)
+                      + (contabil["caixa"] or 0.0), 2),
+                places=2, msg=ente["ente"])
+        self.assertTrue(achou, "o demo precisa de disponibilidades na carteira")
+
+    # ------------------------------------- nome do ativo e título público
+
+    def test_ativo_nao_aparece_como_numero_de_contrato(self):
+        """Nos títulos públicos os dois campos trocam de papel.
+
+        ``nome_ativo`` traz um número e ``identificacao_ativo`` traz a
+        descrição — e a tela mostrava o número. A regra é sobre o conteúdo, não
+        sobre a classe: vale o primeiro dos dois campos que tenha letras.
+        """
+        achou = False
+        for ente in self._json("entes.json"):
+            caminho = os.path.join("ente", ente["cnpj"] + "-carteira.json")
+            if not os.path.exists(os.path.join(self.saida, caminho)):
+                continue
+            for competencia in self._json(caminho)["competencias"]:
+                for item in competencia["itens"]:
+                    self.assertTrue(
+                        any(ch.isalpha() for ch in item["nome"]),
+                        "ativo publicado como número puro: " + repr(item["nome"]))
+                    if item.get("nome_de") == "identificacao_ativo":
+                        achou = True
+        self.assertTrue(achou, "o demo precisa do caso em que os campos se invertem")
+
+    def test_vencimento_do_titulo_so_quando_a_fonte_o_escreveu(self):
+        """Sigla para quem a tem, vencimento só para quem o declarou.
+
+        80% das descrições nacionais são o nome comercial do Tesouro Direto,
+        sem data nenhuma. Derivar um vencimento aí seria afirmar o que a fonte
+        não disse — e a tela mantém a descrição original ao lado do rótulo
+        derivado justamente para que a derivação fique conferível.
+        """
+        com_venc = sem_venc = 0
+        for ente in self._json("entes.json"):
+            caminho = os.path.join("ente", ente["cnpj"] + "-carteira.json")
+            if not os.path.exists(os.path.join(self.saida, caminho)):
+                continue
+            for competencia in self._json(caminho)["competencias"]:
+                for item in competencia["itens"]:
+                    titulo = item.get("titulo")
+                    if not titulo:
+                        continue
+                    self.assertTrue(titulo["sigla"].startswith(("NTN", "LFT", "LTN")))
+                    # A descrição original continua publicada ao lado.
+                    self.assertTrue(item["nome"])
+                    if titulo["vencimento"]:
+                        com_venc += 1
+                        self.assertIn(titulo["vencimento"][8:10], titulo["rotulo"])
+                    else:
+                        sem_venc += 1
+        self.assertTrue(com_venc, "o demo precisa de título com vencimento escrito")
+        self.assertTrue(sem_venc, "o demo precisa de título sem vencimento escrito")
+
+    # -------------------------------------------- consolidados nacionais
+
+    def _consolidado(self, qual):
+        from cadprev import qualidade
+        return self._json("consolidado.json")["variantes"][qualidade.chave_padrao()][qual]
+
+    def test_consolidado_nao_conta_ausencia_como_zero(self):
+        """O total nacional diz quantos entraram nele.
+
+        R$ 40 bilhões somados por 1.500 RPPS e por 300 são dois fatos
+        diferentes, e o segundo não é o país. Quem não declarou fica de fora e
+        é contado à parte.
+        """
+        atuaria = self._consolidado("atuaria")
+        provisoes = atuaria["compromissos"]["provisoes"]
+        self.assertEqual(provisoes["entes"] + provisoes["sem_dado"], atuaria["rpps"])
+        self.assertEqual(atuaria["indicadores"]["provisoes"]["n"], provisoes["entes"])
+
+    def test_deficit_e_superavit_nao_se_compensam(self):
+        """O superávit de um RPPS não cobre o déficit de outro.
+
+        Um resultado nacional líquido afirmaria exatamente isso. Os dois lados
+        somam à parte, com a contagem de quantos estão de cada lado.
+        """
+        atuaria = self._consolidado("atuaria")
+        k = atuaria["compromissos"]
+        self.assertIn("deficit", k)
+        self.assertIn("superavit", k)
+        self.assertNotIn("resultado", k)
+        self.assertGreaterEqual(k["deficit"]["total"], 0)
+        self.assertGreaterEqual(k["superavit"]["total"], 0)
+        self.assertLessEqual(atuaria["com_deficit"] + atuaria["com_superavit"],
+                             atuaria["com_draa"])
+
+    def test_total_de_caixa_soma_so_quem_declarou_o_ano_inteiro(self):
+        """A janela do DIPR varia de ente para ente.
+
+        Somar meia série de um com a série cheia de outro dá um total que
+        nenhum dos dois declarou. Os indicadores percentuais não têm esse
+        problema e continuam com todo mundo.
+        """
+        caixa = self._consolidado("caixa")
+        self.assertLess(caixa["ano_completo"]["entes"], caixa["com_dipr"],
+                        "o demo precisa de RPPS com série parcial, senão a "
+                        "regra não é testada")
+        self.assertEqual(caixa["ano_completo"]["receita"]["entes"],
+                         caixa["ano_completo"]["entes"])
+        # O indicador percentual usa todo mundo que declarou, não só esses.
+        self.assertGreaterEqual(
+            caixa["indicadores"]["resultado_sobre_ingressos"]["n"],
+            caixa["ano_completo"]["entes"])
+
+    def test_consolidado_da_ficha_separa_regular_de_irregular(self):
+        """A contagem tem de saber contar os dois lados.
+
+        Um consolidado que dissesse "0 regulares" porque a amostra é uniforme
+        não provaria nada sobre a leitura por pessoa.
+        """
+        ficha = self._consolidado("ficha")
+        gov = ficha["governanca"]
+        self.assertTrue(gov["regulares"], "falta RPPS com todos certificados")
+        self.assertTrue(gov["irregulares"], "falta RPPS com alguém sem certificação")
+        self.assertEqual(gov["regulares"] + gov["irregulares"], gov["avaliados"])
+        # E a distribuição da massa existe e tem dispersão real.
+        razao = ficha["indicadores"]["razao_ativos_inativos"]
+        self.assertTrue(razao["disponivel"])
+        self.assertLess(razao["p25"], razao["p75"])
 
     def test_norma_dos_investimentos_vem_de_um_lugar_so(self):
         """O painel não mantém tabela de limites — quem declara o teto de cada

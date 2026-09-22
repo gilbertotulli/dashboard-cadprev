@@ -95,8 +95,21 @@ _CLASSES = [
     ("Investimentos no Exterior", "Fundo/Classe de Investimento no Exterior Investidor Profissional  Art. 9°", 10.0, 0.04),
     ("Fundos Imobiliários", "Fundo/Classe de Investimento Imobiliário  art. 11", 20.0, 0.02),
     ("Empréstimos Consignados", "Empréstimos Consignados  art. 12", 5.0, 0.005),
+    ("Imóveis", "Imóveis  art. 13", None, 0.02),
     ("Disponibilidades Financeiras", None, None, 0.045),
 ]
+
+#: Entes que declaram imóveis na carteira. Só 57 dos 857 RPPS confrontáveis
+#: fazem isso em 22/09/2026, e a amostra reproduz os dois comportamentos que a
+#: base nacional tem: o ente que **não** leva os imóveis às contas de aplicação
+#: do Anexo 04 (o caso de Diadema/SP, 70% da carteira em imóveis e −70,03% de
+#: divergência que some ao tirá-los) e o que leva (o Rio de Janeiro/RJ, 59,9%
+#: em imóveis e 0,29% de divergência). É esse par que sustenta a palavra
+#: "depende" na tela — com um caso só, o painel teria de afirmar uma regra que
+#: a fonte não tem.
+_ENTE_IMOVEIS_FORA = 12
+_ENTE_IMOVEIS_DENTRO = 15
+_ENTES_COM_IMOVEIS = frozenset({_ENTE_IMOVEIS_FORA, _ENTE_IMOVEIS_DENTRO})
 
 #: A classe que a própria fonte marca como fora do rol da resolução. Não é teto
 #: estourado: é ativo que a norma não prevê. Em 17/09/2026 eram 45 entes.
@@ -128,6 +141,21 @@ _GOVERNANCA = (
 
 #: Entes que carregam ativo fora do rol.
 _ENTES_FORA_DA_NORMA = frozenset({7, 14, 23})
+
+#: Entes em que alguém responde pelos recursos sem nenhuma certificação
+#: vigente. É o alerta da aba Ficha, e precisa de contraparte: se todos
+#: estivessem irregulares, o consolidado nacional não provaria que sabe contar
+#: os dois lados.
+_ENTES_GOVERNANCA_IRREGULAR = frozenset({1, 4, 9, 16, 22, 30, 41})
+
+#: O ente cuja folha de inativos supera os ingressos. Sem ele, o quadro
+#: consolidado de caixa não tem nenhum RPPS deficitário para sinalizar.
+_ENTE_CAIXA_DEFICITARIO = 10
+
+#: Entes que declararam só parte do ano no DIPR. Sem eles, o total nacional de
+#: caixa somaria todo mundo e passaria no teste — a regra que exclui a série
+#: incompleta só é testável quando existe uma série incompleta.
+_ENTES_DIPR_PARCIAL = frozenset({8, 19, 27})
 
 #: Estados que fixaram alíquota militar diferente da referência federal de
 #: 10,5%. Não é irregularidade: é competência legislativa deles.
@@ -251,6 +279,34 @@ def _fundo(segmento, n):
     return codigo, "{} — fundo exemplo {}".format(segmento, n + 1)
 
 
+#: Como o RPPS descreve um título público comprado no balcão. São textos livres,
+#: e a amostra traz os quatro formatos que a base nacional tem em 22/09/2026:
+#: com vencimento e data de compra, com as duas datas sem dizer qual é qual,
+#: só o nome comercial do Tesouro Direto (80% dos casos, sem vencimento
+#: nenhum), e com o declarante trocando os campos de lugar.
+_TITULOS = (
+    "NTNB 15082040 (Compra em 06122024 Tx 67643)",
+    "NTNB 15052055 (Compra em 10042025 Tx 7,3600)",
+    "LFT 01092026 (Compra em 12032024)",
+    "NTNB_07032006_15052035",
+    "Tesouro IPCA+ com Juros Semestrais (NTNB)",
+    "Tesouro Prefixado (LTN)",
+    "NTNB 19052025 (Compra em 15052045 Tx 7,1730)",
+)
+
+
+def _titulo_publico(n):
+    """Identificação e nome de um título público — na ordem que a fonte usa.
+
+    **Os dois campos trocam de papel aqui.** Num fundo, ``no_fundo`` é o nome e
+    ``id_ativo`` é o CNPJ; num título público, ``id_ativo`` traz a descrição
+    escrita à mão e ``no_fundo`` traz um número de contrato. Em 22/09/2026 isso
+    valia para 6.844 das 7.091 posições de título público do país — e era por
+    isso que a tela mostrava um número na coluna "Ativo".
+    """
+    return _TITULOS[n % len(_TITULOS)], str(20500815 + n * 7919)
+
+
 #: Descrições exatamente como a API as devolve — o painel casa por texto.
 _HIPOTESES = [
     ("Projeção da Taxa de Juros Real para o Exercício", "5.38"),
@@ -355,7 +411,11 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # são bases de cálculo — entram na amostra justamente para que o
         # pipeline continue tendo de excluí-los.
         folha = patrimonio / 1e9 * 3.1e6
-        for mes in range(1, 13):
+        # Nem todo ente declara o ano inteiro, e é o que faz o total nacional
+        # de caixa não poder somar todo mundo: meia série de um ao lado da
+        # série cheia de outro dá um total que nenhum dos dois declarou.
+        meses_do_dipr = 5 if indice in _ENTES_DIPR_PARCIAL else 12
+        for mes in range(1, meses_do_dipr + 1):
             extra = 1.45 if mes in (6, 12) else 1.0
             base = folha * extra
             tabelas["DIPR"].append(dict(
@@ -367,9 +427,18 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 ident, dt_ano=ANO, dt_mes=mes, no_plano="PREVIDENCIARIO",
                 no_orgao="Prefeitura", id_rubrica=27, no_rubrica="SEG",
                 te_rubrica="Dos servidores", vl_rubrica="{:.2f}".format(base)))
+            # A folha de inativos varia entre os entes, e é o que faz o
+            # resultado de caixa ser um do RPPS e não do painel: com um fator
+            # só, a distribuição nacional teria desvio zero e o quadro
+            # consolidado passaria no teste sem medir nada. Um ente fecha no
+            # vermelho, que é o caso que a tela precisa ter o que sinalizar.
+            peso_inativos = 0.26 * (0.55 + (indice % 7) * 0.22)
+            if indice == _ENTE_CAIXA_DEFICITARIO:
+                peso_inativos = 1.35
             for id_rub, sigla, fator in ((56, "PAT-SEG", 0.22), (64, "SEG", 0.14),
                                          (79, "ING-REND-APL", 0.09),
-                                         (82, "UT-APO", 0.26), (83, "UT-PEN", 0.05),
+                                         (82, "UT-APO", peso_inativos),
+                                         (83, "UT-PEN", 0.05),
                                          (96, "UT-DESP-ADM", 0.012)):
                 tabelas["DIPR"].append(dict(
                     ident, dt_ano=ANO, dt_mes=mes, no_plano="PREVIDENCIARIO",
@@ -385,7 +454,8 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # de um ente soma 100% (1.820 dos 1.821 entes em 17/09/2026), e uma
         # amostra em que ele não soma não exercita o enquadramento.
         fatias = []
-        catalogo = list(_CLASSES)
+        catalogo = [c for c in _CLASSES
+                    if c[0] != "Imóveis" or indice in _ENTES_COM_IMOVEIS]
         if indice in _ENTES_FORA_DA_NORMA:
             catalogo.append(_CLASSE_FORA_DA_NORMA)
         for segmento, classe, teto, fatia in catalogo:
@@ -421,7 +491,10 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                           else rnd.randint(1, 3))
                 for n in range(ativos):
                     valor = valor_classe / ativos
-                    fundo_id, fundo_nome = _fundo(segmento, ordem * 4 + n)
+                    if "Títulos Públicos" in (classe or ""):
+                        fundo_id, fundo_nome = _titulo_publico(ordem * 4 + n)
+                    else:
+                        fundo_id, fundo_nome = _fundo(segmento, ordem * 4 + n)
                     # Conta e caixa não têm PL; fundo tem, e é sempre maior que
                     # a posição de um cotista só.
                     fundo_pl = (None if segmento == "Disponibilidades Financeiras"
@@ -478,7 +551,12 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # vigente — nesse caso o requisito está atendido e o painel não pode
         # acusar ninguém. A amostra traz os três casos: em ordem, vencida com
         # outra vigente, e só vencidas.
-        for pessoa, papel, certificacoes in _GOVERNANCA:
+        # Só uma parte dos entes tem alguém sem certificação vigente. Com
+        # todos irregulares, o consolidado nacional diria "0 regulares" e a
+        # contagem não provaria que sabe separar os dois casos.
+        equipe = (_GOVERNANCA if indice in _ENTES_GOVERNANCA_IRREGULAR
+                  else _GOVERNANCA[:1] + _GOVERNANCA[2:])
+        for pessoa, papel, certificacoes in equipe:
             for tipo, meses in certificacoes:
                 validade = (
                     None if meses is None
@@ -838,11 +916,15 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
     # Só a competência mais recente: o Anexo 04 é uma posição, não um acumulado,
     # e somar meses daria um patrimônio que nenhuma das duas fontes declara.
     carteira: Dict[str, float] = {}
+    imoveis: Dict[str, float] = {}
     for registro in tabelas["DAIR_CARTEIRA"]:
         if registro["dt_mes_bimestre"] != MES_DAIR:
             continue
-        carteira[registro["nr_cnpj_entidade"]] = carteira.get(
-            registro["nr_cnpj_entidade"], 0.0) + float(registro["vl_total_atual"])
+        cnpj = registro["nr_cnpj_entidade"]
+        valor = float(registro["vl_total_atual"])
+        carteira[cnpj] = carteira.get(cnpj, 0.0) + valor
+        if registro["no_segmento"] == "Imóveis":
+            imoveis[cnpj] = imoveis.get(cnpj, 0.0) + valor
 
     linhas: List[Dict[str, Any]] = []
     for n, ente in enumerate(entes_siconfi):
@@ -866,9 +948,15 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
         # critérios distintos. Um ente foge da faixa para que a tela tenha o que
         # sinalizar.
         desvio = 1.12 if n == 2 else 1.0 + (n % 5) * 0.004
+        # Os imóveis, quando o ente não os leva às contas de aplicação. É a
+        # assimetria que o painel não resolve e mostra: aqui um dos dois entes
+        # com imóveis os omite do Anexo 04 e o outro não, como na base real.
+        base_do_anexo = total
+        if n == _ENTE_IMOVEIS_FORA:
+            base_do_anexo = total - imoveis.get(ente["cnpj"], 0.0)
         for ordem, (cod_inv, cod_caixa, cod_rec, cod_desp,
                     fatia) in enumerate(_CONTAS_DO_RREO):
-            recursos = total * desvio * fatia
+            recursos = base_do_anexo * desvio * fatia
             base = {"exercicio": ANO, "periodo": 3, "cod_ibge": ente["cod_ibge"],
                     "uf": ente["uf"], "instituicao": ente["ente"],
                     "anexo": "RREO-Anexo 04", "populacao": ente["populacao"]}

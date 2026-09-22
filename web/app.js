@@ -16,7 +16,13 @@
                  filtros: null, chaves: null,
                  // Competência escolhida na carteira detalhada. Nula = a mais
                  // recente que o ente tem.
-                 competencia: null };
+                 competencia: null,
+                 // Ordenação e agrupamento da lista de ativos. Agrupado por
+                 // classe é o padrão porque é onde está o teto da norma: a
+                 // pergunta que a tela responde é "quanto tenho em cada
+                 // classe", e a lista solta só responde "o que tenho".
+                 ordemAtivos: { campo: "valor", desc: true },
+                 agruparAtivos: true };
   var conteudo = document.getElementById("conteudo");
 
   // ------------------------------------------------------------ utilidades
@@ -237,8 +243,20 @@
 
   function tabela(colunas, linhas, larga) {
     var thead = h("thead", {}, [h("tr", {}, colunas.map(function (c) {
-      return h("th", { class: (c.n ? "n" : "") + (c.classe ? " " + c.classe : ""),
-                       texto: c.t });
+      var classe = (c.n ? "n" : "") + (c.classe ? " " + c.classe : "");
+      /* Coluna ordenável: `c.ordenar` é o clique e `c.ordem` diz se é ela que
+       * manda agora ("asc"/"desc"). A seta some quando a ordem é outra, para
+       * que a tabela tenha uma única afirmação sobre por onde está ordenada. */
+      if (!c.ordenar) return h("th", { class: classe, texto: c.t });
+      return h("th", { class: classe + " ordenavel" + (c.ordem ? " ativa" : ""),
+                       title: "Ordenar por " + c.t,
+                       "aria-sort": c.ordem === "asc" ? "ascending"
+                                  : (c.ordem === "desc" ? "descending" : "none") },
+        [h("button", { class: "link limpar", onclick: c.ordenar }, [
+          document.createTextNode(c.t),
+          h("span", { class: "seta", texto: c.ordem === "asc" ? " \u2191"
+                      : (c.ordem === "desc" ? " \u2193" : " \u21c5") })
+        ])]);
     }))]);
     var tbody = h("tbody", {}, linhas);
     /* `larga` aceita `true` para o mínimo de 560px e "extra" para tabelas de
@@ -630,8 +648,236 @@
     ]);
   }
 
+  // ------------------------------- quadros consolidados das abas de ente
+
+  /* Uma distribuição vira uma linha de tabela. A mediana lidera e os quartis
+   * vêm ao lado: o patrimônio dos RPPS é concentrado, e a média sozinha
+   * descreve um regime que não existe. A média e o desvio ficam na segunda
+   * linha porque há perguntas que só eles respondem — e porque a distância
+   * entre os dois é a medida da concentração. */
+  function linhaDistribuicao(rotulo, d, formatar, nota) {
+    if (!d || !d.disponivel) {
+      return h("tr", {}, [
+        h("td", {}, [
+          h("div", { texto: rotulo }),
+          h("div", { class: "nota", texto: d && d.n
+            ? "só " + num(d.n, 0) + " RPPS declararam — menos que os " +
+              num(d.minimo || 3, 0) + " de que uma distribuição precisa"
+            : "nenhum RPPS declarou" })
+        ]),
+        h("td", { class: "n", texto: "—" }), h("td", { class: "n", texto: "—" }),
+        h("td", { class: "n", texto: "—" }), h("td", { class: "n", texto: "—" })
+      ]);
+    }
+    var f = formatar || function (v) { return num(v, 2); };
+    return h("tr", {}, [
+      h("td", {}, [
+        h("div", { texto: rotulo }),
+        h("div", { class: "nota", texto:
+          "média " + f(d.media) + " · desvio " + f(d.desvio) +
+          (nota ? " · " + nota : "") })
+      ]),
+      h("td", { class: "n", texto: num(d.n, 0) }),
+      h("td", { class: "n", texto: f(d.mediana) }),
+      h("td", { class: "n", texto: f(d.p25) + " a " + f(d.p75) }),
+      h("td", { class: "n", texto: f(d.minimo_obs) + " a " + f(d.maximo_obs) })
+    ]);
+  }
+
+  function cartaoDistribuicoes(titulo, fonte, sub, linhas) {
+    return cartao(titulo, fonte, sub,
+      [tabela([{ t: "Indicador" }, { t: "RPPS", n: true },
+               { t: "Mediana", n: true }, { t: "Metade do meio", n: true },
+               { t: "Mínimo a máximo", n: true }], linhas, true),
+       h("p", { class: "nota", texto:
+         "A mediana lidera, e não a média: uns poucos RPPS estaduais reúnem a " +
+         "maior parte de tudo, e a média puxada por eles descreve um regime " +
+         "que não existe. A \"metade do meio\" é o intervalo entre o primeiro e " +
+         "o terceiro quartis — onde está metade dos RPPS. Quem não declarou o " +
+         "indicador fica de fora da conta, nunca como zero." })]);
+  }
+
+  /* O consolidado abre quando nenhum RPPS está escolhido. A alternativa era a
+   * tela dizer "escolha um RPPS" e não responder nada — e a pergunta que cada
+   * ficha levanta é comparativa: 1,8 ativo por beneficiário é muito ou pouco? */
+  function consolidado(qual) {
+    return nacional("consolidado.json").then(function (c) {
+      return c[qual] || {};
+    });
+  }
+
+  function cabecalhoConsolidado(titulo, quantos, texto) {
+    return [
+      h("h2", { class: "secao", texto: titulo }),
+      h("div", { class: "contexto" }, [
+        h("span", { class: "pilula" }, ["Brasil ", h("b", { texto: num(quantos, 0) + " RPPS" })]),
+        h("button", {
+          class: "link limpar", texto: "escolher um RPPS na busca do topo",
+          onclick: function () {
+            var busca = document.getElementById("busca");
+            if (busca) busca.focus();
+          }
+        })
+      ]),
+      h("p", { class: "intro", texto: texto })
+    ];
+  }
+
+  function fichaNacional() {
+    return consolidado("ficha").then(function (c) {
+      if (!c.disponivel) return [semDado("massa de participantes", "DRAA_ESTATISTICA")];
+      var i = c.indicadores;
+      var pessoas = c.pessoas;
+      return cabecalhoConsolidado("Ficha do RPPS · consolidado", c.rpps,
+        "O que a ficha de um RPPS mostra, somado e distribuído entre todos. " +
+        "Os totais de pessoas somam — são contagens; os indicadores não somam " +
+        "e por isso aparecem como distribuição.").concat([
+        h("div", { class: "kpis" }, [
+          kpi("Servidores ativos", num(pessoas.ativos.total, 0),
+            num(pessoas.ativos.entes, 0) + " RPPS declararam"),
+          kpi("Beneficiários", num(pessoas.inativos.total, 0),
+            "aposentados e pensionistas"),
+          kpi("CRP em dia", num(c.crp.em_dia, 0),
+            c.crp.vencido ? num(c.crp.vencido, 0) + " com certificado vencido"
+                          : "de " + num(c.crp.com_validade, 0) + " com validade declarada",
+            c.crp.vencido ? "ruim" : "bom"),
+          kpi("RPPS com massa militar", num(c.com_massa_militar, 0),
+            "só Estados têm militares")
+        ]),
+        cartaoDistribuicoes("Massa e custeio, entre os RPPS",
+          "DRAA_ESTATISTICA · RPPS_ALIQUOTA",
+          "Cada linha é a distribuição do indicador entre os RPPS que o declararam",
+          [
+            linhaDistribuicao("Servidores ativos", i.ativos,
+              function (v) { return num(v, 0); }),
+            linhaDistribuicao("Beneficiários", i.inativos,
+              function (v) { return num(v, 0); }),
+            linhaDistribuicao("Ativos por beneficiário", i.razao_ativos_inativos,
+              function (v) { return num(v, 2); },
+              "quanto menor, mais madura a massa"),
+            linhaDistribuicao("Alíquota do ente", i.aliquota_ente,
+              function (v) { return pct(v, 2); }),
+            linhaDistribuicao("Alíquota do segurado", i.aliquota_segurado,
+              function (v) { return pct(v, 2); })
+          ]),
+        c.governanca.avaliados
+          ? cartao("Certificação de quem responde pelos recursos",
+              "DAIR_GOVERNANCA",
+              "A leitura é por pessoa: certificação vencida ao lado de uma " +
+              "vigente não é irregularidade",
+              h("div", { class: "kpis" }, [
+                kpi("RPPS avaliados", num(c.governanca.avaliados, 0),
+                  "com governança declarada no DAIR"),
+                kpi("Todos certificados", num(c.governanca.regulares, 0),
+                  "ninguém sem certificação vigente", "bom"),
+                kpi("Com alguém sem certificação vigente",
+                  num(c.governanca.irregulares, 0),
+                  "entre quem ainda está em exercício",
+                  c.governanca.irregulares ? "ruim" : "bom")
+              ]))
+          : null
+      ].filter(Boolean));
+    });
+  }
+
+  function caixaNacional() {
+    return consolidado("caixa").then(function (c) {
+      if (!c.disponivel) return [semDado("caixa", "DIPR")];
+      var i = c.indicadores;
+      var a = c.ano_completo;
+      var resultado = (a.receita.total !== null && a.despesa.total !== null)
+        ? a.receita.total - a.despesa.total : null;
+      return cabecalhoConsolidado("Caixa · consolidado", c.com_dipr,
+        "Ingressos e dispêndios declarados no DIPR. O total nacional soma só " +
+        "quem declarou o ano inteiro — a janela do DIPR varia de ente para " +
+        "ente, e somar meia série de um com a série cheia de outro daria um " +
+        "total que nenhum dos dois declarou.").concat([
+        h("div", { class: "kpis" }, [
+          kpi("Ingressos no ano", reais(a.receita.total),
+            num(a.entes, 0) + " RPPS com doze meses declarados"),
+          kpi("Dispêndios no ano", reais(a.despesa.total),
+            "no mesmo conjunto de RPPS"),
+          kpi("Resultado", reais(resultado),
+            resultado === null ? "" : (resultado >= 0 ? "ingressos maiores"
+                                                      : "dispêndios maiores"),
+            resultado === null ? "" : (resultado >= 0 ? "bom" : "ruim")),
+          kpi("RPPS com resultado negativo", num(c.deficitarios, 0),
+            "de " + num(c.com_dipr, 0) + " com DIPR no banco",
+            c.deficitarios ? "alerta" : "bom")
+        ]),
+        cartaoDistribuicoes("Caixa, entre os RPPS", "DIPR",
+          "Os valores mensais dividem pelos meses efetivamente declarados, " +
+          "não por doze: quem informou metade do ano não tem despesa mensal " +
+          "pela metade",
+          [
+            linhaDistribuicao("Resultado sobre ingressos",
+              i.resultado_sobre_ingressos, function (v) { return pct(v, 1); },
+              "negativo = dispêndio maior que ingresso"),
+            linhaDistribuicao("Ingresso mensal", i.receita_mensal, reais),
+            linhaDistribuicao("Dispêndio mensal", i.despesa_mensal, reais),
+            linhaDistribuicao("Meses declarados no ano", i.meses_declarados,
+              function (v) { return num(v, 0); })
+          ])
+      ]);
+    });
+  }
+
+  function atuariaNacional() {
+    return consolidado("atuaria").then(function (c) {
+      if (!c.disponivel) return [semDado("resultado atuarial", "DRAA_VALORES_COMPROMISSOS")];
+      var i = c.indicadores, k = c.compromissos;
+      var cobertura = (k.provisoes.total && k.ativos_garantidores.total !== null)
+        ? k.ativos_garantidores.total / k.provisoes.total * 100 : null;
+      return cabecalhoConsolidado("Situação atuarial · consolidado", c.com_draa,
+        "Compromissos somam — são obrigações, e obrigações se acumulam. " +
+        "Resultado não soma: o superávit de um RPPS não cobre o déficit de " +
+        "outro, e um resultado nacional líquido afirmaria exatamente isso. " +
+        "Por isso os dois lados aparecem separados.").concat([
+        h("div", { class: "kpis" }, [
+          kpi("Provisões matemáticas", reais(k.provisoes.total),
+            num(k.provisoes.entes, 0) + " RPPS com DRAA"),
+          kpi("Ativos garantidores", reais(k.ativos_garantidores.total),
+            cobertura === null ? "" : pct(cobertura, 1) + " das provisões"),
+          kpi("Déficit somado", reais(k.deficit.total),
+            num(c.com_deficit, 0) + " RPPS com déficit em algum fundo", "ruim"),
+          kpi("Superávit somado", reais(k.superavit.total),
+            num(c.com_superavit, 0) + " RPPS sem déficit em fundo nenhum", "bom")
+        ]),
+        cartaoDistribuicoes("Situação atuarial, entre os RPPS",
+          "DRAA_VALORES_COMPROMISSOS",
+          "A cobertura de cada RPPS soma os fundos dele — numerador e " +
+          "denominador vêm da mesma soma. O que não se soma é o resultado de " +
+          "um com o de outro",
+          [
+            linhaDistribuicao("Cobertura das provisões", i.cobertura,
+              function (v) { return pct(v, 1); },
+              "ativos garantidores sobre provisões"),
+            linhaDistribuicao("Provisões matemáticas", i.provisoes, reais),
+            linhaDistribuicao("Ativos garantidores", i.ativos_garantidores, reais)
+          ]),
+        k.provisoes.sem_dado
+          ? h("p", { class: "nota", texto:
+              num(k.provisoes.sem_dado, 0) + " dos " + num(c.rpps, 0) +
+              " RPPS do recorte não têm avaliação atuarial no banco e ficam de " +
+              "fora de todos os números acima — ausência, não zero." })
+          : null,
+        (c.militar && c.militar.provisoes.entes)
+          ? cartao("Massa militar", "DRAA_VALORES_COMPROMISSOS",
+              "Só Estados têm massa militar, e o sistema dela é de proteção " +
+              "social, não plano de previdência",
+              h("div", { class: "kpis" }, [
+                kpi("Provisões da massa militar", reais(c.militar.provisoes.total),
+                  num(c.militar.provisoes.entes, 0) + " entes declararam"),
+                kpi("Ativos garantidores", reais(c.militar.ativos_garantidores.total),
+                  "zero declarado não é ausência: o tesouro paga direto")
+              ]))
+          : null
+      ].filter(Boolean));
+    });
+  }
+
   function abaFicha() {
-    if (!estado.cnpj) return Promise.resolve([semEnte("Ficha do RPPS")]);
+    if (!estado.cnpj) return fichaNacional();
     return carregarEnte().then(function (e) {
       var crp = e.crp || {};
       var est = e.estatistica || {};
@@ -725,7 +971,7 @@
   }
 
   function abaCaixa() {
-    if (!estado.cnpj) return Promise.resolve([semEnte("Caixa")]);
+    if (!estado.cnpj) return caixaNacional();
     return carregarEnte().then(function (e) {
       var c = e.caixa || {};
       if (!c.disponivel) return [cabecalhoEnte(e), semDado("caixa", "DIPR")];
@@ -951,7 +1197,7 @@
   }
 
   function abaAtuaria() {
-    if (!estado.cnpj) return Promise.resolve([semEnte("Atuária")]);
+    if (!estado.cnpj) return atuariaNacional();
     return carregarEnte().then(function (e) {
       var a = e.atuaria || {};
       // Amortização e comparativo vêm de endpoints próprios e existem mesmo
@@ -2351,30 +2597,108 @@
     }
 
     if (c.confronto) {
-      var d = c.confronto;
-      var grande = Math.abs(d.perc) > 5;
-      nos.push(cartao("As duas fontes, lado a lado", "DAIR_CARTEIRA · SICONFI",
-        "Mesmo patrimônio, duas apurações independentes",
-        [
-          h("div", { class: "kpis" }, [
-            kpi("CADPREV · declarado pelo RPPS", reais(d.cadprev),
-              "carteira ativo a ativo"),
-            kpi("SICONFI · contabilidade do ente", reais(d.siconfi),
-              "investimentos e disponibilidades"),
-            kpi("Diferença", pct(d.perc, 2), reais(d.diferenca),
-              grande ? "ruim" : "bom")
-          ]),
-          h("p", { class: "nota", texto: (grande
-            ? "Diferença acima de 5%. As duas apurações têm datas de posição e " +
-              "critérios distintos, então alguma diferença é esperada — mas " +
-              "desta ordem vale conferir na fonte. O painel mostra as duas e " +
-              "não escolhe entre elas."
-            : "As duas apurações convergem. O painel mostra ambas em vez de " +
-              "escolher uma: a discordância entre fontes públicas é, ela " +
-              "própria, informação.") + reguaNacionalDaDivergencia() })
-        ]));
+      nos.push(oQueCadaFonteConta());
+      nos.push(cartaoDoConfronto(c.confronto, e));
     }
     return nos;
+  }
+
+  /* O que cada lado conta. É a pergunta que o confronto levanta e que a tela
+   * não respondia: quem olha uma diferença de 3% quer saber se ela vem de
+   * critério ou de erro, e para isso precisa saber o que entra em cada soma. */
+  function oQueCadaFonteConta() {
+    var linhas = [
+      ["Quem declara", "A unidade gestora do RPPS",
+       "A contabilidade do ente federativo"],
+      ["Como", "Ativo a ativo, com quantidade e valor unitário",
+       "Saldo por fundo, em contas do plano de contas"],
+      ["Disponibilidades financeiras", "Entram, como segmento da carteira",
+       "Entram: o painel soma caixa e equivalentes ao lado dos investimentos"],
+      ["Imóveis", "Entram, como segmento da carteira",
+       "Depende do ente — uns levam ao Anexo 04, outros não"],
+      ["Data da posição", "Último dia da competência mensal",
+       "Último dia do bimestre"]
+    ];
+    return cartao("O que entra em cada soma", "DAIR_CARTEIRA · SICONFI",
+      "As duas fontes contam o mesmo patrimônio por caminhos diferentes",
+      [tabela([{ t: "" }, { t: "CADPREV · DAIR" },
+               { t: "SICONFI · RREO Anexo 04" }],
+        linhas.map(function (l) {
+          return h("tr", {}, [
+            h("td", {}, [h("b", { texto: l[0] })]),
+            h("td", { texto: l[1] }),
+            h("td", { texto: l[2] })
+          ]);
+        }), true),
+       h("p", { class: "nota", texto:
+         "As disponibilidades financeiras já estão resolvidas: elas são um " +
+         "segmento da carteira no CADPREV, e por isso o painel soma caixa e " +
+         "investimentos do lado do SICONFI — comparar só os investimentos " +
+         "deixaria de fora justamente a parte que o outro lado conta. O que " +
+         "continua em aberto são os imóveis." + reguaDosImoveis() })]);
+  }
+
+  /* A contagem nacional é o que autoriza a palavra "depende" acima. Se tirar os
+   * imóveis aproximasse sempre, seria regra e o painel a aplicaria. */
+  function reguaDosImoveis() {
+    var dv = (estado.cache["qualidade.json"] || {}).divergencia_entre_fontes;
+    if (!dv || !dv.com_imoveis) return "";
+    return " No país, " + num(dv.com_imoveis, 0) + " dos " +
+      num(dv.confrontados, 0) + " RPPS confrontáveis declaram imóveis na " +
+      "carteira; tirá-los da conta aproxima as duas fontes em " +
+      num(dv.imoveis_aproxima, 0) + " deles e afasta em " +
+      num(dv.imoveis_afasta, 0) + ". Não é erro de nenhum dos dois lados: é " +
+      "prática contábil que difere entre entes.";
+  }
+
+  function cartaoDoConfronto(d, e) {
+    var grande = Math.abs(d.perc) > 5;
+    var temImoveis = d.imoveis && d.perc_sem_imoveis !== null &&
+                     d.perc_sem_imoveis !== undefined;
+    var aproxima = temImoveis &&
+                   Math.abs(d.perc_sem_imoveis) < Math.abs(d.perc);
+
+    var kpis = [
+      kpi("CADPREV · declarado pelo RPPS", reais(d.cadprev),
+        "carteira ativo a ativo"),
+      kpi("SICONFI · contabilidade do ente", reais(d.siconfi),
+        "investimentos e disponibilidades"),
+      kpi("Diferença", pct(d.perc, 2), reais(d.diferenca),
+        grande ? "ruim" : "bom")
+    ];
+    if (temImoveis) {
+      kpis.push(kpi("Diferença sem os imóveis", pct(d.perc_sem_imoveis, 2),
+        pct(d.perc_imoveis, 1) + " da carteira está em imóveis",
+        Math.abs(d.perc_sem_imoveis) > 5 ? "ruim" : "bom"));
+    }
+
+    var nos = [
+      h("div", { class: "kpis" }, kpis),
+      h("p", { class: "nota", texto: (grande
+        ? "Diferença acima de 5%. As duas apurações têm datas de posição e " +
+          "critérios distintos, então alguma diferença é esperada — mas desta " +
+          "ordem vale conferir na fonte. O painel mostra as duas e não escolhe " +
+          "entre elas."
+        : "As duas apurações convergem. O painel mostra ambas em vez de " +
+          "escolher uma: a discordância entre fontes públicas é, ela própria, " +
+          "informação.") + reguaNacionalDaDivergencia() })
+    ];
+
+    if (temImoveis) {
+      nos.push(h("p", { class: "nota", texto: aproxima
+        ? "Tirando os imóveis a diferença cai de " + pct(Math.abs(d.perc), 2) +
+          " para " + pct(Math.abs(d.perc_sem_imoveis), 2) + ": é sinal de que " +
+          "este ente não leva os imóveis do RPPS às contas de aplicação do " +
+          "Anexo 04. Eles continuam na carteira do CADPREV, e o painel não " +
+          "tira nenhum dos dois números da tela."
+        : "Tirando os imóveis a diferença sobe de " + pct(Math.abs(d.perc), 2) +
+          " para " + pct(Math.abs(d.perc_sem_imoveis), 2) + ": é sinal de que " +
+          "este ente leva os imóveis ao Anexo 04, e portanto as duas fontes " +
+          "estão contando a mesma coisa." }));
+    }
+
+    return cartao("As duas fontes, lado a lado", "DAIR_CARTEIRA · SICONFI",
+      "Mesmo patrimônio, duas apurações independentes", nos);
   }
 
   // ------------------------------------------------ aba: conformidade
@@ -2996,6 +3320,152 @@
    * de ativos, e fazer toda visita à ficha pagar por isso seria cobrar de
    * muitos o custo de poucos.
    */
+  /* Os campos pelos quais a lista de ativos pode ser ordenada. O texto ordena
+   * sem acento e sem caixa; o número ordena por número, e ausência vai sempre
+   * para o fim — um "—" no meio da lista faria parecer que ali há um valor
+   * pequeno, quando o que há é a fonte não ter declarado. */
+  var ORDENS_DE_ATIVO = {
+    nome: { rotulo: "Ativo", texto: function (i) { return i.nome || ""; } },
+    classe: { rotulo: "Classe", texto: function (i) { return i.classe || ""; } },
+    cotas: { rotulo: "Quantidade", numero: function (i) { return i.cotas; } },
+    unitario: { rotulo: "Valor unitário",
+                numero: function (i) { return i.valor_unitario; } },
+    valor: { rotulo: "Valor total", numero: function (i) { return i.valor; } },
+    perc: { rotulo: "% dos recursos", numero: function (i) { return i.perc; } },
+    pl: { rotulo: "% do PL do fundo",
+          numero: function (i) { return i.perc_pl_fundo; } }
+  };
+
+  function ordenarAtivos(itens, campo, desc) {
+    var regra = ORDENS_DE_ATIVO[campo] || ORDENS_DE_ATIVO.valor;
+    var sinal = desc ? -1 : 1;
+    return itens.slice().sort(function (a, b) {
+      if (regra.texto) {
+        return sinal * semAcento(regra.texto(a)).localeCompare(semAcento(regra.texto(b)));
+      }
+      var x = regra.numero(a), y = regra.numero(b);
+      var faltaX = x === null || x === undefined;
+      var faltaY = y === null || y === undefined;
+      // Ausência fica no fim em qualquer direção: ela não é um valor menor.
+      if (faltaX || faltaY) return faltaX && faltaY ? 0 : (faltaX ? 1 : -1);
+      return sinal * (x - y);
+    });
+  }
+
+  function colunaOrdenavel(titulo, campo, numerica) {
+    var atual = estado.ordemAtivos;
+    return {
+      t: titulo, n: numerica,
+      ordem: atual.campo === campo ? (atual.desc ? "desc" : "asc") : null,
+      ordenar: function () {
+        // Clicar de novo na mesma coluna inverte; trocar de coluna começa
+        // decrescente nos números e crescente no texto, que é o que se espera
+        // de "maiores posições" e de "ordem alfabética".
+        estado.ordemAtivos = atual.campo === campo
+          ? { campo: campo, desc: !atual.desc }
+          : { campo: campo, desc: !!numerica };
+        render();
+      }
+    };
+  }
+
+  function celulasDoAtivo(i) {
+    /* O título público aparece pelo que é — sigla e vencimento — com a
+     * descrição que o RPPS escreveu logo abaixo. O rótulo é derivado e a
+     * descrição é o que a fonte afirmou: mostrar só o derivado esconderia os
+     * casos em que o declarante trocou os campos de lugar. */
+    var t = i.titulo || null;
+    var principal = t ? t.rotulo : i.nome;
+    var abaixo = t ? i.nome : (i.segmento || "");
+    return [
+      h("td", { class: "nome-ativo" }, [
+        h("div", { texto: principal }),
+        abaixo ? h("div", { class: "nota", texto: abaixo }) : null
+      ].filter(Boolean)),
+      h("td", { texto: classeCurta(i.classe), title: i.classe || "" }),
+      h("td", { class: "n", texto: i.cotas === null || i.cotas === undefined
+                ? "—" : num(i.cotas, 4) }),
+      h("td", { class: "n", texto: i.valor_unitario === null ||
+                i.valor_unitario === undefined
+                  ? "—" : reaisExatos(i.valor_unitario) }),
+      h("td", { class: "n", texto: reais(i.valor) }),
+      h("td", { class: "n", texto: pct(i.perc, 2) }),
+      h("td", { class: "n " + ((i.perc_pl_fundo || 0) > 10 ? "alerta" : ""),
+                texto: pct(i.perc_pl_fundo) })
+    ];
+  }
+
+  function cartaoDosAtivos(escolhida) {
+    var ordem = estado.ordemAtivos;
+    var colunas = [
+      colunaOrdenavel("Ativo", "nome", false),
+      colunaOrdenavel("Classe", "classe", false),
+      colunaOrdenavel("Quantidade", "cotas", true),
+      colunaOrdenavel("Valor unitário", "unitario", true),
+      colunaOrdenavel("Valor total", "valor", true),
+      colunaOrdenavel("% dos recursos", "perc", true),
+      colunaOrdenavel("% do PL do fundo", "pl", true)
+    ];
+
+    var linhas = [];
+    if (estado.agruparAtivos) {
+      /* Agrupado, a ordem vale dentro de cada classe e os grupos vêm pelo
+       * valor: é assim que a soma de cada classe fica ao lado do teto dela.
+       * `escolhida.classes` já traz os totais que o painel publica — recalcular
+       * aqui abriria a porta para a tabela e o cartão acima discordarem. */
+      escolhida.classes.forEach(function (c) {
+        var doGrupo = escolhida.itens.filter(function (i) {
+          return (i.classe || "Não informada") === c.rotulo &&
+                 (i.segmento || "Não informado") === c.segmento;
+        });
+        if (!doGrupo.length) return;
+        linhas.push(h("tr", { class: "grupo" }, [
+          h("td", { colspan: 2 }, [
+            h("b", { texto: classeCurta(c.rotulo) }),
+            h("span", { class: "nota", texto: " " + c.segmento + " · " +
+                        num(doGrupo.length, 0) + " ativos" })
+          ]),
+          h("td", {}), h("td", {}),
+          h("td", { class: "n", texto: reais(c.valor) }),
+          h("td", { class: "n" + (c.excede ? " ruim" : ""), texto: pct(c.perc, 2) }),
+          h("td", { class: "n", texto: c.limite === null || c.limite === undefined
+                    ? "sem teto" : "teto " + pct(c.limite, 0) })
+        ]));
+        ordenarAtivos(doGrupo, ordem.campo, ordem.desc).forEach(function (i) {
+          linhas.push(h("tr", { class: "do-grupo" }, celulasDoAtivo(i)));
+        });
+      });
+    } else {
+      ordenarAtivos(escolhida.itens, ordem.campo, ordem.desc).forEach(function (i) {
+        linhas.push(h("tr", {}, celulasDoAtivo(i)));
+      });
+    }
+    linhas.push(linhaTotal("Total da carteira",
+      ["", "", "", reais(escolhida.total),
+       pct(escolhida.itens.reduce(function (a, i) { return a + i.perc; }, 0), 2), ""]));
+
+    var alternar = h("button", {
+      class: "link limpar",
+      texto: estado.agruparAtivos ? "ver como lista única"
+                                  : "agrupar por classe de ativo",
+      onclick: function () {
+        estado.agruparAtivos = !estado.agruparAtivos;
+        render();
+      }
+    });
+
+    return cartao("Todos os ativos", "DAIR_CARTEIRA",
+      num(escolhida.ativos, 0) + " ativos na posição de " +
+      (competencia(escolhida.competencia) || "—") +
+      " · clique no título da coluna para ordenar" +
+      (estado.agruparAtivos ? " dentro de cada classe" : "") +
+      " · quantidade × valor unitário tem de bater com o valor total" +
+      (escolhida.percentual_da_fonte ? "" :
+        " · percentual recalculado sobre o total corrigido"),
+      [h("div", { class: "contexto" }, [alternar]),
+       tabela(colunas, linhas, "extra")]);
+  }
+
   function abaCarteiraDetalhe() {
     if (!estado.cnpj) return Promise.resolve([semEnte("Carteira detalhada")]);
     return Promise.all([
@@ -3117,36 +3587,7 @@
             ])))
       ]));
 
-      nos.push(cartao("Todos os ativos", "DAIR_CARTEIRA",
-        num(escolhida.ativos, 0) + " ativos na posição de " +
-        (competencia(escolhida.competencia) || "—") +
-        " · quantidade × valor unitário tem de bater com o valor total" +
-        (escolhida.percentual_da_fonte ? "" :
-          " · percentual recalculado sobre o total corrigido"),
-        tabela([{ t: "Ativo" }, { t: "Classe" }, { t: "Quantidade", n: true },
-                { t: "Valor unitário", n: true }, { t: "Valor total", n: true },
-                { t: "% dos recursos", n: true }, { t: "% do PL do fundo", n: true }],
-          escolhida.itens.map(function (i) {
-            return h("tr", {}, [
-              h("td", {}, [
-                h("div", { texto: i.nome }),
-                h("div", { class: "nota", texto: i.segmento || "" })
-              ]),
-              h("td", { texto: classeCurta(i.classe), title: i.classe || "" }),
-              h("td", { class: "n", texto: i.cotas === null || i.cotas === undefined
-                        ? "—" : num(i.cotas, 4) }),
-              h("td", { class: "n", texto: i.valor_unitario === null ||
-                        i.valor_unitario === undefined
-                          ? "—" : reaisExatos(i.valor_unitario) }),
-              h("td", { class: "n", texto: reais(i.valor) }),
-              h("td", { class: "n", texto: pct(i.perc, 2) }),
-              h("td", { class: "n " + ((i.perc_pl_fundo || 0) > 10 ? "alerta" : ""),
-                        texto: pct(i.perc_pl_fundo) })
-            ]);
-          }).concat([
-            linhaTotal("Total da carteira", ["", "", "", reais(escolhida.total),
-              pct(escolhida.itens.reduce(function (a, i) { return a + i.perc; }, 0), 2), ""])
-          ]), "extra")));
+      nos.push(cartaoDosAtivos(escolhida));
       return nos;
     });
   }

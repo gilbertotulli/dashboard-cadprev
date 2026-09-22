@@ -432,3 +432,25 @@ table.dados tr.somatorio td{
 /* Nota de rodapé de um cartão: menor que o corpo, para ser lida depois dele e
    não no lugar dele. */
 p.nota{font-size:.76rem;color:var(--muted);line-height:1.55;margin:12px 0 0;max-width:80ch}
+
+/* Cabeçalho de coluna que ordena. O botão herda a tipografia do th para que a
+   coluna ordenável não pareça de outra tabela; a seta fica com opacidade baixa
+   enquanto a coluna não manda, para sinalizar que dá para clicar sem competir
+   com a coluna que está ordenando. */
+table.dados th.ordenavel{padding:0}
+table.dados th.ordenavel button{font:inherit;color:inherit;letter-spacing:inherit;
+  text-transform:inherit;padding:9px 10px;width:100%;text-align:inherit;
+  cursor:pointer;white-space:nowrap}
+table.dados th.ordenavel.n button{text-align:right}
+table.dados th.ordenavel button:hover{color:var(--ink)}
+table.dados th.ordenavel .seta{opacity:.35}
+table.dados th.ordenavel.ativa .seta{opacity:1}
+table.dados th.ordenavel.ativa{color:var(--ink)}
+
+/* Linha de subtotal de um grupo de ativos. Precisa ler como cabeçalho de
+   bloco, não como mais um ativo: fundo próprio, texto firme e uma régua acima
+   separando do grupo anterior. */
+table.dados tr.grupo td{background:var(--surface-2);border-top:2px solid var(--rule-strong);
+  padding-top:10px;padding-bottom:10px}
+table.dados tr.grupo .nota{display:inline;margin-left:6px}
+table.dados tr.do-grupo td:first-child{padding-left:20px}
