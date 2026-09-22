@@ -70,7 +70,7 @@ class TestMaisRecenteFechada(unittest.TestCase):
     def test_medida_saturada_falha_alto(self):
         """Página cheia significa que a contagem parou de distinguir."""
         from cadprev import endpoints
-        c = ClienteFalso({(2026, 9): endpoints.PAGE_SIZE})
+        c = ClienteFalso({(2026, 8): endpoints.PAGE_SIZE})
         with self.assertRaises(competencia.MedidaSaturada):
             competencia.mais_recente_fechada(c, date(2026, 9, 17), meses=2)
 
@@ -82,14 +82,35 @@ class TestMaisRecenteFechada(unittest.TestCase):
         c = ClienteFalso(REAL)
         competencia.mais_recente_fechada(c, date(2026, 9, 17), meses=5)
         self.assertEqual(len(c.pedidos), 5)
-        self.assertEqual(c.pedidos[0][:2], (2026, 9))
-        self.assertEqual(c.pedidos[-1][:2], (2026, 5))
+        self.assertEqual(c.pedidos[0][:2], (2026, 8))
+        self.assertEqual(c.pedidos[-1][:2], (2026, 4))
+
+    def test_nao_pergunta_pelo_mes_corrente(self):
+        """A competência do DAIR é a posição do último dia do mês: enquanto o
+        mês corre, não há o que declarar.
+
+        Era uma requisição desperdiçada por execução, e é a que aparece no log
+        da falha de 21/09/2026 — ``dt_mes=9`` pedido no dia 21 de setembro.
+        """
+        c = ClienteFalso(REAL)
+        competencia.mais_recente_fechada(c, date(2026, 9, 21))
+        self.assertNotIn((2026, 9), [p[:2] for p in c.pedidos])
+        self.assertEqual(c.pedidos[0][:2], (2026, 8))
+
+    def test_a_janela_cobre_o_ano_inteiro_mesmo_comecando_um_mes_atras(self):
+        """Encurtar o começo não pode encurtar o alcance: a régua precisa ver
+        meses cheios para saber que os recentes estão vazios."""
+        c = ClienteFalso(REAL)
+        competencia.mais_recente_fechada(c, date(2026, 9, 21))
+        vistos = [p[:2] for p in c.pedidos]
+        self.assertEqual(len(vistos), competencia.MESES_PARA_TRAS)
+        self.assertIn((2025, 9), vistos, "a janela tem de alcançar doze meses atrás")
 
     def test_volumes_vem_do_mais_recente_para_o_mais_antigo(self):
         c = ClienteFalso(REAL)
         vistos = competencia.volumes(c, date(2026, 2, 3), meses=3)
         self.assertEqual([(a, m) for a, m, _ in vistos],
-                         [(2026, 2), (2026, 1), (2025, 12)])
+                         [(2026, 1), (2025, 12), (2025, 11)])
 
 
 if __name__ == "__main__":

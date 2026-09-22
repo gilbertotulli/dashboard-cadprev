@@ -203,12 +203,20 @@ def cmd_competencia(args) -> int:
     republicar o que já se tem com a data antiga à vista.
     """
     from cadprev import competencia as comp
-    erro = None
+    erro, vistos = None, []
     try:
         cliente = Cliente(pausa=args.pausa)
-        achado = comp.mais_recente_fechada(cliente, uf=args.uf)
+        vistos = comp.volumes(cliente, uf=args.uf)
+        achado = comp.escolher(vistos)
     except Exception as falha:  # rede, 404, 500, mudança de contrato
         achado, erro = None, falha
+
+    # A medida ao lado da escolha: sem isso, uma competência errada no painel
+    # não teria como ser diagnosticada pelo log da execução.
+    for ano, mes, quantos in vistos:
+        marca = " <-- escolhida" if achado == (ano, mes) else ""
+        print("  {}-{:02d}: {} declarantes{}".format(ano, mes, quantos, marca),
+              file=sys.stderr)
 
     if achado is None:
         do_banco = _competencia_do_banco(args.banco)

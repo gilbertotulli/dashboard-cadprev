@@ -36,10 +36,16 @@ from datetime import date
 
 from . import endpoints
 
-#: Até quando caminhar para trás. Catorze meses cobrem o ano inteiro mais a
-#: virada, e ainda assim é uma requisição por mês — barato contra uma carga que
-#: leva vinte minutos.
-MESES_PARA_TRAS = 14
+#: Quantas competências medir, a partir do mês anterior ao corrente. Treze
+#: cobrem o ano inteiro mais a virada, e ainda assim é uma requisição por mês —
+#: barato contra uma carga que leva vinte minutos.
+#:
+#: A janela inteira é medida antes de escolher, e isso não é desperdício: o
+#: critério é relativo ao maior volume visto, e parar cedo o quebraria. Andando
+#: para trás a partir de agosto de 2026, o primeiro mês visto tinha uma única
+#: declaração — metade de um é meio, e uma parada antecipada teria escolhido
+#: justamente o mês mais vazio da série.
+MESES_PARA_TRAS = 13
 
 #: Fração do maior volume visto a partir da qual a competência é considerada
 #: fechada. Metade é folgado: a diferença entre um mês publicado e um mês em
@@ -58,9 +64,17 @@ class MedidaSaturada(RuntimeError):
 def volumes(cliente: Any, hoje: Optional[date] = None,
             uf: Optional[str] = None,
             meses: int = MESES_PARA_TRAS) -> List[Tuple[int, int, int]]:
-    """Quantos RPPS declararam DAIR em cada competência recente."""
+    """Quantos RPPS declararam DAIR em cada competência recente.
+
+    A caminhada começa no mês anterior, não no corrente. A competência do DAIR é
+    uma posição do último dia do mês: enquanto o mês corre, não há o que
+    declarar, e a consulta volta vazia todas as vezes. Era uma requisição
+    desperdiçada por execução, e foi ela que apareceu no log da falha de
+    21/09 — ``dt_mes=9`` pedido no dia 21 de setembro, um mês que ainda não
+    tinha acabado.
+    """
     hoje = hoje or date.today()
-    ano, mes = hoje.year, hoje.month
+    ano, mes = _anterior(hoje.year, hoje.month)
     vistos: List[Tuple[int, int, int]] = []
     for _ in range(meses):
         filtros = {"dt_ano": ano, "dt_mes": mes}
@@ -88,6 +102,16 @@ def mais_recente_fechada(cliente: Any, hoje: Optional[date] = None,
     que adivinhar seria pior do que falhar alto e deixar quem chamou decidir.
     """
     vistos = volumes(cliente, hoje, uf, meses)
+    return escolher(vistos)
+
+
+def escolher(vistos: List[Tuple[int, int, int]]) -> Optional[Tuple[int, int]]:
+    """A competência fechada mais recente, dada a medida de cada uma.
+
+    Separada de ``volumes`` para que a escolha possa ser conferida sem rede — e
+    para que quem chama possa mostrar a medida ao lado da escolha, que é o que
+    torna uma competência errada diagnosticável pelo log.
+    """
     melhor = max((linhas for _, _, linhas in vistos), default=0)
     if not melhor:
         return None
