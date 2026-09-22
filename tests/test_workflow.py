@@ -106,6 +106,21 @@ class TestOrdemDaCarga(unittest.TestCase):
         self.assertNotIn("varreu=sim", antes,
                          "varreu=sim antes de conferir se algo foi varrido")
 
+    def test_balanco_vem_depois_da_tabela_de_entes(self):
+        """A DCA é consultada por código IBGE, que vem da tabela de entes."""
+        passo = self.passo
+        self.assertIn("siconfi-dca", passo)
+        self.assertLess(passo.index("cadprev siconfi "),
+                        passo.index("siconfi-dca"))
+
+    def test_balanco_pede_dois_exercicios(self):
+        """A entrega da DCA de um exercício vai até abril do seguinte: no começo
+        do ano o balanço mais recente ainda é o de dois anos atrás, e pedir só
+        um deixaria o confronto sem o lado contábil por quatro meses."""
+        passo = self.passo
+        self.assertIn("ANO - 1", passo)
+        self.assertIn("ANO - 2", passo)
+
     def test_guarda_de_essenciais_e_a_ultima_palavra(self):
         """Ela precisa ver tudo o que foi ingerido antes de decidir."""
         for comando in ("cadprev ingest DAIR_CARTEIRA", "cadprev siconfi-rreo"):

@@ -196,9 +196,35 @@ procedência da aba Qualidade é o que torna essa mistura de safras visível em 
 de silenciosa. A fase 7 (DCA) depende do SICONFI, não do CADPREV, e por isso
 continua possível.
 
-**Fase 7, a próxima — DCA.** Trazer o Anexo I-AB e confrontar a provisão
-matemática contábil com a avaliação atuarial do DRAA, respeitando a defasagem de
-um exercício entre os dois. Uma requisição por ente e por ano.
+**Fase 7 — DCA.** Implantada em 22/09/2026. O Anexo I-AB traz a provisão
+matemática previdenciária reconhecida na contabilidade, e ela aparece ao lado da
+avaliação atuarial do DRAA na aba Atuária.
+
+Três coisas que o contrato real obrigou a tratar, e que a leitura ingênua
+erraria:
+
+* **O total vem da fonte, nunca da soma das partes.** As contas `2.2.7.2.2` são
+  redutoras e são publicadas com sinal positivo: em Vitória somam R$ 4,8 bi que
+  não entram no total de R$ 5,66 bi. Somar componentes daria um passivo que o
+  balanço não reconhece.
+* **A decomposição por fundo é quase toda opcional.** Numa amostra de 15 RPPS em
+  22/09/2026, as contas de capitalização apareciam em 13 e as de repartição em 2
+  — a maioria dos municípios não tem fundo em repartição. Um deles entregou o
+  balanço sem a conta de provisão, o que é diferente de declarar zero.
+* **O alinhamento temporal.** O DRAA do exercício N descreve a posição de 31/12
+  de N−1, e o balanço do exercício N fecha em 31/12 de N. O confronto só
+  acontece no par DRAA(N) × DCA(N−1); fora dele os dois números aparecem e a
+  diferença não, porque subtrair avaliações de datas diferentes mediria o tempo
+  entre elas.
+
+O comparativo entre RPPS continua usando a avaliação atuarial, que é a apuração
+própria do regime; o balanço entra como segunda leitura do mesmo compromisso.
+
+Custo medido: uma requisição por ente e por exercício, cerca de 1,5s cada. O
+workflow pede dois exercícios porque a entrega da DCA vai até abril do seguinte
+— de janeiro a abril o balanço mais recente ainda é o de dois anos atrás.
+
+**A próxima — RGF.** Ver o estudo abaixo.
 
 ## Bases ainda a estudar
 

@@ -922,7 +922,11 @@
       // Amortização e comparativo vêm de endpoints próprios e existem mesmo
       // quando o resultado atuarial falta. Um retorno cedo os escondia.
       if (!a.disponivel || !(a.blocos || []).length) {
-        var soltos = cartoesDeAmortizacao(e).concat(cartaoProjetadoExecutado(e));
+        // O balanço vem de outra fonte e existe mesmo quando o DRAA falta —
+        // e é justamente aí que ele é a única apuração do compromisso.
+        var soltos = cartoesDoBalanco(e)
+          .concat(cartoesDeAmortizacao(e))
+          .concat(cartaoProjetadoExecutado(e));
         return [h("h2", { class: "secao", texto: "Situação atuarial" }),
                 cabecalhoEnte(e),
                 semDado("resultado atuarial", "DRAA_VALORES_COMPROMISSOS")
@@ -968,6 +972,7 @@
             }))
           : h("p", { class: "sub", texto: "Sem hipóteses no banco." })));
 
+      nos = nos.concat(cartoesDoBalanco(e));
       nos = nos.concat(cartoesDeAmortizacao(e));
       nos = nos.concat(cartaoProjetadoExecutado(e));
       return nos;
@@ -2042,6 +2047,110 @@
             ]);
           }), true)));
     });
+    return nos;
+  }
+
+  /* A provisão matemática nos dois lugares onde ela é apurada: a avaliação do
+   * atuário e o balanço do contador. São profissionais diferentes, normas
+   * diferentes e datas de corte diferentes — por isso os quadros ficam lado a
+   * lado e a comparação só aparece quando as datas batem.
+   *
+   * O DRAA do exercício N descreve a posição de 31/12 de N−1, e o balanço do
+   * exercício N fecha em 31/12 de N. O par que compara a mesma data é DRAA(N)
+   * com DCA(N−1). Fora dele, a diferença mediria o tempo, não a divergência. */
+  function cartoesDoBalanco(e) {
+    var c = e.contabil_anual || {};
+    if (!c.disponivel) return [];
+    var d = c.confronto;
+
+    var nos = [
+      h("h3", { class: "secao", texto: "Provisão matemática na contabilidade" }),
+      h("p", { class: "nota", texto:
+        "Do Anexo I-AB da Declaração de Contas Anuais, no SICONFI · balanço de " +
+        (c.data_base || ("31/12/" + c.exercicio)) + " · " +
+        num(c.contas, 0) + " contas declaradas. É o mesmo compromisso que o " +
+        "DRAA avalia, registrado por outro profissional e sob outra norma." })
+    ];
+
+    if (c.provisao === null || c.provisao === undefined) {
+      nos.push(h("div", { class: "aviso-linha" }, [
+        h("span", { class: "ico", texto: "\u26a0" }),
+        h("span", { texto:
+          "Este ente entregou o balanço sem a conta de provisão matemática " +
+          "previdenciária (2.2.7.2). As outras contas aparecem abaixo; o " +
+          "confronto com a avaliação atuarial não tem como ser feito." })
+      ]));
+    }
+
+    nos.push(h("div", { class: "kpis" }, [
+      kpi("Provisão matemática", reais(c.provisao),
+        "reconhecida no balanço de " + (c.data_base || c.exercicio)),
+      kpi("Ativo do ente", reais(c.ativo), "total do balanço patrimonial"),
+      kpi("Investimentos e aplicações", reais(c.investimentos),
+        "contas 1.1.4 e 1.2.1.3, na data do balanço"),
+      kpi("Obrigação de cobertura de insuficiência",
+        c.insuficiencia === null || c.insuficiencia === undefined
+          ? "não declarada" : reais(c.insuficiencia),
+        "conta 2.2.7.2.2.05")
+    ]));
+
+    if ((c.fundos || []).length) {
+      nos.push(cartao("Provisão por fundo", "SICONFI · DCA Anexo I-AB",
+        "Como o plano de contas separa · benefícios concedidos e a conceder" +
+        " · balanço de " + (c.data_base || c.exercicio),
+        tabela([{ t: "Fundo" }, { t: "Concedidos", n: true },
+                { t: "A conceder", n: true }, { t: "Total", n: true }],
+          c.fundos.map(function (f) {
+            return h("tr", {}, [
+              h("td", { texto: f.rotulo }),
+              h("td", { class: "n", texto: f.concedidos === null ||
+                        f.concedidos === undefined ? "—" : reais(f.concedidos) }),
+              h("td", { class: "n", texto: f.a_conceder === null ||
+                        f.a_conceder === undefined ? "—" : reais(f.a_conceder) }),
+              h("td", { class: "n", texto: reais(f.total) })
+            ]);
+          }).concat([
+            linhaTotal("Provisão declarada no balanço", ["", "", reais(c.provisao)])
+          ]))));
+      nos.push(h("p", { class: "nota", texto:
+        "O total é o que o balanço declara na conta 2.2.7.2, não a soma das " +
+        "linhas acima. As contas 2.2.7.2.2 são redutoras, publicadas com sinal " +
+        "positivo e fora do total — somar componentes daria um passivo que o " +
+        "balanço não reconhece." }));
+    }
+
+    if (d) {
+      var grande = d.perc !== null && Math.abs(d.perc) > 10;
+      nos.push(cartao("Atuário e contador sobre o mesmo compromisso",
+        "DRAA_VALORES_COMPROMISSOS · SICONFI DCA",
+        d.alinhado
+          ? "DRAA de " + d.exercicio_draa + " contra balanço de " +
+            d.exercicio_dca + " — as duas descrevem a posição de 31/12/" +
+            d.exercicio_dca
+          : "Sem comparação: o DRAA disponível é de " + d.exercicio_draa +
+            " e o balanço, de " + d.exercicio_dca + ". O par que descreve a " +
+            "mesma data é DRAA(N) com DCA(N−1)",
+        [
+          h("div", { class: "kpis" }, [
+            kpi("Avaliação atuarial", reais(d.atuarial),
+              "DRAA " + d.exercicio_draa + " · posição de 31/12/" +
+              (d.exercicio_draa - 1)),
+            kpi("Balanço patrimonial", reais(d.contabil),
+              "DCA " + d.exercicio_dca + " · posição de 31/12/" + d.exercicio_dca),
+            kpi("Diferença",
+              d.perc === null ? "—" : pct(d.perc, 2),
+              d.diferenca === null ? "datas não comparáveis" : reais(d.diferenca),
+              d.perc === null ? "" : (grande ? "ruim" : "bom"))
+          ]),
+          h("p", { class: "nota", texto: d.alinhado
+            ? "Nenhuma das duas é corrigida pela outra. O comparativo entre " +
+              "RPPS usa a avaliação atuarial, que é a apuração própria do " +
+              "regime; o balanço aparece aqui porque divergir dele é " +
+              "informação sobre o cadastro, não sobre a gestão."
+            : "Os dois números ficam à vista, a diferença não: subtrair " +
+              "avaliações de datas diferentes mediria o tempo entre elas." })
+        ]));
+    }
     return nos;
   }
 

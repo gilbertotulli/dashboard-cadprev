@@ -103,6 +103,16 @@ _CLASSES = [
 _CLASSE_FORA_DA_NORMA = ("Demais ativos não enquadrados na Resolução CMN",
                          "Outros Ativos Não Enquadrados na Resolução CMN", None, 0.03)
 
+#: O ente cujo balanço mais recente é de dois exercícios antes do esperado.
+#: O par DRAA(N) × DCA(N−1) deixa de valer, e a tela mostra os dois números sem
+#: a diferença.
+_ENTE_BALANCO_ATRASADO = 3
+
+#: A conta do total da provisão matemática no plano de contas. Repetida aqui
+#: com o mesmo código que o painel lê, para que a amostra e a leitura não possam
+#: divergir em silêncio.
+_DCA_TOTAL = "P2.2.7.2.0.00.00"
+
 #: Governança: (pessoa, colegiado, [(certificação, mês de validade)]).
 #: Mês positivo = vence no ano seguinte (vigente); negativo = venceu no anterior.
 #: O segundo caso é o que o painel não pode acusar: uma certificação vencida
@@ -880,6 +890,88 @@ def rreo_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
     return linhas
 
 
+def dca_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
+                   entes_siconfi: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """O Anexo I-AB de cada ente, coerente com a avaliação atuarial dele.
+
+    Coerente, mas não idêntica: o balanço reconhece o mesmo passivo sob outra
+    norma e em outra data de corte, e uma amostra em que os dois números batem
+    exatamente não testaria o confronto — testaria só que a tela soma.
+
+    Três coisas que a amostra precisa ter, porque são as que a fonte real tem e
+    a leitura descuidada erraria:
+
+    * as contas redutoras ``2.2.7.2.2``, publicadas com sinal positivo e **fora**
+      do total — somar componentes daria um passivo que o balanço não declara;
+    * entes sem a conta de fundo em repartição, que é a maioria: em 22/09/2026,
+      13 de 15 RPPS amostrados declaravam capitalização e só 2, repartição;
+    * um ente que entrega o balanço **sem** a conta de provisão.
+    """
+    provisoes: Dict[str, float] = {}
+    for linha in tabelas["DRAA_VALORES_COMPROMISSOS"]:
+        if linha["cd_demonstrativo"] in (300000, 400000):
+            cnpj = linha["nr_cnpj_entidade"]
+            provisoes[cnpj] = provisoes.get(cnpj, 0.0) + float(
+                linha["vl_geracao_atual"])
+
+    linhas: List[Dict[str, Any]] = []
+    for n, ente in enumerate(entes_siconfi):
+        atuarial = provisoes.get(ente["cnpj"])
+        if not atuarial:
+            continue
+        # O balanço fecha em 31/12 do exercício anterior ao do DRAA: é esse o
+        # par que compara a mesma data.
+        #
+        # Um ente fica com o balanço de dois exercícios atrás — quem atrasou a
+        # entrega, o que acontece. Aí o par deixa de descrever a mesma data, e
+        # subtrair um do outro mediria o tempo entre eles em vez da divergência
+        # entre as apurações. Sem esse caso na amostra, a regra do alinhamento
+        # não teria como ser conferida.
+        exercicio = ANO - 3 if n == _ENTE_BALANCO_ATRASADO else ANO - 1
+        base = {"exercicio": exercicio, "cod_ibge": ente["cod_ibge"],
+                "uf": ente["uf"], "instituicao": ente["ente"],
+                "anexo": "DCA-Anexo I-AB", "rotulo": "Padrão",
+                "coluna": "31/12/{}".format(exercicio),
+                "populacao": ente["populacao"]}
+        # A contabilidade reconhece um pouco menos que a avaliação atuarial na
+        # maioria dos casos, e bem menos em um deles — que é o achado.
+        desvio = 0.62 if n == 5 else 1.0 - (n % 7) * 0.012
+        contabil = atuarial * desvio
+        tem_reparticao = n % 6 == 0
+        sem_provisao = n == 9
+
+        contas = [("P1.0.0.0.0.00.00", "1.0.0.0.0.00.00 - Ativo", contabil * 1.4)]
+        if not sem_provisao:
+            contas.append((_DCA_TOTAL,
+                           "2.2.7.2.0.00.00 - Provisões Matemáticas "
+                           "Previdenciárias a Longo Prazo", contabil))
+        if tem_reparticao:
+            contas += [
+                ("P2.2.7.2.1.01.00", "2.2.7.2.1.01.00 - Fundo em Repartição - "
+                 "Provisões de Benefícios Concedidos", contabil * 0.68),
+                ("P2.2.7.2.1.02.00", "2.2.7.2.1.02.00 - Fundo em Repartição - "
+                 "Provisões de Benefícios a Conceder", contabil * 0.29),
+                # Redutoras: positivas na publicação e fora do total.
+                ("P2.2.7.2.2.01.00", "2.2.7.2.2.01.00 - (-) Fundo em Repartição",
+                 contabil * 0.55),
+                ("P2.2.7.2.2.05.00", "2.2.7.2.2.05.00 - Obrigação Atual de "
+                 "Cobertura de Insuficiência Financeira", contabil * 0.55),
+            ]
+        else:
+            contas += [
+                ("P2.2.7.2.1.03.00", "2.2.7.2.1.03.00 - Fundo em Capitalização - "
+                 "Provisões de Benefícios Concedidos", contabil * 0.2),
+                ("P2.2.7.2.1.04.00", "2.2.7.2.1.04.00 - Fundo em Capitalização - "
+                 "Provisões de Benefícios a Conceder", contabil * 0.8),
+            ]
+        contas.append(("P1.1.4.0.0.00.00", "1.1.4.0.0.00.00 - Investimentos e "
+                       "Aplicações Temporárias a Curto Prazo", contabil * 0.24))
+        for cod, nome_conta, valor in contas:
+            linhas.append(dict(base, cod_conta=cod, conta=nome_conta,
+                               valor=round(valor, 2)))
+    return linhas
+
+
 def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     """Grava as amostras no formato de página da API."""
     os.makedirs(destino, exist_ok=True)
@@ -892,6 +984,9 @@ def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
                   ensure_ascii=False)
     with open(os.path.join(destino, "rreo.json"), "w", encoding="utf-8") as fh:
         json.dump({"items": rreo_do_siconfi(tabelas, entes_siconfi),
+                   "hasMore": False}, fh, ensure_ascii=False)
+    with open(os.path.join(destino, "dca.json"), "w", encoding="utf-8") as fh:
+        json.dump({"items": dca_do_siconfi(tabelas, entes_siconfi),
                    "hasMore": False}, fh, ensure_ascii=False)
     contagem = {}
     for nome, registros in tabelas.items():

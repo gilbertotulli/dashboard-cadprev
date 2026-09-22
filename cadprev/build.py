@@ -1043,6 +1043,8 @@ def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
     ficha["governanca"] = _montar_governanca(store, cnpj)
     ficha["contabil"] = _montar_contabil(
         store, cnpj, (ficha["carteira"] or {}).get("total"))
+    ficha["contabil_anual"] = _montar_contabil_anual(
+        store, cnpj, ficha["atuaria"])
     return ficha
 
 
@@ -1224,6 +1226,128 @@ def _montar_contabil(store: Store, cnpj: str,
             "perc": round(diferenca / total_da_carteira * 100, 2),
         }
     return resultado
+
+
+# O balanço patrimonial do ente, nas contas que dizem respeito ao RPPS. O
+# prefixo "P" é da própria API do SICONFI.
+_DCA_PROVISAO = "P2.2.7.2.0.00.00"
+_DCA_ATIVO = "P1.0.0.0.0.00.00"
+_DCA_INSUFICIENCIA = "P2.2.7.2.2.05.00"
+_DCA_INVESTIMENTOS = ("P1.1.4.0.0.00.00", "P1.2.1.3.0.00.00")
+
+#: A decomposição da provisão por fundo, como o plano de contas a separa. Cada
+#: uma é opcional: numa amostra de 15 RPPS em 22/09/2026, as contas de
+#: capitalização apareciam em 13 e as de repartição em 2 — a maioria dos
+#: municípios não tem fundo em repartição, e exigir as quatro esconderia todos.
+_DCA_FUNDOS = (
+    ("reparticao", "Fundo em repartição",
+     "P2.2.7.2.1.01.00", "P2.2.7.2.1.02.00"),
+    ("capitalizacao", "Fundo em capitalização",
+     "P2.2.7.2.1.03.00", "P2.2.7.2.1.04.00"),
+)
+
+
+def _montar_contabil_anual(store: Store, cnpj: str,
+                           atuaria: Optional[Mapping[str, Any]] = None
+                           ) -> Dict[str, Any]:
+    """A provisão matemática como a contabilidade do ente a reconhece.
+
+    O DRAA traz o compromisso avaliado pelo atuário; o Anexo I-AB da DCA traz o
+    mesmo compromisso registrado no balanço, por outro profissional e sob outra
+    norma. Divergir aí não é erro de ninguém por definição — é a distância entre
+    duas apurações do mesmo passivo, e é exatamente o tipo de coisa que só
+    aparece quando as duas ficam lado a lado.
+
+    **O total vem da fonte, nunca da soma das partes.** As contas ``2.2.7.2.2``
+    são redutoras, publicadas com sinal positivo: em Vitória elas somam
+    R$ 4,8 bi que não entram no total de R$ 5,66 bi. Somar componentes daria um
+    passivo que o balanço não declara.
+
+    **O alinhamento temporal é a parte que mais facilmente sairia errada.** O
+    DRAA do exercício N descreve a posição de 31/12 de N−1, e o balanço do
+    exercício N fecha em 31/12 de N. O par que compara a mesma data é DRAA(N)
+    com DCA(N−1) — e o confronto só acontece nessa relação. Fora dela os
+    números aparecem, e a comparação não.
+    """
+    if not store.tem_tabela("SICONFI_DCA"):
+        return {"disponivel": False}
+    linhas = _varios(store, "siconfi_dca",
+                     "exercicio, coluna, cod_conta, conta, valor", cnpj,
+                     ordem="exercicio DESC", limite=2000)
+    if not linhas:
+        return {"disponivel": False}
+
+    exercicio = max(l["exercicio"] for l in linhas
+                    if l.get("exercicio") is not None)
+    do_exercicio = [l for l in linhas if l.get("exercicio") == exercicio]
+    por_conta = {l["cod_conta"]: l.get("valor") for l in do_exercicio}
+
+    fundos = []
+    for chave, rotulo, cod_concedidos, cod_a_conceder in _DCA_FUNDOS:
+        concedidos = por_conta.get(cod_concedidos)
+        a_conceder = por_conta.get(cod_a_conceder)
+        if concedidos is None and a_conceder is None:
+            continue
+        fundos.append({
+            "chave": chave, "rotulo": rotulo,
+            "concedidos": concedidos, "a_conceder": a_conceder,
+            "total": round((concedidos or 0.0) + (a_conceder or 0.0), 2),
+        })
+
+    investido = [por_conta.get(c) for c in _DCA_INVESTIMENTOS]
+    ficha: Dict[str, Any] = {
+        "disponivel": True,
+        "exercicio": exercicio,
+        "data_base": (do_exercicio[0].get("coluna") if do_exercicio else None),
+        "provisao": por_conta.get(_DCA_PROVISAO),
+        "insuficiencia": por_conta.get(_DCA_INSUFICIENCIA),
+        "ativo": por_conta.get(_DCA_ATIVO),
+        "investimentos": (round(sum(v for v in investido if v is not None), 2)
+                          if any(v is not None for v in investido) else None),
+        "fundos": fundos,
+        "contas": len(do_exercicio),
+    }
+    ficha["confronto"] = _confrontar_provisao(ficha, atuaria)
+    return ficha
+
+
+def _confrontar_provisao(contabil: Mapping[str, Any],
+                         atuaria: Optional[Mapping[str, Any]]
+                         ) -> Optional[Dict[str, Any]]:
+    """A provisão atuarial contra a contábil, quando as datas batem.
+
+    Só compara o par DRAA(N) × DCA(N−1): fora dele são avaliações de datas
+    diferentes, e a diferença mediria o tempo, não a divergência.
+    """
+    contabil_valor = contabil.get("provisao")
+    if contabil_valor is None or not atuaria or not atuaria.get("disponivel"):
+        return None
+    exercicio_draa = atuaria.get("exercicio")
+    exercicio_dca = contabil.get("exercicio")
+    if exercicio_draa is None or exercicio_dca is None:
+        return None
+
+    atuarial, tem = 0.0, False
+    for bloco in atuaria.get("blocos") or []:
+        provisoes = (bloco.get("resultado") or {}).get("provisoes")
+        if provisoes:
+            atuarial += provisoes
+            tem = True
+    if not tem or not atuarial:
+        return None
+
+    alinhado = exercicio_draa == exercicio_dca + 1
+    diferenca = round(contabil_valor - atuarial, 2)
+    return {
+        "exercicio_draa": exercicio_draa,
+        "exercicio_dca": exercicio_dca,
+        "alinhado": alinhado,
+        "atuarial": round(atuarial, 2),
+        "contabil": round(contabil_valor, 2),
+        "diferenca": diferenca if alinhado else None,
+        "perc": (round(diferenca / atuarial * 100, 2)
+                 if alinhado and atuarial else None),
+    }
 
 
 def _montar_conformidade(store: Store, cnpj: str,

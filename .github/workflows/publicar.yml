@@ -225,6 +225,19 @@ jobs:
             --exercicio "$ANO" --periodo "$BIMESTRE" $FILTRO_UF \
             2>&1 | tee -a ingest.log || true
 
+          # O balanço patrimonial anual, de onde sai a provisão matemática que
+          # a contabilidade do ente reconhece. Também uma requisição por ente.
+          #
+          # Dois exercícios, não um: a entrega da DCA de um exercício vai até
+          # abril do seguinte, então de janeiro a abril o balanço mais recente
+          # ainda é o de dois anos atrás. Pedir os dois resolve isso sem
+          # aritmética de calendário — o que não existe volta vazio, e o painel
+          # usa o mais recente que encontrar.
+          for EXERCICIO in $(( ANO - 1 )) $(( ANO - 2 )); do
+            python -m cadprev siconfi-dca --exercicio "$EXERCICIO" \
+              $FILTRO_UF 2>&1 | tee -a ingest.log || true
+          done
+
           python -m cadprev status
 
           # Sem estes dois não há painel: o CRP sustenta o panorama e a ficha,

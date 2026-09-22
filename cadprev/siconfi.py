@@ -146,6 +146,27 @@ ANEXO_RPPS = "RREO-Anexo 04"
 TIPOS_RREO = ("RREO", "RREO Simplificado")
 
 
+#: O anexo do balanço patrimonial da Declaração de Contas Anuais.
+ANEXO_DCA = "DCA-Anexo I-AB"
+
+
+class ClienteDCA(Cliente):
+    """O cliente, com o que é preciso saber do balanço patrimonial anual."""
+
+    def balanco(self, cod_ibge: int, exercicio: int) -> List[Dict[str, Any]]:
+        """As linhas do Anexo I-AB de um ente num exercício.
+
+        Uma requisição por ente e por exercício — a consulta sem ``id_ente``
+        devolve zero itens, então não há varredura em bloco. Medido em
+        22/09/2026: 161 linhas para Vitória, 324 para o Governo do Espírito
+        Santo, cerca de um segundo e meio cada.
+
+        Lista vazia quando o ente não entregou: ausência é resposta, não erro.
+        """
+        return list(self.registros(
+            "dca", an_exercicio=exercicio, no_anexo=ANEXO_DCA, id_ente=cod_ibge))
+
+
 class ClienteRREO(Cliente):
     """O cliente, com o que é preciso saber sobre o Anexo 04."""
 

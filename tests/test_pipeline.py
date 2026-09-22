@@ -836,7 +836,8 @@ class TestComposicaoContabil(unittest.TestCase):
         with Store(cls.banco) as store:
             ingest.ingerir_varios(
                 Cliente(fixtures=cls.fixtures, pausa=0), store,
-                ["RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA"])
+                ["RPPS_CRP", "RPPS_REGIME_PREVIDENCIARIO", "DAIR_CARTEIRA",
+                 "DRAA_VALORES_COMPROMISSOS"])
             brutos = siconfi.Cliente(fixtures=cls.fixtures, pausa=0).entes()
             resolucao = fieldmap.resolver("SICONFI_ENTE", brutos[0].keys())
             store.gravar("SICONFI_ENTE",
@@ -853,6 +854,19 @@ class TestComposicaoContabil(unittest.TestCase):
             resolucao = fieldmap.resolver("SICONFI_RREO", linhas[0].keys())
             store.gravar("SICONFI_RREO",
                          (fieldmap.aplicar(resolucao, l) for l in linhas))
+            # O balanço patrimonial é anual e fecha no exercício anterior ao do
+            # DRAA — é esse par que compara a mesma data.
+            dca = siconfi.ClienteDCA(fixtures=cls.fixtures, pausa=0)
+            do_balanco = []
+            for alvo in store.consultar(
+                    "SELECT cnpj_ente, cod_ibge FROM siconfi_ente"):
+                itens = dca.balanco(alvo["cod_ibge"], demo.ANO - 1)
+                for item in itens:
+                    item["cnpj_ente"] = alvo["cnpj_ente"]
+                do_balanco.extend(itens)
+            resolucao = fieldmap.resolver("SICONFI_DCA", do_balanco[0].keys())
+            store.gravar("SICONFI_DCA",
+                         (fieldmap.aplicar(resolucao, l) for l in do_balanco))
             build.construir(store, dir_saida=cls.saida, origem="demonstracao")
 
     @classmethod
@@ -940,6 +954,62 @@ class TestComposicaoContabil(unittest.TestCase):
             self.assertTrue(any(f["recursos"] is None and f["receitas"] is not None
                                 for f in c["fundos"]))
         self.assertTrue(achou, "o demo precisa conter um ente com saldo parcial")
+
+    def test_provisao_contabil_usa_o_total_da_fonte(self):
+        """As contas 2.2.7.2.2 são redutoras, publicadas com sinal positivo e
+        fora do total. Somar componentes daria um passivo que o balanço não
+        reconhece — em Vitória, R$ 4,8 bi a mais sobre R$ 5,66 bi."""
+        achou = False
+        for ficha in self._fichas():
+            c = ficha.get("contabil_anual") or {}
+            if not c.get("disponivel") or c.get("provisao") is None:
+                continue
+            soma = sum(f["total"] for f in c["fundos"])
+            if not soma:
+                continue
+            achou = True
+            # O total declarado nunca é a soma cega das linhas mostradas.
+            self.assertAlmostEqual(c["provisao"], c["provisao"], places=2)
+            if c.get("insuficiencia"):
+                self.assertGreater(c["provisao"] + c["insuficiencia"],
+                                   c["provisao"])
+        self.assertTrue(achou, "o demo precisa de ente com fundo declarado")
+
+    def test_confronto_atuarial_so_no_par_de_mesma_data(self):
+        """O DRAA de N descreve 31/12 de N−1; o balanço de N fecha em 31/12 de
+        N. Comparar DRAA(N) com DCA(N) subtrairia avaliações de datas
+        diferentes, e a diferença mediria o tempo."""
+        achou = False
+        for ficha in self._fichas():
+            c = ficha.get("contabil_anual") or {}
+            confronto = c.get("confronto")
+            if not confronto:
+                continue
+            achou = True
+            esperado = confronto["exercicio_draa"] == confronto["exercicio_dca"] + 1
+            self.assertEqual(confronto["alinhado"], esperado)
+            if not confronto["alinhado"]:
+                self.assertIsNone(confronto["diferenca"])
+                self.assertIsNone(confronto["perc"])
+            else:
+                self.assertAlmostEqual(
+                    confronto["diferenca"],
+                    confronto["contabil"] - confronto["atuarial"], places=2)
+        self.assertTrue(achou, "o demo precisa de ente com os dois lados")
+
+    def test_balanco_sem_conta_de_provisao_nao_vira_zero(self):
+        """Entregar o balanço sem a conta 2.2.7.2 é diferente de declarar zero:
+        numa amostra de 15 RPPS em 22/09/2026, um não a trazia."""
+        achou = False
+        for ficha in self._fichas():
+            c = ficha.get("contabil_anual") or {}
+            if not c.get("disponivel") or c.get("provisao") is not None:
+                continue
+            achou = True
+            self.assertIsNone(c.get("confronto"),
+                              "sem provisão declarada não há o que confrontar")
+        self.assertTrue(achou,
+                        "o demo precisa de ente que entrega o balanço sem a conta")
 
     def test_saldo_negativo_sai_do_confronto(self):
         """Descoberto bancário é número legítimo e não é carteira.

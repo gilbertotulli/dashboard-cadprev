@@ -312,6 +312,26 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
         _c("valor", "valor", tipo="decimal", obrigatorio=False),
     ),
 
+    # O balanço patrimonial anual do ente. Traz a provisão matemática
+    # previdenciária **reconhecida na contabilidade** — o mesmo compromisso que o
+    # DRAA avalia, medido por outro profissional, com outra norma e outra data de
+    # corte. Divergir aí é achado de primeira ordem.
+    "SICONFI_DCA": (
+        _c("cnpj_ente", "cnpj_ente", tipo="cnpj"),
+        _c("cod_ibge", "cod_ibge", tipo="inteiro"),
+        _c("ente", "instituicao", obrigatorio=False),
+        _c("uf", "uf", obrigatorio=False),
+        _c("exercicio", "exercicio", tipo="inteiro"),
+        _c("anexo", "anexo", obrigatorio=False),
+        _c("rotulo", "rotulo", obrigatorio=False),
+        _c("coluna", "coluna", obrigatorio=False,
+           nota="a data de fechamento do balanço, como '31/12/2025'"),
+        _c("cod_conta", "cod_conta",
+           nota="vem com prefixo P: 'P2.2.7.2.0.00.00' é a provisão matemática"),
+        _c("conta", "conta", obrigatorio=False),
+        _c("valor", "valor", tipo="decimal", obrigatorio=False),
+    ),
+
     # --- o que a SPREV apontou, e o que o próprio demonstrativo confronta ---
     "DRAA_ENCAMINHAMENTO": _IDENT + (
         _c("exercicio", "dt_exercicio", tipo="inteiro"),

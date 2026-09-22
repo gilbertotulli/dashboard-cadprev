@@ -165,6 +165,25 @@ def cmd_demo(args) -> int:
                                      linhas, resolucao)
             print("  {:<28} {:>8} linhas".format("SICONFI_RREO", linhas))
 
+        # O balanço patrimonial é anual e fecha no exercício anterior ao do
+        # DRAA — é esse par que compara a mesma data.
+        dca = siconfi.ClienteDCA(fixtures=demo.DIR_DEMO, pausa=0)
+        do_balanco = []
+        for alvo in store.consultar(
+                "SELECT cnpj_ente, cod_ibge FROM siconfi_ente"):
+            itens = dca.balanco(alvo["cod_ibge"], demo.ANO - 1)
+            for item in itens:
+                item["cnpj_ente"] = alvo["cnpj_ente"]
+            do_balanco.extend(itens)
+        if do_balanco:
+            resolucao = fieldmap.resolver("SICONFI_DCA", do_balanco[0].keys())
+            escopo = {"exercicio": demo.ANO - 1}
+            linhas = store.gravar(
+                "SICONFI_DCA",
+                (fieldmap.aplicar(resolucao, l) for l in do_balanco), escopo)
+            store.registrar_execucao("SICONFI_DCA", escopo, linhas, resolucao)
+            print("  {:<28} {:>8} linhas".format("SICONFI_DCA", linhas))
+
         saida = build.construir(store, dir_saida=args.saida, origem="demonstracao")
 
     print("\n  painel pronto em {} (origem: demonstracao)".format(args.saida))
@@ -379,6 +398,80 @@ def cmd_siconfi_rreo(args) -> int:
     return 0
 
 
+def cmd_siconfi_dca(args) -> int:
+    """Traz o Anexo I-AB da DCA — o balanço patrimonial — ente a ente.
+
+    É onde está a provisão matemática previdenciária **reconhecida na
+    contabilidade**: o mesmo compromisso que o DRAA avalia, medido por outro
+    profissional, com outra norma e outra data de corte.
+
+    Como no Anexo 04, a API exige ``id_ente`` e não há varredura em bloco. A
+    diferença é a periodicidade: o balanço é anual, então isto roda uma vez por
+    exercício, não a cada carga.
+    """
+    from cadprev import siconfi
+    with store_mod.Store(args.banco) as store:
+        if not store.tem_tabela("SICONFI_ENTE"):
+            print("rode `python -m cadprev siconfi` antes: o balanço é "
+                  "consultado por código IBGE, que vem da tabela de entes.",
+                  file=sys.stderr)
+            return 1
+        sql = ("SELECT s.cnpj_ente, s.cod_ibge, s.ente FROM siconfi_ente s "
+               "WHERE s.cod_ibge IS NOT NULL")
+        parametros: List[Any] = []
+        if store.tem_tabela("DAIR_CARTEIRA"):
+            sql += (" AND s.cnpj_ente IN "
+                    "(SELECT DISTINCT cnpj_ente FROM dair_carteira)")
+        if args.uf:
+            sql += " AND s.uf = ?"
+            parametros.append(args.uf.upper())
+        sql += " ORDER BY s.cnpj_ente"
+        alvos = [dict(l) for l in store.consultar(sql, tuple(parametros))]
+
+    if args.limite:
+        alvos = alvos[:args.limite]
+    if not alvos:
+        print("nenhum ente com RPPS e código IBGE no banco", file=sys.stderr)
+        return 1
+
+    cliente = siconfi.ClienteDCA(pausa=args.pausa, fixtures=args.fixtures)
+    linhas: List[Dict[str, Any]] = []
+    com, sem, falhas = 0, 0, 0
+    for n, alvo in enumerate(alvos, 1):
+        try:
+            itens = cliente.balanco(alvo["cod_ibge"], args.exercicio)
+        except Exception as erro:
+            falhas += 1
+            log.warning("%s (%s): %s", alvo["ente"], alvo["cod_ibge"], erro)
+            continue
+        if not itens:
+            sem += 1
+            continue
+        com += 1
+        for item in itens:
+            item["cnpj_ente"] = alvo["cnpj_ente"]
+        linhas.extend(itens)
+        if n % 200 == 0:
+            print("  {}/{} entes · {} com balanço".format(n, len(alvos), com),
+                  flush=True)
+
+    if not linhas:
+        print("nenhum ente entregou o Anexo I-AB neste exercício", file=sys.stderr)
+        return 1
+
+    resolucao = fieldmap.resolver("SICONFI_DCA", linhas[0].keys())
+    fieldmap.exigir(resolucao, list(linhas[0].keys()))
+    traduzidas = [fieldmap.aplicar(resolucao, l) for l in linhas]
+    escopo = {"exercicio": args.exercicio}
+    with store_mod.Store(args.banco) as store:
+        gravadas = store.gravar("SICONFI_DCA", traduzidas, escopo)
+        store.registrar_execucao("SICONFI_DCA", escopo, gravadas, resolucao)
+        store.marcar_origem("demonstracao" if args.fixtures else "api")
+    print("SICONFI_DCA {}: {} linhas · {} entes com balanço, {} sem, "
+          "{} falhas".format(args.exercicio, gravadas, com, sem, falhas))
+    return 0
+
+
 def cmd_marco(args) -> int:
     """Anota o carimbo de atualização da fonte, para medir o que muda.
 
@@ -520,6 +613,15 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--pausa", type=float, default=0.5)
     p.add_argument("--fixtures")
     p.set_defaults(func=cmd_siconfi_rreo)
+
+    p = sub.add_parser("siconfi-dca",
+                       help="balanço patrimonial anual (DCA Anexo I-AB)")
+    p.add_argument("--exercicio", type=int, required=True)
+    p.add_argument("--uf")
+    p.add_argument("--limite", type=int)
+    p.add_argument("--pausa", type=float, default=0.5)
+    p.add_argument("--fixtures")
+    p.set_defaults(func=cmd_siconfi_dca)
 
     p = sub.add_parser("execucoes",
                        help="quantas ingestões o banco já registrou")

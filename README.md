@@ -535,6 +535,28 @@ alerta só aparece para quem **não tem nenhuma** certificação dentro da valid
 entre quem ainda está em exercício. Certificação vencida de quem já deixou o
 colegiado não diz nada sobre a gestão de hoje.
 
+## Provisão matemática: o atuário e o contador
+
+O DRAA traz o compromisso avaliado pelo atuário. O Anexo I-AB da Declaração de
+Contas Anuais, no SICONFI, traz o mesmo compromisso registrado no balanço do
+ente — outro profissional, outra norma, outra data de corte. Os dois ficam lado
+a lado na aba Atuária.
+
+**O total vem da fonte, nunca da soma das partes.** As contas `2.2.7.2.2` são
+redutoras e a API as publica com sinal positivo: em Vitória somam R$ 4,8 bi que
+não entram no total de R$ 5,66 bi declarado em `2.2.7.2`. Somar componentes
+daria um passivo que o balanço não reconhece.
+
+**O confronto só acontece no par que descreve a mesma data.** O DRAA do
+exercício N descreve a posição de 31/12 de N−1; o balanço do exercício N fecha
+em 31/12 de N. O par correto é DRAA(N) com DCA(N−1) — fora dele os dois números
+aparecem e a diferença não, porque subtrair avaliações de datas diferentes
+mediria o tempo entre elas, não a divergência entre as apurações.
+
+Nenhuma das duas corrige a outra. O comparativo entre RPPS usa a avaliação
+atuarial, que é a apuração própria do regime; o balanço entra porque divergir
+dele é informação sobre o cadastro.
+
 ## O que ainda falta
 
 - **A API do CADPREV está fora do ar.** Desde pelo menos 17/09/2026 ela lista um
