@@ -16,7 +16,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, List, Optional
 
-from . import build, demo, endpoints, fieldmap, ingest, store as store_mod
+from . import (build, competencia, demo, endpoints, fieldmap, ingest,
+               store as store_mod)
 from .client import Cliente
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -294,6 +295,118 @@ def cmd_execucoes(args) -> int:
         print(linha[0]["n"] if linha else 0)
     except Exception:
         print(0)
+    return 0
+
+
+#: Quantas falhas seguidas, sem nenhum acerto, bastam para o ``dair-atrasados``
+#: concluir que quem está fora do ar é a fonte, e não os entes.
+FALHAS_SEGUIDAS = 10
+
+
+def cmd_dair_atrasados(args) -> int:
+    """Busca a carteira de quem não declarou a competência de referência.
+
+    O prazo do DAIR vai até o fim do mês seguinte, então em qualquer dia do
+    calendário os RPPS estão em pontos diferentes da série — e a varredura por
+    competência só alcança quem declarou os meses varridos. Em 22/09/2026, com
+    junho como competência fechada: **305 já tinham declarado julho ou agosto**
+    e o painel não mostrava esse demonstrativo em lugar nenhum; **261 não
+    tinham chegado a junho** e ficavam sem carteira alguma, indistinguíveis de
+    quem nunca declarou.
+
+    Varrer mais meses inteiros para alcançá-los seria caro: cada competência é
+    uma varredura nacional. Mas o ``DAIR_IDENTIFICACAO`` — o cabeçalho mensal,
+    treze mil linhas no ano inteiro — já diz, por ente, qual foi a última
+    competência que ele declarou. Então dá para pedir só a dele, e o custo vira
+    uma requisição por ente em vez de uma varredura por mês.
+
+    Cada ente é gravado no escopo dele, de modo que trazer um não apaga os
+    outros — nem a competência de referência, que continua regendo os agregados
+    nacionais e o comparativo entre RPPS.
+    """
+    with store_mod.Store(args.banco) as store:
+        for tabela in ("DAIR_IDENTIFICACAO", "DAIR_CARTEIRA"):
+            if not store.tem_tabela(tabela):
+                print("rode a ingestão de {} antes".format(tabela),
+                      file=sys.stderr)
+                return 1
+        # A última competência que cada ente declarou, e a que ele já tem
+        # carteira no banco.
+        declaradas = competencia.ultima_de_cada(
+            dict(l) for l in store.consultar(
+                "SELECT cnpj_ente, ano, mes FROM dair_identificacao "
+                "WHERE ano IS NOT NULL AND mes IS NOT NULL"))
+        com_carteira = {(l["cnpj_ente"], l["ano"], l["mes"]) for l in store.consultar(
+            "SELECT DISTINCT cnpj_ente, ano, mes FROM dair_carteira")}
+        uf_do_ente = {l["cnpj_ente"]: l["uf"] for l in store.consultar(
+            "SELECT DISTINCT cnpj_ente, uf FROM dair_identificacao")}
+        # A procedência da varredura, para não ser apagada por esta. O nível de
+        # separação por fundo foi apurado lá e vale aqui: registrá-lo como
+        # desconhecido rebaixaria a leitura do painel inteiro para o Nível B
+        # sem que nada tivesse mudado na fonte.
+        anterior = store.ultima_execucao("DAIR_CARTEIRA") or {}
+        nivel_da_varredura = anterior.get("nivel")
+        filtros_da_varredura = json.loads(anterior.get("filtros") or "{}")
+
+    alvos = [(cnpj, ano, mes) for cnpj, (ano, mes) in sorted(declaradas.items())
+             if (cnpj, ano, mes) not in com_carteira]
+    if args.uf:
+        alvos = [a for a in alvos if (uf_do_ente.get(a[0]) or "").upper()
+                 == args.uf.upper()]
+    if args.limite:
+        alvos = alvos[:args.limite]
+    if not alvos:
+        print("nenhum ente sem a carteira da própria última competência")
+        return 0
+
+    print("{} entes sem a carteira da última competência que declararam"
+          .format(len(alvos)))
+    cliente = Cliente(pausa=args.pausa)
+    trazidos = vazios = falhas = 0
+    seguidas = 0
+    linhas_total = 0
+    for n, (cnpj, ano, mes) in enumerate(alvos, 1):
+        try:
+            brutos = list(cliente.registros(
+                "DAIR_CARTEIRA", nr_cnpj_entidade=cnpj,
+                dt_ano=ano, dt_mes_bimestre=mes))
+        except Exception as erro:
+            falhas += 1
+            seguidas += 1
+            logging.warning("%s %s-%02d: %s", cnpj, ano, mes, erro)
+            # Uma requisição por ente: se a fonte caiu, insistir custa
+            # centenas de 404 e nenhum dado. A desistência é declarada — o
+            # silêncio faria a fonte fora do ar parecer base sem atrasados.
+            if seguidas >= FALHAS_SEGUIDAS and not trazidos:
+                print("{} falhas seguidas sem nenhum acerto: a fonte não está "
+                      "respondendo, e o resto dos {} atrasados fica para a "
+                      "próxima carga.".format(seguidas, len(alvos)),
+                      file=sys.stderr)
+                break
+            continue
+        seguidas = 0
+        if not brutos:
+            vazios += 1
+            continue
+        resolucao = fieldmap.resolver("DAIR_CARTEIRA", brutos[0].keys())
+        traduzidas = [fieldmap.aplicar(resolucao, b) for b in brutos]
+        with store_mod.Store(args.banco) as store:
+            linhas_total += store.gravar(
+                "DAIR_CARTEIRA", traduzidas,
+                {"cnpj_ente": cnpj, "ano": ano, "mes": mes})
+        trazidos += 1
+        if n % 50 == 0:
+            print("  {}/{} · {} com carteira".format(n, len(alvos), trazidos),
+                  flush=True)
+
+    with store_mod.Store(args.banco) as store:
+        store.registrar_execucao(
+            "DAIR_CARTEIRA",
+            dict(filtros_da_varredura, atrasados_por_ente=trazidos),
+            linhas_total, None, nivel_da_varredura)
+    print("carteira por ente: {} linhas · {} entes trazidos, {} sem carteira "
+          "na competência que declararam, {} falhas".format(
+              linhas_total, trazidos, vazios, falhas))
     return 0
 
 
@@ -613,6 +726,14 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--pausa", type=float, default=0.5)
     p.add_argument("--fixtures")
     p.set_defaults(func=cmd_siconfi_rreo)
+
+    p = sub.add_parser("dair-atrasados",
+                       help="carteira ente a ente: a última competência de "
+                            "quem a varredura nacional não alcançou")
+    p.add_argument("--uf")
+    p.add_argument("--limite", type=int)
+    p.add_argument("--pausa", type=float, default=1.0)
+    p.set_defaults(func=cmd_dair_atrasados)
 
     p = sub.add_parser("siconfi-dca",
                        help="balanço patrimonial anual (DCA Anexo I-AB)")

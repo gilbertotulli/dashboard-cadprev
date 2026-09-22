@@ -31,7 +31,7 @@ assim ela encostar no limite de paginação, a medida deixou de ser confiável e
 módulo diz isso em vez de ordenar competências por um número que empatou.
 """
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 from datetime import date
 
 from . import endpoints
@@ -120,3 +120,27 @@ def escolher(vistos: List[Tuple[int, int, int]]) -> Optional[Tuple[int, int]]:
         if linhas >= piso:
             return ano, mes
     return None
+
+
+def ultima_de_cada(linhas: Iterable[Mapping[str, Any]]) -> Dict[str, Tuple[int, int]]:
+    """A última competência que cada ente declarou.
+
+    O par (ano, mês) se compara inteiro. ``MAX(ano)`` e ``MAX(mes)`` separados
+    dariam dezembro do ano mais recente para quem declarou dezembro de 2025 e
+    março de 2026 — uma competência que o ente nunca entregou, e que o painel
+    sairia pedindo à API.
+
+    >>> ultima_de_cada([{"cnpj_ente": "1", "ano": 2025, "mes": 12},
+    ...                 {"cnpj_ente": "1", "ano": 2026, "mes": 3}])
+    {'1': (2026, 3)}
+    """
+    ultimas: Dict[str, Tuple[int, int]] = {}
+    for linha in linhas:
+        cnpj = linha.get("cnpj_ente")
+        ano, mes = linha.get("ano"), linha.get("mes")
+        if not cnpj or ano is None or mes is None:
+            continue
+        atual = ultimas.get(cnpj)
+        if atual is None or (ano, mes) > atual:
+            ultimas[cnpj] = (ano, mes)
+    return ultimas

@@ -113,5 +113,38 @@ class TestMaisRecenteFechada(unittest.TestCase):
                          [(2026, 1), (2025, 12), (2025, 11)])
 
 
+class TestUltimaDeCada(unittest.TestCase):
+    """A última competência de cada ente — o par comparado inteiro."""
+
+    def test_ano_e_mes_nao_se_comparam_separados(self):
+        """Quem declarou dezembro de 2025 e março de 2026 não declarou
+        dezembro de 2026.
+
+        ``MAX(ano)`` com ``MAX(mes)`` é a armadilha: combinaria o ano de uma
+        linha com o mês de outra e produziria uma competência que nunca
+        existiu. O painel sairia pedindo essa competência à API, e receberia
+        vazio para todo mundo que virou o ano.
+        """
+        linhas = [{"cnpj_ente": "1", "ano": 2025, "mes": 12},
+                  {"cnpj_ente": "1", "ano": 2026, "mes": 3}]
+        self.assertEqual(competencia.ultima_de_cada(linhas), {"1": (2026, 3)})
+
+    def test_um_por_ente(self):
+        linhas = [{"cnpj_ente": "1", "ano": 2026, "mes": 6},
+                  {"cnpj_ente": "1", "ano": 2026, "mes": 8},
+                  {"cnpj_ente": "2", "ano": 2026, "mes": 2}]
+        self.assertEqual(competencia.ultima_de_cada(linhas),
+                         {"1": (2026, 8), "2": (2026, 2)})
+
+    def test_linha_sem_competencia_nao_entra(self):
+        """Ausência não é competência: um cabeçalho sem mês não pode virar o
+        último mês declarado nem apagar o que já se sabia do ente."""
+        linhas = [{"cnpj_ente": "1", "ano": 2026, "mes": 5},
+                  {"cnpj_ente": "1", "ano": 2026, "mes": None},
+                  {"cnpj_ente": "2", "ano": None, "mes": 7},
+                  {"cnpj_ente": None, "ano": 2026, "mes": 9}]
+        self.assertEqual(competencia.ultima_de_cada(linhas), {"1": (2026, 5)})
+
+
 if __name__ == "__main__":
     unittest.main()

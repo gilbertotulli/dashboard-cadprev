@@ -170,8 +170,21 @@ _PL_FUNDO = 5.2e8
 #: painel.
 _ENTE_ENVENENADO = 20
 
-#: Entes que pararam de entregar o DAIR no segundo mês do exercício.
+#: Entes que pararam de entregar o DAIR no segundo mês do exercício. O
+#: primeiro deles ainda tem a carteira daquele mês guardada — é o caso que a
+#: varredura nacional não alcança e o ``dair-atrasados`` vai buscar ente a
+#: ente: a ficha dele mostra fevereiro, com a data à vista, em vez de não
+#: mostrar carteira nenhuma. O segundo entregou só o cabeçalho, sem carteira,
+#: e continua sem nada a mostrar — ausência que não é zero nem defasagem.
 _ENTES_DEFASADOS = frozenset({5, 11})
+_ENTE_SO_CABECALHO = 11
+
+#: Entes que declararam adiantado: entregaram o mês seguinte ao que o país
+#: declarou. O prazo do DAIR vai até o fim do mês seguinte, então uma minoria
+#: sempre está à frente — em 22/09/2026 eram 305 dos 1.821. A ficha deles
+#: mostra o mês novo, que é a posição real; o comparativo continua lendo a
+#: competência de referência, que eles também declararam.
+_ENTES_ADIANTADOS = frozenset({3, 9})
 
 #: Entes que reenviaram o DRAA: a API devolve as duas versões convivendo, e
 #: somá-las dobraria o saldo devedor. Em 17/09/2026 isso atingia 176 dos 1.652
@@ -393,9 +406,12 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # detalhada permite comparar meses. É esta amostra que garante que os
         # agregados nacionais não somem competências: com três no banco, um
         # total que somasse meses daria quase o triplo do patrimônio real.
-        for competencia in _COMPETENCIAS_DO_DAIR:
-            if indice in _ENTES_DEFASADOS and competencia > 2:
-                continue  # quem parou de entregar não tem as últimas
+        competencias = list(_COMPETENCIAS_DO_DAIR)
+        if indice in _ENTES_ADIANTADOS:
+            competencias.insert(0, MES_DAIR + 1)
+        if indice in _ENTES_DEFASADOS:
+            competencias = [] if indice == _ENTE_SO_CABECALHO else [2]
+        for competencia in competencias:
             # A carteira se move de um mês para o outro; o que não muda é a
             # identidade quantidade × cota = valor total.
             deriva = 1.0 + (competencia - MES_DAIR) * 0.012
@@ -444,7 +460,8 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # DAIR_IDENTIFICACAO: o cabeçalho mensal da declaração. É dele que sai a
         # defasagem — quem parou de entregar não some da base, fica com a última
         # posição envelhecendo.
-        ultimo_mes = 2 if indice in _ENTES_DEFASADOS else MES_DAIR
+        ultimo_mes = (2 if indice in _ENTES_DEFASADOS
+                      else MES_DAIR + (1 if indice in _ENTES_ADIANTADOS else 0))
         for mes in range(1, ultimo_mes + 1):
             tabelas["DAIR_IDENTIFICACAO"].append(dict(
                 ident, dt_ano=ANO, dt_mes=mes,

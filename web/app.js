@@ -119,6 +119,40 @@
     return q ? " · " + (rotulo || "posição de") + " " + q : "";
   }
 
+  /* Cada RPPS declara o DAIR no seu ritmo: o prazo vai até o fim do mês
+   * seguinte, então uma minoria está sempre à frente da competência que o país
+   * declarou, e outra parou antes dela. A ficha mostra o demonstrativo do
+   * próprio ente — é a posição real dele — e este aviso diz por que a data na
+   * tela não é a mesma do comparativo. Sem ele, dois números do painel se
+   * contradizem sem explicação: o patrimônio da ficha e o do comparativo. */
+  function avisoDeCompetencia(c) {
+    if (!c || c.na_referencia !== false) return null;
+    var dele = competencia(c.competencia) || "—";
+    var ref = competencia(c.referencia) || "—";
+    var meses = Math.abs(c.defasagem_meses || 0);
+    var plural = meses === 1 ? " mês" : " meses";
+
+    if ((c.defasagem_meses || 0) < 0) {
+      /* Adiantado: a competência de referência também está na base, e é dela
+       * que saem os indicadores comparados. Nada está faltando. */
+      return h("p", { class: "nota", texto:
+        "Este RPPS entregou o DAIR de " + dele + ", " + meses + plural +
+        " à frente da competência de referência do painel (" + ref + "). " +
+        "A tela mostra o demonstrativo mais recente dele; os comparativos " +
+        "entre RPPS continuam medidos em " + ref + ", que ele também declarou." });
+    }
+    /* Atrasado: não existe carteira dele na data em que os outros são medidos,
+     * e o painel prefere dizer isso a exibi-lo ao lado deles como se houvesse. */
+    return h("div", { class: "aviso-linha" }, [
+      h("span", { class: "ico", texto: "\u26a0" }),
+      h("span", { texto:
+        "A última carteira que este RPPS declarou é de " + dele + " — " +
+        meses + plural + " antes da competência de referência do painel (" +
+        ref + "). A tela mostra o que ele entregou; ele fica fora dos " +
+        "comparativos entre RPPS, que são medidos em " + ref + "." })
+    ]);
+  }
+
   function data(iso) {
     if (!iso) return "—";
     var p = String(iso).slice(0, 10).split("-");
@@ -812,6 +846,7 @@
             onclick: function () { irParaAba("carteira", null); }
           })
         ]),
+        avisoDeCompetencia(c),
         c.excluidas ? h("div", { class: "aviso-linha" }, [
           h("span", { class: "ico", texto: "⚠" }),
           h("span", { html:
@@ -1213,6 +1248,23 @@
   function cardAlocacao(b, meu, ref, e) {
     var temCarteira = meu.alocacao && Object.keys(meu.alocacao).length;
     if (!temCarteira) {
+      /* Duas ausências diferentes, e dizer "sem carteira" para as duas seria
+       * mentir para uma: quem nunca declarou não tem carteira nenhuma; quem
+       * parou antes tem a dele, mais velha, e o que falta é carteira na data
+       * em que os outros são medidos. */
+      var c = e.carteira || {};
+      if (c.disponivel && c.na_referencia === false) {
+        return cartao("Perfil da carteira", "DAIR_CARTEIRA",
+          "A última carteira deste RPPS é de " +
+          (competencia(c.competencia) || "—") + ", anterior à competência de " +
+          "referência do painel (" + (competencia(c.referencia) || "—") + "). " +
+          "Comparar as duas mediria a distância entre as datas junto com a " +
+          "diferença entre as carteiras.",
+          h("button", {
+            class: "link limpar", texto: "ver a carteira que ele declarou",
+            onclick: function () { irParaAba("carteira", estado.cnpj); }
+          }));
+      }
       return cartao("Perfil da carteira", "DAIR_CARTEIRA",
         "Sem carteira no banco para este RPPS", null);
     }
@@ -2997,6 +3049,7 @@
           "Todos os ativos declarados no DAIR, com os totais de cada segmento e " +
           "de cada classe. Cada competência é uma posição fechada — elas não se " +
           "somam, comparam-se." }),
+        avisoDeCompetencia(e.carteira || {}),
         cartao("Competência", "DAIR_CARTEIRA",
           quais.length > 1
             ? "As " + quais.length + " competências que a base guarda"

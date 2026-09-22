@@ -44,6 +44,7 @@ python -m cadprev serve
 | `demo` | gera dados sintéticos, ingere e constrói o painel |
 | `inspect` | baixa uma página e relata os campos que a API realmente devolve |
 | `ingest` | traz endpoints para o banco local (SQLite), paginando |
+| `dair-atrasados` | completa a carteira ente a ente: a última competência de quem a varredura nacional não alcançou |
 | `build` | pré-agrega tudo nos JSON que o painel lê |
 | `serve` | serve `web/` localmente |
 | `status` | o que já foi ingerido, quando e com quais filtros |
@@ -59,7 +60,7 @@ cadprev/        ingestão e agregação (Python, sem dependências)
   store.py        SQLite + procedência de cada ingestão
   fundos.py       separação por natureza do fundo (Níveis A e B)
   qualidade.py    o que a própria base contradiz, e as chaves de recorte
-  competencia.py  pergunta à API qual competência do DAIR já fechou
+  competencia.py  qual competência do DAIR já fechou, e a última de cada ente
   siconfi.py      cliente da segunda fonte: o SICONFI, do Tesouro Nacional
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
@@ -520,10 +521,51 @@ custo de uma tela que poucas visitas abrem.
 Guardar mais de uma competência destapou um defeito latente: os agregados liam
 `dair_carteira` inteira, sem filtrar mês. Com uma competência no banco isso
 passava; com três, o patrimônio nacional seria quase o triplo do real e
-cresceria a cada carga sem que um centavo tivesse sido aplicado. Hoje a ficha, o
-agregado nacional e a amostra do RREO usam a competência mais recente, e a régua
-de impossibilidade roda uma competência por vez — o consenso sobre o tamanho de
-um fundo é de um mês.
+cresceria a cada carga sem que um centavo tivesse sido aplicado. Hoje o agregado
+nacional e a amostra do RREO usam uma competência só, e a régua de
+impossibilidade roda uma competência por vez — o consenso sobre o tamanho de um
+fundo é de um mês.
+
+## A competência de cada RPPS, e a competência de referência
+
+O prazo do DAIR vai até o fim do mês seguinte, então em qualquer dia do
+calendário os 1.821 RPPS estão em pontos diferentes da série. Em 22/09/2026,
+com a competência fechada em junho: **305 já tinham declarado julho ou agosto**
+e **261 não tinham chegado a junho** — a última declaração destes ia de janeiro
+a maio.
+
+A varredura nacional por competência não alcança nem uns nem outros. Os 261
+ficavam sem carteira nenhuma no painel, indistinguíveis de quem nunca declarou;
+e o demonstrativo novo dos 305 não aparecia em lugar algum. Então a carga tem
+dois passos: a varredura traz as três competências fechadas mais recentes, e o
+`dair-atrasados` traz, **ente a ente**, a última competência de cada um que
+ainda não estiver no banco. O `DAIR_IDENTIFICACAO` — o cabeçalho mensal, treze
+mil linhas no ano inteiro — é quem diz qual é essa competência por ente, e o
+custo vira uma requisição por ente em vez de uma varredura nacional por mês.
+Cada gravação vai no escopo `{cnpj_ente, ano, mes}`, de modo que trazer um não
+apaga o outro nem a competência de referência.
+
+Daí a separação entre duas datas que antes eram a mesma:
+
+- **A competência da ficha** é a do próprio RPPS: o demonstrativo mais recente
+  que ele entregou, com a data sempre à vista. Quem declarou agosto vê agosto;
+  quem parou em fevereiro vê fevereiro, com um aviso dizendo há quantos meses.
+- **A competência de referência** é a que o país declarou, e é ela que rege os
+  agregados nacionais e o comparativo entre RPPS. Não é a mais recente do
+  banco: depois do `dair-atrasados` o banco guarda meses esparsos, e escolher o
+  máximo faria meia dúzia de RPPS adiantados definirem a data do patrimônio
+  nacional enquanto os outros mil e oitocentos sumiriam do agregado. A
+  referência é a competência com mais declarantes — a da varredura tem mil e
+  oitocentos, a de um adiantado tem meia dúzia, e a diferença é de duas ordens
+  de grandeza.
+
+Quem declarou adiantado entra no comparativo pela competência de referência,
+que ele também declarou: a ficha guarda um bloco `comparavel` com o total e a
+alocação daquele mês, e é dele que saem os indicadores. Quem parou antes dela
+fica **de fora** dos indicadores derivados da carteira — indefinido, nunca zero.
+A carteira dele está na tela, com a data; o que não existe é carteira dele na
+data em que os outros são medidos, e um indicador derivado dela mediria a
+distância entre as datas junto com a diferença entre as carteiras.
 
 ## Certificação de quem responde pelos recursos
 

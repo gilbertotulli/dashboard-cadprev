@@ -1015,7 +1015,8 @@ def _mapa_segregacao(store: Store) -> Dict[str, Optional[bool]]:
 # ---------------------------------------------------------------------------
 
 def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
-                linhas_fora: Optional[AbstractSet[int]] = None) -> Dict[str, Any]:
+                linhas_fora: Optional[AbstractSet[int]] = None,
+                referencia: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Tudo que o painel mostra sobre um RPPS, num arquivo só.
 
     Um arquivo por ente, e não um endpoint por clique: cada ficha tem alguns
@@ -1035,7 +1036,8 @@ def montar_ente(store: Store, cnpj: str, ente: Mapping[str, Any],
         ordem="exercicio DESC")
 
     ficha["caixa"] = _montar_caixa(store, cnpj)
-    ficha["carteira"] = _montar_carteira_ente(store, cnpj, linhas_fora)
+    ficha["carteira"] = _montar_carteira_ente(
+        store, cnpj, linhas_fora, referencia)
     ficha["atuaria"] = _montar_atuaria(store, cnpj)
     ficha["amortizacao"] = _montar_amortizacao(store, cnpj)
     ficha["projetado_executado"] = _montar_projetado_executado(store, cnpj)
@@ -1851,37 +1853,93 @@ def _da_competencia_recente(linhas: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 def _competencias_do_dair(store: Store) -> Dict[str, Any]:
-    """A que mês a carteira se refere — pergunta que a tela não respondia.
+    """A que mês a carteira do país se refere — pergunta que a tela não
+    respondia, e que passou a ter mais de uma resposta possível.
 
-    O painel ingere uma competência fechada por vez, escolhida perguntando à
-    API qual já fechou (``cadprev.competencia``), então a posição de todos os
-    RPPS é do mesmo mês e comparável. Isso é uma escolha, não um acaso, e
-    precisa estar escrito ao lado do número: patrimônio sem competência é um
-    valor sem data, e a carteira de junho não responde pela de setembro.
+    A competência de referência é **a que o país declarou**, não a mais recente
+    que existe no banco. A distinção deixou de ser acadêmica quando a base
+    passou a guardar vários meses: a varredura nacional traz a competência
+    fechada, e depois o ``dair-atrasados`` traz, ente a ente, o último mês de
+    quem declarou adiantado e de quem parou antes. Escolher o mês mais recente
+    faria seis RPPS que entregaram julho cedo definirem a data do patrimônio
+    nacional, e os outros 1.815 sumiriam do agregado por não terem declarado
+    esse mês.
 
-    Se um dia a base guardar mais de uma competência, ``varias`` avisa — somar
-    posições de meses diferentes contaria o mesmo dinheiro duas vezes.
+    Então a referência é a competência com mais declarantes — o mês da
+    varredura tem mil e oitocentos, o de um adiantado tem meia dúzia, e a
+    diferença é de duas ordens de grandeza, não de margem. Empate desfeito pela
+    mais recente.
     """
     if not store.tem_tabela("DAIR_CARTEIRA"):
         return {}
     linhas = [dict(l) for l in store.consultar(
-        "SELECT DISTINCT ano, mes FROM dair_carteira "
-        "WHERE ano IS NOT NULL AND mes IS NOT NULL ORDER BY ano DESC, mes DESC")]
+        "SELECT ano, mes, COUNT(DISTINCT cnpj_ente) AS entes "
+        "FROM dair_carteira WHERE ano IS NOT NULL AND mes IS NOT NULL "
+        "GROUP BY ano, mes ORDER BY ano DESC, mes DESC")]
     if not linhas:
         return {}
-    recente = linhas[0]
+    escolhida = max(linhas, key=lambda l: (l["entes"], l["ano"], l["mes"]))
     return {
-        "ano": recente["ano"],
-        "mes": recente["mes"],
-        "competencia": "{:04d}-{:02d}".format(recente["ano"], recente["mes"]),
+        "ano": escolhida["ano"],
+        "mes": escolhida["mes"],
+        "competencia": "{:04d}-{:02d}".format(escolhida["ano"], escolhida["mes"]),
+        "entes": escolhida["entes"],
         "varias": len(linhas) > 1,
+        "disponiveis": ["{:04d}-{:02d}".format(l["ano"], l["mes"])
+                        for l in linhas],
+    }
+
+
+def _resumo_comparavel(linhas: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Total e alocação por segmento de uma competência — o que o comparativo
+    precisa, e nada além disso.
+
+    Quem declarou adiantado tem duas carteiras na base: a do mês que o país
+    inteiro declarou e a dele, mais nova. A ficha mostra a mais nova, porque é
+    a posição real do RPPS hoje; o comparativo usa a da competência de
+    referência, porque comparar agosto de um com junho de outro é comparar
+    datas, não carteiras. Guardar o bloco inteiro duas vezes dobraria a ficha —
+    então o que sobrevive à segunda leitura é só o total e os percentuais por
+    segmento, que é de onde saem os indicadores do comparativo.
+    """
+    if not linhas:
+        return None
+    total = sum(l.get("valor_total") or 0.0 for l in linhas)
+    da_fonte = all(l.get("perc_recursos") is not None for l in linhas)
+    por_segmento: Dict[str, float] = {}
+    for linha in linhas:
+        nome = (linha.get("segmento") or "Não informado").strip()
+        perc = (linha.get("perc_recursos") or 0.0) if da_fonte else _pct(
+            linha.get("valor_total") or 0.0, total)
+        por_segmento[nome] = por_segmento.get(nome, 0.0) + perc
+    ano, mes = linhas[0].get("ano"), linhas[0].get("mes")
+    return {
+        "disponivel": True,
+        "total": round(total, 2),
+        "ano": ano,
+        "mes": mes,
+        "competencia": ("{:04d}-{:02d}".format(ano, mes)
+                        if ano and mes else None),
+        "segmentos": [{"rotulo": nome, "perc": round(perc, 2)}
+                      for nome, perc in sorted(por_segmento.items(),
+                                               key=lambda kv: -kv[1])],
     }
 
 
 def _montar_carteira_ente(store: Store, cnpj: str,
-                          linhas_fora: Optional[AbstractSet[int]] = None
+                          linhas_fora: Optional[AbstractSet[int]] = None,
+                          referencia: Optional[Mapping[str, Any]] = None
                           ) -> Dict[str, Any]:
     """Composição da carteira, enquadramento por classe e maiores posições.
+
+    **A ficha mostra a competência do próprio ente.** A base guarda mais de um
+    mês de DAIR, e cada RPPS declara no seu ritmo: em 22/09/2026, 305 já tinham
+    declarado julho ou agosto enquanto 261 não tinham chegado a junho, a
+    competência de referência do painel. Mostrar a todos a mesma competência
+    deixaria os 261 sem carteira nenhuma — como se nunca tivessem declarado — e
+    esconderia dos 305 o demonstrativo que eles já entregaram. A tela diz
+    sempre a que mês o número se refere, e avisa quando esse mês não é o da
+    referência nacional.
 
     **O enquadramento é por classe de ativo, não por segmento.** A Resolução do
     CMN não fixa um teto por segmento: fixa um teto por classe, e dentro de um
@@ -1908,10 +1966,15 @@ def _montar_carteira_ente(store: Store, cnpj: str,
     linhas = _varios(store, "dair_carteira", colunas, cnpj,
                      ordem="valor_total DESC", limite=40000)
     linhas_fora = linhas_fora or frozenset()
-    # Uma competência por vez. O DAIR é mensal e a base pode guardar várias —
-    # a tela detalhada existe justamente para comparar uma com a outra. Somar
-    # junho com agosto contaria o mesmo dinheiro duas vezes, e o total do país
+    if referencia is None:
+        referencia = _competencias_do_dair(store)
+    referencia = referencia or {}
+    ref_ano, ref_mes = referencia.get("ano"), referencia.get("mes")
+    # Uma competência por vez. O DAIR é mensal e a base guarda várias — a tela
+    # detalhada existe justamente para comparar uma com a outra. Somar junho
+    # com agosto contaria o mesmo dinheiro duas vezes, e o total do país
     # cresceria a cada competência ingerida sem que nada tivesse sido aplicado.
+    todas = linhas
     linhas = _da_competencia_recente(linhas)
     excluidas = [l for l in linhas if l["rowid"] in linhas_fora]
     linhas = [l for l in linhas if l["rowid"] not in linhas_fora]
@@ -2020,6 +2083,52 @@ def _montar_carteira_ente(store: Store, cnpj: str,
         "mes": linhas[0].get("mes"),
         "competencia": ("{:04d}-{:02d}".format(linhas[0]["ano"], linhas[0]["mes"])
                         if linhas[0].get("ano") and linhas[0].get("mes") else None),
+        **_confrontar_com_a_referencia(linhas, todas, linhas_fora,
+                                       ref_ano, ref_mes, referencia),
+    }
+
+
+def _confrontar_com_a_referencia(linhas: List[Dict[str, Any]],
+                                 todas: List[Dict[str, Any]],
+                                 linhas_fora: AbstractSet[int],
+                                 ref_ano: Optional[int], ref_mes: Optional[int],
+                                 referencia: Mapping[str, Any]) -> Dict[str, Any]:
+    """Diz em que mês está a carteira da ficha e o que sobra para comparar.
+
+    Três situações, e nenhuma delas é a ausência da carteira:
+
+    * o ente está na competência de referência — a ficha e o comparativo leem
+      o mesmo demonstrativo, e não há nada a ressalvar;
+    * o ente declarou adiantado — a ficha mostra o mês novo e o comparativo
+      volta ao de referência, que o ente também declarou;
+    * o ente parou antes da referência — a ficha mostra a última declaração
+      dele, com a data à vista, e ele fica fora dos indicadores derivados da
+      carteira, porque não existe carteira dele na data em que os outros são
+      medidos.
+
+    ``na_referencia`` só vale ``False`` quando se sabe que diverge: sem
+    competência de referência conhecida, fica indefinido, e o comparativo não
+    exclui ninguém por uma dúvida.
+    """
+    ano, mes = linhas[0].get("ano"), linhas[0].get("mes")
+    if ref_ano is None or ref_mes is None or ano is None or mes is None:
+        return {"referencia": referencia.get("competencia"),
+                "na_referencia": None, "defasagem_meses": None,
+                "comparavel": None}
+    na_referencia = (ano, mes) == (ref_ano, ref_mes)
+    # Positivo: o ente está atrás da referência. Negativo: declarou adiantado.
+    defasagem = (ref_ano * 12 + ref_mes) - (ano * 12 + mes)
+    comparavel = None
+    if not na_referencia:
+        da_ref = [l for l in todas
+                  if (l.get("ano"), l.get("mes")) == (ref_ano, ref_mes)
+                  and l["rowid"] not in linhas_fora]
+        comparavel = _resumo_comparavel(da_ref)
+    return {
+        "referencia": referencia.get("competencia"),
+        "na_referencia": na_referencia,
+        "defasagem_meses": defasagem,
+        "comparavel": comparavel,
     }
 
 
@@ -2530,9 +2639,13 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     gerados.append(_gravar("entes.json", indice, dir_saida))
 
     escolhidos = list(entes.items())[:limite_entes] if limite_entes else list(entes.items())
+    # Uma consulta só para o país inteiro: a competência de referência é a
+    # mesma para todas as fichas, e perguntá-la por ente custaria 1.821
+    # varreduras de uma tabela de milhões de linhas.
+    referencia = _competencias_do_dair(store)
     fichas = {}
     for cnpj, dados in escolhidos:
-        ficha = montar_ente(store, cnpj, dados, linhas_fora)
+        ficha = montar_ente(store, cnpj, dados, linhas_fora, referencia)
         fichas[cnpj] = ficha
         _gravar(os.path.join("ente", cnpj + ".json"), ficha, dir_saida)
         # A carteira ativo a ativo vai em arquivo separado: quem só abre a

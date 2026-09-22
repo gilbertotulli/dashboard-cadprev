@@ -145,11 +145,35 @@ def alocacao(ficha: Mapping[str, Any]) -> Dict[str, float]:
     que não sejam alocação de investimento — deixá-las de fora faria os
     percentuais somarem menos de cem sem explicação na tela.
     """
-    carteira = ficha.get("carteira") or {}
-    if not carteira.get("disponivel"):
+    base = base_comparavel(ficha.get("carteira") or {})
+    if not base:
         return {}
     return {(s.get("rotulo") or "Não informado"): s.get("perc") or 0.0
-            for s in carteira.get("segmentos") or []}
+            for s in base.get("segmentos") or []}
+
+
+def base_comparavel(carteira: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
+    """A carteira na competência de referência, ou nada.
+
+    A ficha mostra a competência do próprio RPPS — quem declarou adiantado vê
+    agosto, quem parou antes vê a última que entregou. O comparativo não pode
+    fazer o mesmo: um patrimônio de agosto ao lado de um de junho compara datas
+    além de carteiras, e a diferença entre os dois RPPS passa a incluir dois
+    meses de aplicação que só um deles teve.
+
+    Então o comparativo lê sempre a competência de referência. Quem declarou
+    adiantado tem essa competência guardada e entra pelo bloco ``comparavel``;
+    quem não chegou até ela não tem o que comparar e fica de fora — indefinido,
+    nunca zero.
+    """
+    if not carteira.get("disponivel"):
+        return None
+    # Só exclui quem se sabe que diverge. Sem competência de referência
+    # conhecida, ``na_referencia`` é ``None`` e a carteira da ficha serve.
+    if carteira.get("na_referencia") is False:
+        comparavel = carteira.get("comparavel") or {}
+        return comparavel if comparavel.get("disponivel") else None
+    return carteira
 
 
 def calcular(ficha: Mapping[str, Any]) -> Dict[str, Optional[float]]:
@@ -164,7 +188,10 @@ def calcular(ficha: Mapping[str, Any]) -> Dict[str, Optional[float]]:
     atuaria = ficha.get("atuaria") or {}
 
     inativos = est.get("inativos") or 0
-    patrimonio = carteira.get("total") if carteira.get("disponivel") else None
+    # Indicadores derivados da carteira leem a competência de referência, não a
+    # que a ficha mostra. Ver ``base_comparavel``.
+    base = base_comparavel(carteira)
+    patrimonio = base.get("total") if base else None
     receita = caixa.get("total_receita") if caixa.get("disponivel") else None
     despesa = caixa.get("total_despesa") if caixa.get("disponivel") else None
     meses = caixa.get("meses_declarados") or 0
@@ -190,7 +217,7 @@ def calcular(ficha: Mapping[str, Any]) -> Dict[str, Optional[float]]:
         "despesa_por_inativo": (
             round(despesa / meses / inativos, 2)
             if despesa and meses and inativos else None),
-        "perc_renda_fixa": _perc_renda_fixa(carteira),
+        "perc_renda_fixa": _perc_renda_fixa(base),
         "aliquota_ente": _aliquota_ente(ficha.get("aliquotas") or []),
     }
     return resultado
@@ -241,8 +268,8 @@ def _cobertura_militar(atuaria: Mapping[str, Any]) -> Optional[float]:
     return round(ativos / provisoes * 100, 2)
 
 
-def _perc_renda_fixa(carteira: Mapping[str, Any]) -> Optional[float]:
-    if not carteira.get("disponivel"):
+def _perc_renda_fixa(carteira: Optional[Mapping[str, Any]]) -> Optional[float]:
+    if not carteira:
         return None
     for segmento in carteira.get("segmentos") or []:
         if (segmento.get("rotulo") or "").strip().lower().startswith("renda fixa"):

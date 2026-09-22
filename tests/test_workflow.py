@@ -127,6 +127,22 @@ class TestOrdemDaCarga(unittest.TestCase):
             self.assertLess(self.passo.index(comando),
                             self.passo.index("endpoints essenciais"))
 
+    def test_atrasados_vem_depois_do_cabecalho_do_dair(self):
+        """O ``dair-atrasados`` lê do banco qual foi a última competência de
+        cada ente, e quem escreve isso é o ``DAIR_IDENTIFICACAO``.
+
+        Invertido, o comando rodaria contra a identificação da carga anterior —
+        uma semana velha — ou contra tabela nenhuma na primeira execução, e
+        sairia sem trazer ninguém sem que nada no log dissesse por quê.
+        """
+        self.assertIn("cadprev dair-atrasados", self.passo)
+        self.assertLess(self.passo.index("ingest DAIR_IDENTIFICACAO"),
+                        self.passo.index("cadprev dair-atrasados"))
+        # E depois da varredura por competência: o que já veio por ela não
+        # precisa ser pedido de novo, ente a ente.
+        self.assertLess(self.passo.index("for VOLTA in 0 1 2"),
+                        self.passo.index("cadprev dair-atrasados"))
+
     def test_filtro_de_uf_definido_antes_de_ser_usado(self):
         primeiro_uso = self.passo.index("$FILTRO_UF")
         self.assertLess(self.passo.index('FILTRO_UF=""'), primeiro_uso)

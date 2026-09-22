@@ -192,6 +192,19 @@ jobs:
           python -m cadprev ingest DAIR_IDENTIFICACAO \
             $FILTRO_UF --ano "$ANO" 2>&1 | tee -a ingest.log || true
 
+          # E agora o que a varredura por competência não alcança, ente a ente.
+          # O prazo do DAIR vai até o fim do mês seguinte, então cada RPPS está
+          # num ponto diferente da série: em 22/09/2026, 305 já tinham entregue
+          # julho ou agosto e 261 não tinham chegado a junho — estes últimos
+          # ficavam sem carteira nenhuma no painel, como se nunca tivessem
+          # declarado. O cabeçalho ingerido logo acima diz, por ente, qual foi
+          # a última competência dele; o comando pede só essa, de quem ainda
+          # não a tem. Uma requisição por ente em vez de uma varredura nacional
+          # por mês, e cada gravação no escopo do próprio ente — trazer um não
+          # apaga o outro, nem a competência de referência.
+          python -m cadprev dair-atrasados \
+            $FILTRO_UF 2>&1 | tee -a ingest.log || true
+
           python -m cadprev ingest RPPS_CRP RPPS_REGIME_PREVIDENCIARIO \
             RPPS_ALIQUOTA $FILTRO_UF 2>&1 | tee -a ingest.log || true
 

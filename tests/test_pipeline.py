@@ -345,6 +345,132 @@ class TestPipeline(unittest.TestCase):
             if carteira.get("disponivel"):
                 self.assertTrue(carteira["competencia"], ente["ente"])
 
+    # ------------------------- a competência de cada um, e a de referência
+
+    def _carteiras(self):
+        """A carteira de cada ente, indexada pelo nome."""
+        saida = {}
+        for ente in self._json("entes.json"):
+            ficha = self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+            saida[ente["ente"]] = ficha.get("carteira") or {}
+        return saida
+
+    def test_ficha_mostra_a_competencia_do_proprio_ente(self):
+        """Cada RPPS declara no seu ritmo, e a ficha mostra o que ele entregou.
+
+        O prazo do DAIR vai até o fim do mês seguinte: uma minoria sempre está
+        à frente da competência que o país declarou, e uma minoria parou antes
+        dela. Fixar a ficha na competência de referência esconderia o
+        demonstrativo novo de uns e deixaria os outros sem carteira nenhuma —
+        como se nunca tivessem declarado.
+        """
+        carteiras = self._carteiras()
+        referencia = self._nacional("carteira-nacional.json")["competencia"]
+
+        adiantados = [n for n, c in carteiras.items()
+                      if c.get("disponivel") and c["competencia"] > referencia]
+        atrasados = [n for n, c in carteiras.items()
+                     if c.get("disponivel") and c["competencia"] < referencia]
+        self.assertTrue(adiantados, "o demo precisa de quem declarou adiantado")
+        self.assertTrue(atrasados, "o demo precisa de quem parou antes")
+
+        for nome in adiantados + atrasados:
+            c = carteiras[nome]
+            self.assertFalse(c["na_referencia"], nome)
+            self.assertEqual(c["referencia"], referencia, nome)
+            # A ficha nunca omite a data do que está na tela.
+            self.assertTrue(c["competencia"], nome)
+        # Sinal do lado: positivo atrás da referência, negativo à frente.
+        self.assertGreater(carteiras[atrasados[0]]["defasagem_meses"], 0)
+        self.assertLess(carteiras[adiantados[0]]["defasagem_meses"], 0)
+
+    def test_competencia_de_referencia_e_a_que_o_pais_declarou(self):
+        """E não a mais recente que existe no banco.
+
+        Depois do ``dair-atrasados`` a base guarda meses esparsos, trazidos
+        ente a ente. Se a referência fosse o máximo da tabela, dois RPPS que
+        entregaram adiantado definiriam a data do patrimônio nacional e todos
+        os outros sumiriam do agregado por não terem declarado aquele mês.
+        """
+        nacional = self._nacional("carteira-nacional.json")
+        with Store(self.banco) as store:
+            competencias = build._competencias_do_dair(store)
+        mais_recente = max(competencias["disponiveis"])
+        self.assertEqual(competencias["competencia"], nacional["competencia"])
+        self.assertLess(competencias["competencia"], mais_recente,
+                        "o demo precisa de competência mais nova que a de "
+                        "referência, senão a regra não é testada")
+        # E a de referência é a que reúne quase todo mundo.
+        com_carteira = sum(1 for c in self._carteiras().values()
+                           if c.get("disponivel"))
+        self.assertGreater(competencias["entes"], com_carteira / 2)
+
+    def test_quem_declarou_adiantado_guarda_a_competencia_de_referencia(self):
+        """A ficha mostra agosto; o comparativo continua lendo junho.
+
+        Comparar o patrimônio de agosto de um RPPS com o de junho de outro
+        mistura dois meses de aplicação com a diferença entre as carteiras. O
+        bloco ``comparavel`` é a carteira do adiantado na data em que todos os
+        outros são medidos — e é dele que saem os indicadores.
+        """
+        referencia = self._nacional("carteira-nacional.json")["competencia"]
+        adiantados = [c for c in self._carteiras().values()
+                      if c.get("disponivel") and c["na_referencia"] is False
+                      and c["competencia"] > referencia]
+        self.assertTrue(adiantados)
+        for c in adiantados:
+            comparavel = c["comparavel"]
+            self.assertIsNotNone(comparavel)
+            self.assertEqual(comparavel["competencia"], referencia)
+            # Não é a mesma carteira: um mês de aplicação separa as duas.
+            self.assertNotAlmostEqual(comparavel["total"], c["total"], places=2)
+            self.assertAlmostEqual(
+                sum(s["perc"] for s in comparavel["segmentos"]), 100.0, delta=1.0)
+
+    def test_quem_parou_antes_nao_tem_o_que_comparar(self):
+        """Ficha sim, comparativo não — e indefinido, nunca zero.
+
+        Um RPPS cuja última declaração é de fevereiro aparece na tela com a
+        carteira de fevereiro e a data à vista. O que não existe é carteira
+        dele na data em que os outros são medidos, e um indicador derivado
+        dela seria uma comparação entre meses disfarçada de comparação entre
+        RPPS.
+        """
+        from cadprev import benchmark
+        referencia = self._nacional("carteira-nacional.json")["competencia"]
+        atrasados = [c for c in self._carteiras().values()
+                     if c.get("disponivel") and c["competencia"] < referencia]
+        self.assertTrue(atrasados)
+        for c in atrasados:
+            self.assertIsNone(c["comparavel"])
+            self.assertIsNone(benchmark.base_comparavel(c))
+            self.assertEqual(benchmark.alocacao({"carteira": c}), {})
+            # Mas a carteira está lá, com total e composição.
+            self.assertGreater(c["total"], 0)
+            self.assertTrue(c["segmentos"])
+
+    def test_indicadores_da_carteira_saem_da_competencia_de_referencia(self):
+        """O número do comparativo é o da referência, não o da ficha."""
+        from cadprev import benchmark
+        referencia = self._nacional("carteira-nacional.json")["competencia"]
+        for ente in self._json("entes.json"):
+            ficha = self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+            c = ficha.get("carteira") or {}
+            if not (c.get("disponivel") and c.get("comparavel")):
+                continue
+            indicadores = benchmark.calcular(ficha)
+            inativos = (ficha.get("estatistica") or {}).get("inativos") or 0
+            if not inativos:
+                continue
+            esperado = round(c["comparavel"]["total"] / inativos, 2)
+            self.assertAlmostEqual(
+                indicadores["patrimonio_por_beneficiario"], esperado, places=2,
+                msg=ente["ente"])
+            # E não o da competência que a ficha mostra.
+            self.assertNotAlmostEqual(
+                indicadores["patrimonio_por_beneficiario"],
+                round(c["total"] / inativos, 2), places=2, msg=ente["ente"])
+
     def test_norma_dos_investimentos_vem_de_um_lugar_so(self):
         """O painel não mantém tabela de limites — quem declara o teto de cada
         classe é a API. A norma aparece na tela só como referência, e de uma
