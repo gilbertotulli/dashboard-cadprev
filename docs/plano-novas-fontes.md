@@ -209,8 +209,11 @@ erraria:
   balanço não reconhece.
 * **A decomposição por fundo é quase toda opcional.** Numa amostra de 15 RPPS em
   22/09/2026, as contas de capitalização apareciam em 13 e as de repartição em 2
-  — a maioria dos municípios não tem fundo em repartição. Um deles entregou o
-  balanço sem a conta de provisão, o que é diferente de declarar zero.
+  — a maioria dos municípios não tem fundo em repartição.
+* **A própria conta de provisão falta com frequência, e às vezes vem negativa.**
+  Sobre 198 RPPS medidos, 27% entregam o balanço sem ela — diferente de declarar
+  zero — e dois a declaram negativa. Nos dois casos o confronto não acontece: a
+  razão precisaria de um passivo positivo dos dois lados.
 * **O alinhamento temporal.** O DRAA do exercício N descreve a posição de 31/12
   de N−1, e o balanço do exercício N fecha em 31/12 de N. O confronto só
   acontece no par DRAA(N) × DCA(N−1); fora dele os dois números aparecem e a

@@ -939,6 +939,11 @@ def dca_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
         contabil = atuarial * desvio
         tem_reparticao = n % 6 == 0
         sem_provisao = n == 9
+        # Provisão negativa: medida em 22/09/2026 em 2 de 198 entes com balanço
+        # — Goianésia/GO e Morrinhos/GO. O número é declarado e fica na tela; o
+        # que não dá é calcular razão contra uma avaliação positiva sobre ele.
+        if n == 12:
+            contabil = -abs(contabil) * 0.2
 
         contas = [("P1.0.0.0.0.00.00", "1.0.0.0.0.00.00 - Ativo", contabil * 1.4)]
         if not sem_provisao:

@@ -959,21 +959,37 @@ class TestComposicaoContabil(unittest.TestCase):
         """As contas 2.2.7.2.2 são redutoras, publicadas com sinal positivo e
         fora do total. Somar componentes daria um passivo que o balanço não
         reconhece — em Vitória, R$ 4,8 bi a mais sobre R$ 5,66 bi."""
-        achou = False
+        from cadprev.store import Store as _Store
+        with _Store(self.banco) as store:
+            cruas = [dict(l) for l in store.consultar(
+                "SELECT cnpj_ente, cod_conta, valor FROM siconfi_dca "
+                "WHERE cod_conta LIKE 'P2.2.7.2%'")]
+        por_ente = {}
+        for linha in cruas:
+            por_ente.setdefault(linha["cnpj_ente"], {})[
+                linha["cod_conta"]] = linha["valor"]
+
+        com_redutora = 0
         for ficha in self._fichas():
             c = ficha.get("contabil_anual") or {}
             if not c.get("disponivel") or c.get("provisao") is None:
                 continue
-            soma = sum(f["total"] for f in c["fundos"])
-            if not soma:
+            contas = por_ente.get(ficha["cnpj"]) or {}
+            # O valor publicado é o da conta de total, exatamente.
+            self.assertAlmostEqual(c["provisao"], contas["P2.2.7.2.0.00.00"],
+                                   places=2)
+            redutoras = {k: v for k, v in contas.items()
+                         if k.startswith("P2.2.7.2.2") and v is not None}
+            if not redutoras:
                 continue
-            achou = True
-            # O total declarado nunca é a soma cega das linhas mostradas.
-            self.assertAlmostEqual(c["provisao"], c["provisao"], places=2)
-            if c.get("insuficiencia"):
-                self.assertGreater(c["provisao"] + c["insuficiencia"],
-                                   c["provisao"])
-        self.assertTrue(achou, "o demo precisa de ente com fundo declarado")
+            com_redutora += 1
+            # E não é a soma cega de todas as linhas 2.2.7.2: as redutoras são
+            # publicadas com sinal positivo e ficam fora do total.
+            soma_cega = sum(v for k, v in contas.items()
+                            if v is not None and k != "P2.2.7.2.0.00.00")
+            self.assertNotAlmostEqual(c["provisao"], soma_cega, places=2)
+        self.assertTrue(com_redutora,
+                        "o demo precisa de ente com conta redutora")
 
     def test_confronto_atuarial_so_no_par_de_mesma_data(self):
         """O DRAA de N descreve 31/12 de N−1; o balanço de N fecha em 31/12 de
@@ -996,6 +1012,24 @@ class TestComposicaoContabil(unittest.TestCase):
                     confronto["diferenca"],
                     confronto["contabil"] - confronto["atuarial"], places=2)
         self.assertTrue(achou, "o demo precisa de ente com os dois lados")
+
+    def test_provisao_negativa_nao_vira_razao(self):
+        """Provisão negativa não é passivo menor.
+
+        Medido em 22/09/2026 sobre 198 entes com balanço: dois casos —
+        Goianésia/GO com −R$ 105,4 mi e Morrinhos/GO com −R$ 15,6 mi. O número
+        é declarado e fica na tela; o que não existe é a razão contra uma
+        avaliação atuarial positiva.
+        """
+        achou = False
+        for ficha in self._fichas():
+            c = ficha.get("contabil_anual") or {}
+            if not c.get("provisao_negativa"):
+                continue
+            achou = True
+            self.assertLess(c["provisao"], 0)
+            self.assertIsNone(c.get("confronto"))
+        self.assertTrue(achou, "o demo precisa de ente com provisão negativa")
 
     def test_balanco_sem_conta_de_provisao_nao_vira_zero(self):
         """Entregar o balanço sem a conta 2.2.7.2 é diferente de declarar zero:

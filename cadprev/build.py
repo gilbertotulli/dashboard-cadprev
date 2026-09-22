@@ -1300,6 +1300,7 @@ def _montar_contabil_anual(store: Store, cnpj: str,
         "exercicio": exercicio,
         "data_base": (do_exercicio[0].get("coluna") if do_exercicio else None),
         "provisao": por_conta.get(_DCA_PROVISAO),
+        "provisao_negativa": bool((por_conta.get(_DCA_PROVISAO) or 0) < 0),
         "insuficiencia": por_conta.get(_DCA_INSUFICIENCIA),
         "ativo": por_conta.get(_DCA_ATIVO),
         "investimentos": (round(sum(v for v in investido if v is not None), 2)
@@ -1321,6 +1322,13 @@ def _confrontar_provisao(contabil: Mapping[str, Any],
     """
     contabil_valor = contabil.get("provisao")
     if contabil_valor is None or not atuaria or not atuaria.get("disponivel"):
+        return None
+    # Provisão negativa não é passivo menor: é lançamento que a contabilidade
+    # publicou com sinal invertido ou conta redutora onde não devia. Medido em
+    # 22/09/2026 sobre 198 entes com balanço: dois casos, Goianésia/GO com
+    # −R$ 105,4 mi e Morrinhos/GO com −R$ 15,6 mi. O número é declarado e fica
+    # na tela; o que não existe é a razão contra uma avaliação positiva.
+    if contabil_valor <= 0:
         return None
     exercicio_draa = atuaria.get("exercicio")
     exercicio_dca = contabil.get("exercicio")

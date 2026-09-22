@@ -2072,6 +2072,17 @@
         "DRAA avalia, registrado por outro profissional e sob outra norma." })
     ];
 
+    if (c.provisao_negativa) {
+      nos.push(h("div", { class: "aviso-linha" }, [
+        h("span", { class: "ico", texto: "\u26a0" }),
+        h("span", { texto:
+          "A provisão matemática deste ente está declarada com valor negativo. " +
+          "É o número que o balanço publica e ele fica à vista, mas não é um " +
+          "passivo menor: a razão contra a avaliação atuarial não tem como ser " +
+          "calculada sobre ele." })
+      ]));
+    }
+
     if (c.provisao === null || c.provisao === undefined) {
       nos.push(h("div", { class: "aviso-linha" }, [
         h("span", { class: "ico", texto: "\u26a0" }),

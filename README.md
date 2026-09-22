@@ -547,6 +547,13 @@ redutoras e a API as publica com sinal positivo: em Vitória somam R$ 4,8 bi que
 não entram no total de R$ 5,66 bi declarado em `2.2.7.2`. Somar componentes
 daria um passivo que o balanço não reconhece.
 
+**Nem todo ente declara a conta, e alguns a declaram negativa.** Medido em
+22/09/2026 sobre 198 RPPS com balanço: 27% entregam o Anexo I-AB sem a conta de
+provisão — o que é diferente de declarar zero — e dois declaram provisão
+negativa (Goianésia/GO, −R$ 105,4 mi; Morrinhos/GO, −R$ 15,6 mi). O número
+negativo aparece na tela porque é o que o balanço publica; o que não se calcula
+sobre ele é a razão contra uma avaliação atuarial positiva.
+
 **O confronto só acontece no par que descreve a mesma data.** O DRAA do
 exercício N descreve a posição de 31/12 de N−1; o balanço do exercício N fecha
 em 31/12 de N. O par correto é DRAA(N) com DCA(N−1) — fora dele os dois números
