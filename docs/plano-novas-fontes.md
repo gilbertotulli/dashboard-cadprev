@@ -178,10 +178,23 @@ percentual que ela mesma calcula.
 exercício do DRAA e bimestre do RREO em cada quadro; linha de fechamento em todo
 quadro truncado, dizendo o que soma e quanto ficou de fora.
 
-### Situação em 17/09/2026
+### Situação em 22/09/2026
 
 As fases 1, 2, 4, 5 e 6 estão implantadas. A fase 3 depende de semanas de medição
 acumulada e não pode ser antecipada sem desfazer o próprio motivo dela existir.
+
+**A fonte parou.** A API do CADPREV está degradada desde pelo menos 17/09: lista
+um endpoint só e ele responde 500 com falha de autenticação interna; os demais
+dão 404. O agendamento de 21/09 morreu por causa disso e a correção está
+descrita no commit "Não perder a publicação quando a fonte sai do ar": a
+competência cai para o banco, a marca de varredura exige que algo tenha sido
+varrido, e a aba Qualidade abre dizendo que a fonte não responde e desde quando.
+
+Enquanto durar, o painel republica a carga de 16–17/09 com as datas à vista. O
+SICONFI segue no ar, então o Anexo 04 continua se atualizando — e a tabela de
+procedência da aba Qualidade é o que torna essa mistura de safras visível em vez
+de silenciosa. A fase 7 (DCA) depende do SICONFI, não do CADPREV, e por isso
+continua possível.
 
 **Fase 7, a próxima — DCA.** Trazer o Anexo I-AB e confrontar a provisão
 matemática contábil com a avaliação atuarial do DRAA, respeitando a defasagem de

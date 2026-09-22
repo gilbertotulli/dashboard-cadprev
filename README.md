@@ -537,9 +537,15 @@ colegiado não diz nada sobre a gestão de hoje.
 
 ## O que ainda falta
 
-- **Endpoints sem mapa de campos.** Dezesseis dos 39 têm mapa; `python -m cadprev
-  endpoints` marca quais. Governança, credenciamento e notificações do DAIR e do
-  DRAA abririam telas novas.
+- **A API do CADPREV está fora do ar.** Desde pelo menos 17/09/2026 ela lista um
+  único endpoint (`/RPPS_REGIME_PREVIDENCIARIO`), e mesmo esse responde 500 com
+  "Falha na autenticação" da própria origem; os outros 38 retornam 404. O painel
+  atravessa isso republicando o que já tem e dizendo na tela que a fonte não
+  responde — mas nenhum dado novo do CADPREV entra enquanto durar. O SICONFI
+  continua respondendo normalmente.
+- **Endpoints sem mapa de campos.** Dezenove dos 39 têm mapa; `python -m cadprev
+  endpoints` marca quais. Credenciamento, atas e notificações de retificação
+  abririam telas novas.
 - **Histórico.** A ingestão é por competência; comparar exercícios depende de
   ingerir cada um e de telas que ainda não existem.
 - **Carteira por fundo (Nível A).** Só seria possível reconstruindo a posição a
