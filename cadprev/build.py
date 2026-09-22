@@ -843,12 +843,20 @@ def montar_caixa_nacional(fichas: Mapping[str, Mapping[str, Any]],
                           ) -> Dict[str, Any]:
     """O consolidado da aba Caixa: ingressos, dispêndios e resultado.
 
-    **O total nacional soma só quem declarou o ano inteiro.** A janela do DIPR
-    varia de ente para ente — quem entregou seis meses tem metade do ano na
-    série —, e somar meia série de um com a série cheia de outro produz um
-    total que nenhum dos dois declarou. Os indicadores por ente (resultado
-    sobre ingressos, por exemplo) são percentuais e não têm esse problema:
-    entram todos.
+    **O total nacional é mensal, não anual.** A janela do DIPR varia de ente
+    para ente, e somar meia série de um com a série cheia de outro produz um
+    total que nenhum dos dois declarou. A primeira tentativa de contornar isso
+    somava só quem tivesse doze meses — e a publicação de 22/09/2026 mostrou o
+    defeito: **no meio do exercício ninguém tem doze meses**, e o quadro saiu
+    com um traço no lugar do número. Numa amostra de 45 RPPS daquele dia, a
+    série ia de zero a seis meses, com seis sendo a mais comum.
+
+    Então o total soma, por ente, o que ele declarou dividido pelos meses que
+    declarou: o ritmo mensal de cada um, somado. Todo RPPS entra com a própria
+    janela, ninguém é extrapolado para doze meses, e o número existe em
+    qualquer ponto do exercício. Quem declarou dois meses contribui com uma
+    média mais ruidosa — por isso a distribuição de meses declarados fica
+    publicada ao lado, para o leitor ver de que séries o total é feito.
     """
     fora = fora or frozenset()
     presentes = {c: f for c, f in fichas.items() if c not in fora}
@@ -880,8 +888,6 @@ def montar_caixa_nacional(fichas: Mapping[str, Mapping[str, Any]],
         "meses_declarados": lambda f: (_caixa(f) or {}).get("meses_declarados"),
     }
 
-    doze = {c: f for c, f in presentes.items()
-            if ((f.get("caixa") or {}).get("meses_declarados") or 0) >= 12}
     deficitarios = sum(
         1 for f in presentes.values()
         if (_caixa(f) or {}).get("resultado") is not None
@@ -894,13 +900,12 @@ def montar_caixa_nacional(fichas: Mapping[str, Mapping[str, Any]],
         "com_dipr": com_caixa,
         "deficitarios": deficitarios,
         "indicadores": _consolidar(presentes, frozenset(), indicadores),
-        # O total só de quem entregou o ano inteiro, e a tela diz quantos são.
-        "ano_completo": {
-            "entes": len(doze),
+        # O ritmo mensal do país: cada RPPS entra com a própria janela.
+        "mensal": {
             "receita": _soma_das_fichas(
-                doze, frozenset(), lambda f: (f.get("caixa") or {}).get("total_receita")),
+                presentes, frozenset(), lambda f: _mensal(f, "total_receita")),
             "despesa": _soma_das_fichas(
-                doze, frozenset(), lambda f: (f.get("caixa") or {}).get("total_despesa")),
+                presentes, frozenset(), lambda f: _mensal(f, "total_despesa")),
         },
     }
 

@@ -647,23 +647,46 @@ class TestPipeline(unittest.TestCase):
         self.assertLessEqual(atuaria["com_deficit"] + atuaria["com_superavit"],
                              atuaria["com_draa"])
 
-    def test_total_de_caixa_soma_so_quem_declarou_o_ano_inteiro(self):
-        """A janela do DIPR varia de ente para ente.
+    def test_total_de_caixa_e_mensal_e_nao_extrapola_ninguem(self):
+        """A janela do DIPR varia de ente para ente, e o total vive com isso.
 
-        Somar meia série de um com a série cheia de outro dá um total que
-        nenhum dos dois declarou. Os indicadores percentuais não têm esse
-        problema e continuam com todo mundo.
+        Somar meia série de um com a série cheia de outro daria um total que
+        nenhum dos dois declarou. Exigir doze meses tampouco serve: no meio do
+        exercício ninguém tem doze, e a publicação de 22/09/2026 saiu com um
+        traço no lugar do número. O total soma o ritmo mensal de cada um — a
+        própria janela dele, sem extrapolação.
         """
         caixa = self._consolidado("caixa")
-        self.assertLess(caixa["ano_completo"]["entes"], caixa["com_dipr"],
-                        "o demo precisa de RPPS com série parcial, senão a "
-                        "regra não é testada")
-        self.assertEqual(caixa["ano_completo"]["receita"]["entes"],
-                         caixa["ano_completo"]["entes"])
-        # O indicador percentual usa todo mundo que declarou, não só esses.
-        self.assertGreaterEqual(
-            caixa["indicadores"]["resultado_sobre_ingressos"]["n"],
-            caixa["ano_completo"]["entes"])
+        mensal = caixa["mensal"]
+        self.assertNotIn("ano_completo", caixa,
+                         "o total anual voltou, e ele zera no meio do exercício")
+        # Todo RPPS com DIPR entra: ninguém fica de fora por ter janela curta.
+        self.assertEqual(mensal["receita"]["entes"], caixa["com_dipr"])
+        self.assertGreater(mensal["receita"]["total"], 0)
+
+        # E o total é de fato mensal. A conferência usa a variante sem nenhum
+        # filtro de qualidade — "0000" —, porque é a única em que o conjunto
+        # publicado é o mesmo que o índice de entes.
+        sem_filtro = self._json("consolidado.json")["variantes"]["0000"]["caixa"]
+        soma_mensal = soma_do_periodo = 0.0
+        parciais = 0
+        for ente in self._json("entes.json"):
+            c = (self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+                 .get("caixa") or {})
+            if not c.get("disponivel") or not c.get("meses_declarados"):
+                continue
+            soma_mensal += c["total_receita"] / c["meses_declarados"]
+            soma_do_periodo += c["total_receita"]
+            if c["meses_declarados"] < 12:
+                parciais += 1
+        self.assertTrue(parciais, "o demo precisa de RPPS com série parcial")
+        self.assertAlmostEqual(sem_filtro["mensal"]["receita"]["total"],
+                               round(soma_mensal, 2), delta=1.0)
+        self.assertLess(sem_filtro["mensal"]["receita"]["total"], soma_do_periodo)
+
+        # O indicador percentual continua com todo mundo que declarou.
+        self.assertEqual(caixa["indicadores"]["resultado_sobre_ingressos"]["n"],
+                         caixa["com_dipr"])
 
     def test_consolidado_da_ficha_separa_regular_de_irregular(self):
         """A contagem tem de saber contar os dois lados.

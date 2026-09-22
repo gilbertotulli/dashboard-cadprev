@@ -640,10 +640,50 @@ Três disciplinas valem em todos eles:
   separados, com a contagem de quantos estão de cada lado — um resultado
   nacional líquido afirmaria a compensação.
 
-O total de caixa soma só quem declarou os doze meses: a janela do DIPR varia de
-ente para ente, e somar meia série de um com a série cheia de outro daria um
-total que nenhum dos dois declarou. Os indicadores percentuais não têm esse
-problema e continuam com todo mundo.
+O total de caixa é **mensal**, não anual. Somar meia série de um ente com a
+série cheia de outro daria um total que nenhum dos dois declarou; exigir doze
+meses tampouco serve, e a publicação de 22/09/2026 mostrou por quê — no meio do
+exercício ninguém tem doze meses, e o quadro saiu com um traço no lugar do
+número. Numa amostra de 45 RPPS daquele dia, a série ia de zero a seis meses.
+Então o total soma o ritmo mensal de cada um: o que ele declarou dividido pelos
+meses que declarou. Todo RPPS entra com a própria janela e ninguém é
+extrapolado, e a distribuição de meses declarados fica ao lado, para o leitor
+ver de que séries o total é feito.
+
+## Em aberto: o déficit atuarial que a tela não vê
+
+**Achado de 22/09/2026, e ainda sem correção.** O quadro consolidado de Atuária
+publicou "0 RPPS com déficit em algum fundo" entre 1.890 com DRAA. Isso não pode
+ser verdade, e a amostra de 45 fichas publicadas confirmou que não é:
+
+| Situação publicada | Blocos |
+| --- | ---: |
+| `superavit` | 20 |
+| `equilibrio` | 29 |
+| `deficit` | **0** |
+
+Nos mesmos 49 blocos, **6 trazem uma rubrica chamada literalmente "Déficit
+Atuarial"** e 30 trazem "Valor Atual do Plano de Amortização do Déficit
+Atuarial". Vitória/ES é o caso mais claro: o fundo Financeiro tem R$ 5,53 bi de
+provisões contra R$ 721 mi de ativos garantidores e uma rubrica de "Valor Atual
+da Cobertura da Insuficiência Financeira" de R$ 4,81 bi — e a ficha diz
+`situacao: equilibrio`.
+
+`_resultado_atuarial` decide a situação pelo código do demonstrativo
+(`COMPROMISSO_DEFICIT = 600100`). Os códigos de provisão, ativos garantidores e
+superávit funcionam — os valores saem certos na tela. O de déficit nunca dispara.
+As três amostras de `cd_demonstrativo` no schema observado (800501, 123000,
+109001) sugerem uma família de códigos diferente da que as constantes assumem,
+mas três amostras não bastam para reescrever a tabela.
+
+**Isso depende da API do CADPREV voltar**, para varrer os códigos reais de
+`DRAA_VALORES_COMPROMISSOS` e conferir qual carrega "Déficit Atuarial". Até lá a
+constante fica como está: trocá-la por adivinhação produziria um déficit
+nacional que ninguém declarou, que é pior que a omissão atual.
+
+O defeito é anterior ao quadro consolidado — a aba Atuária de cada ente já lia
+assim. O que o consolidado fez foi tornar a soma visível: "0 de 1.890" é um
+número que obriga a pergunta, e a ficha isolada não obrigava.
 
 ## Certificação de quem responde pelos recursos
 

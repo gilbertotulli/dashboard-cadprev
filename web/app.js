@@ -784,20 +784,22 @@
     return consolidado("caixa").then(function (c) {
       if (!c.disponivel) return [semDado("caixa", "DIPR")];
       var i = c.indicadores;
-      var a = c.ano_completo;
-      var resultado = (a.receita.total !== null && a.despesa.total !== null)
-        ? a.receita.total - a.despesa.total : null;
+      var m = c.mensal;
+      var resultado = (m.receita.total !== null && m.despesa.total !== null)
+        ? m.receita.total - m.despesa.total : null;
+      var meses = i.meses_declarados || {};
       return cabecalhoConsolidado("Caixa · consolidado", c.com_dipr,
-        "Ingressos e dispêndios declarados no DIPR. O total nacional soma só " +
-        "quem declarou o ano inteiro — a janela do DIPR varia de ente para " +
-        "ente, e somar meia série de um com a série cheia de outro daria um " +
-        "total que nenhum dos dois declarou.").concat([
+        "Ingressos e dispêndios declarados no DIPR. O total é o ritmo mensal " +
+        "do país: cada RPPS entra com o que declarou dividido pelos meses que " +
+        "declarou. A janela do DIPR varia de ente para ente, e somar meia " +
+        "série de um com a série cheia de outro daria um total que nenhum dos " +
+        "dois declarou — nem extrapolar quem entregou dois meses para doze.").concat([
         h("div", { class: "kpis" }, [
-          kpi("Ingressos no ano", reais(a.receita.total),
-            num(a.entes, 0) + " RPPS com doze meses declarados"),
-          kpi("Dispêndios no ano", reais(a.despesa.total),
+          kpi("Ingressos por mês", reais(m.receita.total),
+            num(m.receita.entes, 0) + " RPPS com DIPR no banco"),
+          kpi("Dispêndios por mês", reais(m.despesa.total),
             "no mesmo conjunto de RPPS"),
-          kpi("Resultado", reais(resultado),
+          kpi("Resultado mensal", reais(resultado),
             resultado === null ? "" : (resultado >= 0 ? "ingressos maiores"
                                                       : "dispêndios maiores"),
             resultado === null ? "" : (resultado >= 0 ? "bom" : "ruim")),
@@ -805,6 +807,12 @@
             "de " + num(c.com_dipr, 0) + " com DIPR no banco",
             c.deficitarios ? "alerta" : "bom")
         ]),
+        meses.disponivel ? h("p", { class: "nota", texto:
+          "De que séries o total é feito: a mediana dos RPPS declarou " +
+          num(meses.mediana, 0) + " meses do exercício, e a metade do meio vai " +
+          "de " + num(meses.p25, 0) + " a " + num(meses.p75, 0) + ". Quem " +
+          "declarou poucos meses entra com uma média mensal mais ruidosa." })
+          : null,
         cartaoDistribuicoes("Caixa, entre os RPPS", "DIPR",
           "Os valores mensais dividem pelos meses efetivamente declarados, " +
           "não por doze: quem informou metade do ano não tem despesa mensal " +
@@ -815,8 +823,8 @@
               "negativo = dispêndio maior que ingresso"),
             linhaDistribuicao("Ingresso mensal", i.receita_mensal, reais),
             linhaDistribuicao("Dispêndio mensal", i.despesa_mensal, reais),
-            linhaDistribuicao("Meses declarados no ano", i.meses_declarados,
-              function (v) { return num(v, 0); })
+            linhaDistribuicao("Meses declarados no exercício",
+              i.meses_declarados, function (v) { return num(v, 0); })
           ])
       ]);
     });
