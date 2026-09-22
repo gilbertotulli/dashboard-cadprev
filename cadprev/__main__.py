@@ -194,17 +194,79 @@ def cmd_competencia(args) -> int:
 
     Existe para que o agendamento não precise adivinhar por calendário. A saída
     sai em ``chave=valor``, pronta para alimentar o ``$GITHUB_OUTPUT``.
+
+    Quando a fonte não responde, cai para a competência que já está no banco.
+    Não é a mesma coisa e a saída diz qual das duas é: ``origem=api`` ou
+    ``origem=banco``. A diferença importa porque com a fonte fora do ar a
+    publicação não traz dado novo — mas abortar o agendamento por causa disso
+    deixaria o painel sem publicar e sem dizer por quê, que é pior do que
+    republicar o que já se tem com a data antiga à vista.
     """
     from cadprev import competencia as comp
-    cliente = Cliente(pausa=args.pausa)
-    achado = comp.mais_recente_fechada(cliente, uf=args.uf)
+    erro = None
+    try:
+        cliente = Cliente(pausa=args.pausa)
+        achado = comp.mais_recente_fechada(cliente, uf=args.uf)
+    except Exception as falha:  # rede, 404, 500, mudança de contrato
+        achado, erro = None, falha
+
     if achado is None:
-        print("nenhuma competência do DAIR tem dados nos últimos {} meses"
-              .format(comp.MESES_PARA_TRAS), file=sys.stderr)
+        do_banco = _competencia_do_banco(args.banco)
+        if do_banco is not None:
+            ano, mes = do_banco
+            print("a fonte não respondeu ({}); usando a competência do banco"
+                  .format(erro if erro else "sem competência com dados"),
+                  file=sys.stderr)
+            print("ano={}".format(ano))
+            print("mes={}".format(mes))
+            print("origem=banco")
+            return 0
+        if erro is not None:
+            print("a fonte não respondeu e o banco não tem competência: {}"
+                  .format(erro), file=sys.stderr)
+        else:
+            print("nenhuma competência do DAIR tem dados nos últimos {} meses"
+                  .format(comp.MESES_PARA_TRAS), file=sys.stderr)
         return 1
+
     ano, mes = achado
     print("ano={}".format(ano))
     print("mes={}".format(mes))
+    print("origem=api")
+    return 0
+
+
+def _competencia_do_banco(banco: str):
+    """A competência mais recente que o banco local já guarda, se houver."""
+    try:
+        with store_mod.Store(banco) as store:
+            if not store.tem_tabela("DAIR_CARTEIRA"):
+                return None
+            linha = store.consultar(
+                "SELECT MAX(ano * 100 + mes) AS chave FROM dair_carteira "
+                "WHERE ano IS NOT NULL AND mes IS NOT NULL")
+    except Exception:
+        return None
+    chave = linha[0]["chave"] if linha else None
+    if not chave:
+        return None
+    return int(chave) // 100, int(chave) % 100
+
+
+def cmd_execucoes(args) -> int:
+    """Quantas ingestões este banco já registrou — um número, e só.
+
+    Serve ao agendamento para distinguir "os dados essenciais estão no banco"
+    de "esta carga trouxe alguma coisa". Com o cache restaurado as duas coisas
+    se confundem, e foi essa confusão que deixaria uma execução em que a API
+    não respondeu a nada se carimbar como varredura bem-sucedida.
+    """
+    try:
+        with store_mod.Store(args.banco) as store:
+            linha = store.consultar("SELECT COUNT(*) AS n FROM execucao")
+        print(linha[0]["n"] if linha else 0)
+    except Exception:
+        print(0)
     return 0
 
 
@@ -318,12 +380,23 @@ def cmd_marco(args) -> int:
     pode ser dispensada — em vez de cortar no escuro.
     """
     cliente = Cliente(pausa=args.pausa)
+    falha = None
     try:
         pagina = cliente.pagina("DATA_ATUALIZACAO", offset=0)
         dados = pagina.get("data") or []
         bruto = dados[0].get("DTAtualizacao") if dados else None
     except Exception as erro:  # a medição não pode derrubar a carga
         print("não consegui ler DATA_ATUALIZACAO: {}".format(erro), file=sys.stderr)
+        falha = erro
+
+    # Registrar que a fonte respondeu — ou não — é tão informativo quanto o
+    # carimbo dela. Sem isso o painel republica com a data antiga e não tem como
+    # dizer que a fonte está fora do ar desde quando: o leitor veria um dado de
+    # semanas atrás sem nenhuma indicação de que ele não envelheceu por
+    # descuido, mas porque a origem parou de responder.
+    with store_mod.Store(args.banco) as store:
+        store.registrar_marco("fonte_alcancavel", "nao" if falha else "sim")
+    if falha is not None:
         return 0
 
     valor = None
@@ -439,6 +512,10 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--pausa", type=float, default=0.5)
     p.add_argument("--fixtures")
     p.set_defaults(func=cmd_siconfi_rreo)
+
+    p = sub.add_parser("execucoes",
+                       help="quantas ingestões o banco já registrou")
+    p.set_defaults(func=cmd_execucoes)
 
     p = sub.add_parser("marco",
                        help="anota o carimbo de atualização da fonte")

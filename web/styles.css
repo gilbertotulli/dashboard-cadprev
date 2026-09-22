@@ -193,9 +193,12 @@ table.dados td.n{font-variant-numeric:tabular-nums;color:var(--ink)}
    largura disponível e rola, que é o comportamento certo. */
 table.dados td.n,table.dados th.n{white-space:nowrap}
 /* Numa tabela de muitas colunas os cabeçalhos numéricos encostam uns nos
-   outros e viram uma palavra só. A folga vale só aqui porque nas tabelas de
-   duas ou três colunas ela desperdiçaria largura. */
+   outros e viram uma palavra só — "LINHASINGERIDO EM". A folga vale só aqui
+   porque nas tabelas de duas ou três colunas ela desperdiçaria largura. */
 table.dados.extra th.n,table.dados.extra td.n{padding-left:22px}
+/* O mesmo motivo vale para a coluna de texto que vem logo após uma numérica:
+   sem folga, o valor e o texto seguinte saem grudados. */
+table.dados.extra th.n + th,table.dados.extra td.n + td{padding-left:22px}
 table.dados tr:last-child td{border-bottom:none}
 table.dados tr.clicavel{cursor:pointer}
 table.dados tr.clicavel:hover td{background:var(--surface-2)}

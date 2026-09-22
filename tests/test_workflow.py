@@ -17,6 +17,14 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CAMINHO = os.path.join(RAIZ, ".github", "workflows", "publicar.yml")
 
 
+def _passo_de_competencia():
+    with open(CAMINHO, encoding="utf-8") as fh:
+        texto = fh.read()
+    inicio = texto.index("name: Definir a competência")
+    fim = texto.index("name: Conjunto de demonstração")
+    return texto[inicio:fim]
+
+
 def _passo_de_ingestao():
     with open(CAMINHO, encoding="utf-8") as fh:
         texto = fh.read()
@@ -59,6 +67,44 @@ class TestOrdemDaCarga(unittest.TestCase):
         # A volta do ano é tratada: dezembro para janeiro não pode pedir mês 0.
         self.assertIn("M + 12", passo)
         self.assertIn("ANO - 1", passo)
+
+    def test_api_fora_do_ar_nao_derruba_o_agendamento(self):
+        """A execução nº 29 morreu aqui: a API respondeu 404 na descoberta da
+        competência e o job inteiro abortou, sem sequer chegar à publicação.
+
+        Com banco em cache há o que publicar — os mesmos números, com as datas
+        antigas à vista. Abortar deixa o painel sem publicar e sem dizer por
+        quê, que é pior.
+        """
+        passo = _passo_de_competencia()
+        self.assertIn("origem=", passo)
+        self.assertIn("::warning::", passo,
+                      "cair para o banco precisa ficar visível")
+        # A falha real continua sendo falha: sem API e sem banco não há painel.
+        self.assertIn("::error::", passo)
+
+    def test_varreu_exige_que_algo_tenha_sido_varrido(self):
+        """Com o cache restaurado, a guarda de essenciais passa mesmo que a API
+        não tenha respondido a nada — os dados estão no banco, só não vieram
+        desta carga. Gravar isso no cache como varredura seria carimbar de
+        fresco um banco que ninguém atualizou."""
+        passo = self.passo
+        self.assertIn("EXECUCOES_ANTES", passo)
+        self.assertIn("EXECUCOES_DEPOIS", passo)
+        self.assertLess(passo.index("EXECUCOES_ANTES"),
+                        passo.index("EXECUCOES_DEPOIS"),
+                        "a contagem anterior tem de vir antes da ingestão")
+        # `varreu=nao` também aparece no atalho de republicação do cache, lá em
+        # cima; procurá-lo solto não prova nada. O que precisa existir é a
+        # comparação entre as duas contagens decidindo a marca.
+        depois = passo[passo.index("EXECUCOES_DEPOIS"):]
+        self.assertIn('[ "$EXECUCOES_DEPOIS" -gt "$EXECUCOES_ANTES" ]', depois)
+        self.assertIn("varreu=sim", depois)
+        self.assertIn("varreu=nao", depois)
+        # E a marca não pode ser dada fora dessa decisão.
+        antes = passo[:passo.index("EXECUCOES_DEPOIS")]
+        self.assertNotIn("varreu=sim", antes,
+                         "varreu=sim antes de conferir se algo foi varrido")
 
     def test_guarda_de_essenciais_e_a_ultima_palavra(self):
         """Ela precisa ver tudo o que foi ingerido antes de decidir."""

@@ -2484,8 +2484,12 @@
               h("td", {}, [h("code", { texto: e.endpoint })]),
               h("td", { class: "n", texto: num(e.linhas, 0) }),
               h("td", { texto: data(e.quando) }),
+              /* "−1 d" lê-se como quantidade negativa; o que a coluna diz é
+               * há quantos dias aquele endpoint ficou para trás. */
               h("td", { class: dias >= 1 ? "n ruim" : "n",
-                        texto: dias >= 1 ? "−" + num(dias, 0) + " d" : "em dia" })
+                        texto: dias >= 1
+                          ? num(dias, 0) + (dias > 1 ? " dias atrás" : " dia atrás")
+                          : "em dia" })
             ]);
           });
           nos.push(h("h3", { texto: "Procedência de cada endpoint" }));
@@ -2501,7 +2505,7 @@
                 "de dias, para que a mistura de safras não fique invisível." }));
           nos.push(tabela([{ t: "Endpoint" }, { t: "Linhas", n: true },
                            { t: "Ingerido em" }, { t: "Defasagem", n: true }],
-                          linhasExec, true));
+                          linhasExec, "extra"));
         }
 
         /* O carimbo da fonte. Em 17/09/2026 ele marcava 15/08 e não se movia
@@ -2509,6 +2513,24 @@
          * idênticas. Está aqui para medir isso com histórico em vez de
          * suposição; o corte da varredura só vem depois da evidência. */
         var m = estado.meta || {};
+
+        /* A fonte fora do ar é a informação mais importante desta aba quando
+         * acontece, e a que mais facilmente passaria despercebida: o painel
+         * continua publicando, com os mesmos números, e nada na tela diria que
+         * eles pararam de envelhecer por um motivo. */
+        if (m.fonte_alcancavel === false) {
+          nos.unshift(h("div", { class: "aviso-linha" }, [
+            h("span", { class: "ico", texto: "\u26a0" }),
+            h("span", { texto:
+              "A API do CADPREV não respondeu na última carga" +
+              (m.fonte_assim_desde
+                ? ", e está assim desde " + data(m.fonte_assim_desde) : "") +
+              ". Os números desta tela são os da última carga bem-sucedida — " +
+              "não houve atualização, e as datas de ingestão abaixo dizem de " +
+              "quando é cada um." })
+          ]));
+        }
+
         if (m.fonte_atualizada_em) {
           var mudancas = m.mudancas_da_fonte || [];
           nos.push(h("h3", { texto: "Atualização da fonte" }));

@@ -2327,6 +2327,17 @@ def _limpar_fichas_orfas(dir_saida: str, mantidos: AbstractSet[str]) -> int:
     return apagadas
 
 
+def _situacao_da_fonte(store: Store) -> Dict[str, Any]:
+    """A fonte respondeu na última carga, e desde quando está como está."""
+    marco = store.ultimo_marco("fonte_alcancavel")
+    if not marco:
+        return {"fonte_alcancavel": None, "fonte_assim_desde": None}
+    return {
+        "fonte_alcancavel": marco.get("valor") == "sim",
+        "fonte_assim_desde": marco.get("quando"),
+    }
+
+
 def construir(store: Store, dir_saida: str = DIR_SAIDA,
               origem: str = "api", limite_entes: Optional[int] = None
               ) -> Dict[str, Any]:
@@ -2477,6 +2488,12 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
         # cortado da varredura por causa dele.
         "fonte_atualizada_em": (store.ultimo_marco("data_atualizacao") or {}).get("valor"),
         "mudancas_da_fonte": store.marcos("data_atualizacao")[:12],
+        # Quando a fonte parou de responder. O marco só grava mudanças de
+        # estado, então a data aqui é a da transição — "inacessível desde".
+        # Sem isso o painel republica com a data antiga e o leitor não tem como
+        # distinguir dado que envelheceu por descuido de dado que envelheceu
+        # porque a origem saiu do ar.
+        **_situacao_da_fonte(store),
     }
     gerados.append(_gravar("meta.json", meta, dir_saida))
     return {"arquivos": len(gerados) + len(list(escolhidos)), "meta": meta}
