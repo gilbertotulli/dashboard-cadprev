@@ -1115,7 +1115,8 @@ def montar_dair_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
 
 def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                            fora: Optional[AbstractSet[str]] = None,
-                           linhas_fora: Optional[AbstractSet[int]] = None
+                           linhas_fora: Optional[AbstractSet[int]] = None,
+                           cotistas: Optional[Dict[str, Any]] = None
                            ) -> Dict[str, Any]:
     """Todo ativo em que algum RPPS do país está investido, somado.
 
@@ -1164,12 +1165,24 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                 or (linha.get("ano"), linha.get("mes")) != recente.get(cnpj)):
             continue
         chave, dados = ativos.identidade(linha)
+        dados = dict(dados, chave="{}:{}".format(*chave))
         alvo = agregado.setdefault(chave, dict(
-            dados, valor=0.0, entes=set(), maior_posicao=0.0))
+            dados, valor=0.0, entes=set(), pls=[], cotistas=defaultdict(float)))
         valor = linha.get("valor_total") or 0.0
         alvo["valor"] += valor
         alvo["entes"].add(cnpj)
-        alvo["maior_posicao"] = max(alvo["maior_posicao"], valor)
+        # Quanto cada RPPS tem neste ativo. Um ente pode declarar o mesmo fundo
+        # em mais de uma linha — plano diferente, ou duas aplicações —, e a
+        # posição dele é a soma delas. A "maior posição" sai daqui, e não da
+        # maior linha: um RPPS com duas linhas de R$ 1,6 bi tem R$ 3,2 bi no
+        # fundo, e publicar 1,6 responderia a uma pergunta que ninguém fez.
+        alvo["cotistas"][cnpj] += valor
+        # O PL do fundo vem repetido em cada declaração, e os declarantes
+        # discordam. Guarda as críveis COM A COMPETÊNCIA de cada uma: a escolha
+        # em _pl_do_fundo usa só as mais recentes.
+        pl = linha.get("pl_fundo")
+        if pl is not None and pl >= qualidade.PISO_PL_CRIVEL:
+            alvo["pls"].append((recente[cnpj], float(pl)))
         competencias["{:04d}-{:02d}".format(*recente[cnpj])] += 1
         por_ente[cnpj] += valor
 
@@ -1178,6 +1191,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
     total = sum(a["valor"] for a in agregado.values())
     itens = sorted(agregado.values(), key=lambda a: -a["valor"])
     publicados = [{
+        "chave": a["chave"],
         "nome": a["nome"],
         "identificacao": a["identificacao"],
         "tipo_de_identidade": a["tipo_de_identidade"],
@@ -1187,7 +1201,8 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         "valor": round(a["valor"], 2),
         "perc": _pct(a["valor"], total),
         "rpps": len(a["entes"]),
-        "maior_posicao": round(a["maior_posicao"], 2),
+        "maior_posicao": round(max(a["cotistas"].values()), 2) if a["cotistas"] else 0.0,
+        **_pl_do_fundo(a["pls"]),
     } for a in itens[:TETO_DA_LISTA_DE_ATIVOS]]
 
     por_identidade = defaultdict(lambda: {"ativos": 0, "valor": 0.0})
@@ -1195,7 +1210,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         alvo = por_identidade[a["tipo_de_identidade"]]
         alvo["ativos"] += 1
         alvo["valor"] += a["valor"]
-    return {
+    resultado = {
         "disponivel": True,
         "ativos": len(agregado),
         "publicados": len(publicados),
@@ -1211,6 +1226,97 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         },
         "por_natureza": _carteira_por_natureza(por_ente, entes, fora),
         "itens": publicados,
+    }
+    # Quem chamou pode querer a lista de cotistas, que vai em arquivo próprio.
+    if cotistas is not None:
+        cotistas.update(montar_cotistas_dos_ativos(resultado, agregado, entes))
+    return resultado
+
+
+def montar_cotistas_dos_ativos(nacional: Mapping[str, Any],
+                               agregado: Mapping[tuple, Mapping[str, Any]],
+                               entes: Mapping[str, Dict[str, Any]]
+                               ) -> Dict[str, Any]:
+    """Quais RPPS estão em cada ativo, e com quanto.
+
+    Arquivo próprio, carregado só quando alguém clica num ativo: são 35.524
+    pares (ativo, RPPS) no país, e embutir isso na relação faria toda visita à
+    aba pagar o custo de uma lista que se abre uma por vez.
+
+    Guarda o CNPJ e o valor, não o nome do ente — o nome já está no índice que
+    o painel carrega de qualquer jeito, e repeti-lo trinta e cinco mil vezes
+    dobraria o arquivo sem dizer nada novo.
+    """
+    saida: Dict[str, Any] = {}
+    for dados in agregado.values():
+        cotistas = sorted(dados["cotistas"].items(), key=lambda kv: -kv[1])
+        saida[dados["chave"]] = [
+            {"cnpj": cnpj, "valor": round(valor, 2)} for cnpj, valor in cotistas]
+    return {"disponivel": bool(saida), "pares": sum(len(v) for v in saida.values()),
+            "por_ativo": saida}
+
+
+def _pl_do_fundo(declaracoes: Sequence[tuple]) -> Dict[str, Any]:
+    """O patrimônio do fundo, entre declarações que discordam.
+
+    Recebe pares ``((ano, mes), pl)`` e decide duas coisas.
+
+    **Só a competência mais recente conta.** O PL de um fundo se move mês a mês,
+    e os RPPS estão em competências diferentes — misturar a declaração de junho
+    com a de agosto somaria ruído de data ao de declarante, e o número deixaria
+    de descrever o fundo numa data. A tela diz de que mês é o PL que mostra.
+
+    **Entre as daquele mês, a mediana.** O mesmo fundo aparece na carteira de
+    centenas de RPPS e eles discordam, muito: em 07/10/2026, de 867 fundos com
+    PL declarado, 557 tinham mais de um valor distinto, com dispersão mediana de
+    85% da mediana e casos de cinco ordens de grandeza. O CAIXA APORTE IMEDIATO
+    II tinha 249 declarações, a maioria em R$ 3,5 bi e a menor em R$ 858 mi.
+
+    A mediana porque um erro de vírgula destrói a média e não a move; o número de
+    declarantes porque uma mediana de três não vale o que vale uma de duzentas; e
+    a divergência porque o leitor tem direito de saber que o campo é ruidoso
+    antes de usar o número.
+
+    ``qualidade.teto_por_fundo`` usa o **máximo** das mesmas declarações, e isso
+    não é incoerência: lá o objetivo é um limite que nenhum declarante sustenta,
+    aqui é a melhor estimativa do tamanho. Propósitos diferentes, estatísticas
+    diferentes.
+    """
+    vazio = {"pl_fundo": None, "pl_declarantes": 0, "pl_divergencia": None,
+             "pl_competencia": None}
+    if not declaracoes:
+        return vazio
+    # A competência mais recente que tenha base suficiente. "Mais recente" sem
+    # essa ressalva deixaria dois RPPS adiantados definirem o PL de um fundo que
+    # outros cinquenta e três declararam no mês anterior — e o demo mostrou isso
+    # acontecendo. Três é o mesmo mínimo que a régua de qualidade usa.
+    por_competencia: Dict[tuple, List[float]] = defaultdict(list)
+    for competencia, pl in declaracoes:
+        por_competencia[competencia].append(pl)
+    escolhida = None
+    for competencia in sorted(por_competencia, reverse=True):
+        if len(por_competencia[competencia]) >= qualidade.MIN_DECLARANTES:
+            escolhida = competencia
+            break
+    # Nenhuma alcança o mínimo: vale a mais recente, e a contagem na tela diz
+    # sobre quantas declarações a mediana se apoia.
+    if escolhida is None:
+        escolhida = max(por_competencia)
+    recente = escolhida
+    ordenadas = sorted(por_competencia[recente])
+    if not ordenadas:
+        return vazio
+    meio = len(ordenadas) // 2
+    mediana = (ordenadas[meio] if len(ordenadas) % 2
+               else (ordenadas[meio - 1] + ordenadas[meio]) / 2)
+    return {
+        "pl_fundo": round(mediana, 2),
+        "pl_declarantes": len(ordenadas),
+        "pl_competencia": "{:04d}-{:02d}".format(*recente),
+        # Amplitude sobre a mediana, em pontos percentuais. Zero quando todos
+        # declararam o mesmo — e aí o número não precisa de ressalva.
+        "pl_divergencia": (round((ordenadas[-1] - ordenadas[0]) / mediana * 100, 1)
+                           if mediana else None),
     }
 
 
@@ -3257,10 +3363,15 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     # são milhares de linhas, e repeti-las nas dezesseis combinações de chaves
     # daria um arquivo grande que ninguém abre. A régua de qualidade das linhas
     # continua valendo — é o recorte por ente que não se multiplica aqui.
+    cotistas: Dict[str, Any] = {}
     gerados = [
         _gravar("ativos-nacional.json",
-                montar_ativos_nacional(store, entes, frozenset(), linhas_fora),
+                montar_ativos_nacional(store, entes, frozenset(), linhas_fora,
+                                       cotistas),
                 dir_saida),
+        # Quem está em cada ativo. Arquivo próprio: 35.524 pares no país, e a
+        # lista se abre um ativo por vez.
+        _gravar("ativos-cotistas.json", cotistas, dir_saida),
         _gravar("dair-cobertura.json", {"variantes": {
             combinacao: montar_dair_nacional(
                 store, entes, qualidade.entes_fora(entes, marcas, combinacao))

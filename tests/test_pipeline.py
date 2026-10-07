@@ -899,6 +899,85 @@ class TestPipeline(unittest.TestCase):
         self.assertLessEqual(a["itens"][0]["valor"], nacional["total"] + 1.0)
         self.assertLessEqual(a["itens"][0]["perc"], 100.0)
 
+    def test_pl_e_do_fundo_e_titulo_nao_tem(self):
+        """Um título público não tem patrimônio líquido, e a célula fica vazia.
+
+        Na base real de 07/10/2026: as 17.650 linhas de disponibilidades não
+        traziam PL nenhuma, e das 7.091 de título público só duas traziam.
+        Publicar zero ali afirmaria um fundo de tamanho zero.
+        """
+        a = self._json("ativos-nacional.json")
+        titulos = [i for i in a["itens"] if i["tipo_de_identidade"] == "titulo"]
+        self.assertTrue(titulos)
+        for i in titulos:
+            self.assertIsNone(i["pl_fundo"], i["nome"])
+            self.assertEqual(i["pl_declarantes"], 0)
+        fundos_com_pl = [i for i in a["itens"]
+                         if i["tipo_de_identidade"] == "cnpj" and i["pl_fundo"]]
+        self.assertTrue(fundos_com_pl, "nenhum fundo com PL — a regra não é testada")
+
+    def test_pl_vem_da_competencia_mais_recente_com_base(self):
+        """O PL de um fundo se move mês a mês, e os RPPS estão em competências
+        diferentes: misturar junho com agosto soma ruído de data ao de
+        declarante.
+
+        Mas "mais recente" sozinho deixaria dois RPPS adiantados definirem o PL
+        de um fundo que outros cinquenta e três declararam no mês anterior — o
+        demo mostrou isso acontecendo. Então vale a mais recente que alcance o
+        mínimo de declarantes da régua de qualidade.
+        """
+        from cadprev import qualidade
+        a = self._json("ativos-nacional.json")
+        com_pl = [i for i in a["itens"] if i["pl_fundo"]]
+        self.assertTrue(com_pl)
+        for i in com_pl:
+            self.assertTrue(i["pl_competencia"], i["nome"])
+            # A competência escolhida é uma das que o painel tem.
+            self.assertIn(i["pl_competencia"], a["competencias"])
+            # **A regra em uma linha:** um ativo que muitos RPPS declaram não
+            # pode ter o PL apoiado em duas declarações. Se tem, a escolha pegou
+            # a competência mais nova em vez da mais nova com base — que é
+            # exatamente o caso dos dois adiantados contra cinquenta e três.
+            if i["rpps"] >= 10:
+                self.assertGreaterEqual(
+                    i["pl_declarantes"], qualidade.MIN_DECLARANTES,
+                    "%s: %d RPPS no ativo e o PL se apoia em %d declaração(ões) "
+                    "de %s" % (i["nome"], i["rpps"], i["pl_declarantes"],
+                               i["pl_competencia"]))
+        # E ao menos um fundo se apoia numa competência que não é a mais nova
+        # do painel — é o caso que a regra existe para resolver.
+        # E ao menos um fundo se apoia numa competência que não é a mais nova do
+        # painel, com base suficiente — é o caso que a regra existe para
+        # resolver: dois adiantados não derrubam cinquenta e três.
+        self.assertTrue(
+            any(i["pl_competencia"] != max(a["competencias"])
+                and i["pl_declarantes"] >= qualidade.MIN_DECLARANTES
+                for i in com_pl),
+            "nenhum fundo caiu na competência anterior com base suficiente; "
+            "sem isso a ressalva do mínimo de declarantes não está provada")
+
+    def test_cotistas_de_cada_ativo_batem_com_a_relacao(self):
+        """A lista de quem investe em cada ativo, em arquivo próprio.
+
+        A soma das posições dos cotistas tem de dar o valor do ativo, e a
+        contagem tem de dar o número de RPPS publicado — se divergirem, uma das
+        duas telas está mentindo sobre o mesmo fato.
+        """
+        a = self._json("ativos-nacional.json")
+        c = self._json("ativos-cotistas.json")
+        self.assertTrue(c["disponivel"])
+        por_ativo = c["por_ativo"]
+        self.assertEqual(c["pares"], sum(len(v) for v in por_ativo.values()))
+        for i in a["itens"]:
+            lista = por_ativo.get(i["chave"])
+            self.assertIsNotNone(lista, i["nome"])
+            self.assertEqual(len(lista), i["rpps"], i["nome"])
+            self.assertAlmostEqual(sum(x["valor"] for x in lista), i["valor"],
+                                   delta=1.0, msg=i["nome"])
+            # A maior posição publicada é a do maior cotista.
+            self.assertAlmostEqual(max(x["valor"] for x in lista),
+                                   i["maior_posicao"], delta=1.0, msg=i["nome"])
+
     def test_norma_dos_investimentos_vem_de_um_lugar_so(self):
         """O painel não mantém tabela de limites — quem declara o teto de cada
         classe é a API. A norma aparece na tela só como referência, e de uma

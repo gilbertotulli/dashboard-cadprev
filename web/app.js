@@ -30,6 +30,14 @@
                  ordemNacional: { campo: "valor", desc: true },
                  agruparNacional: false,
                  buscaAtivo: "",
+                 // Filtro da carteira de um ente, separado do nacional: são
+                 // duas telas, e levar o filtro de uma para a outra esconderia
+                 // linhas sem que o leitor tivesse pedido.
+                 buscaAtivoEnte: "",
+                 // Classes recolhidas em cada tabela, por rótulo do grupo.
+                 recolhidasEnte: {}, recolhidasNacional: {},
+                 // Qual ativo teve a lista de cotistas aberta.
+                 ativoAberto: null,
                  // Qual lista de entes está aberta no quadro de cobertura.
                  listaDeEntes: null };
   var conteudo = document.getElementById("conteudo");
@@ -3359,6 +3367,52 @@
    * sem acento e sem caixa; o número ordena por número, e ausência vai sempre
    * para o fim — um "—" no meio da lista faria parecer que ali há um valor
    * pequeno, quando o que há é a fonte não ter declarado. */
+  /* Uma linha de subtotal de classe que recolhe o grupo. O clique é na linha
+   * inteira, não num ícone minúsculo, e o estado fica num mapa por rótulo —
+   * assim recolher uma classe sobrevive a ordenar a tabela, que é o que se
+   * espera: a ordem e o que está visível são decisões independentes. */
+  function linhaDeGrupo(celulas, chave, recolhidas, quantos) {
+    var recolhida = !!recolhidas[chave];
+    var tr = h("tr", {
+      class: "grupo" + (recolhida ? " recolhida" : ""),
+      title: recolhida ? "Clique para mostrar os " + num(quantos, 0) + " ativos"
+                       : "Clique para recolher os " + num(quantos, 0) + " ativos",
+      "aria-expanded": recolhida ? "false" : "true"
+    }, celulas);
+    tr.addEventListener("click", function () {
+      if (recolhida) delete recolhidas[chave];
+      else recolhidas[chave] = true;
+      render();
+    });
+    return tr;
+  }
+
+  /* O triângulo que diz se o grupo está aberto. Vem antes do nome da classe,
+   * no mesmo td, para que a área de clique seja a linha e não só o símbolo. */
+  function marcaDeRecolher(recolhida) {
+    return h("span", { class: "recolher", texto: recolhida ? "\u25b8 " : "\u25be " });
+  }
+
+  function campoDeBusca(valor, aoDigitar, marca) {
+    var campo = h("input", {
+      type: "search", class: "filtro-ativo " + marca, value: valor,
+      placeholder: "Filtrar por nome, CNPJ, classe ou vencimento…",
+      "aria-label": "Filtrar a relação de ativos"
+    });
+    campo.addEventListener("input", function () {
+      aoDigitar(campo.value);
+      render();
+      // O render recria o campo: devolve o foco e o cursor ao fim, senão
+      // digitar a segunda letra exige clicar de novo.
+      var novo = document.querySelector("." + marca);
+      if (novo) {
+        novo.focus();
+        novo.setSelectionRange(novo.value.length, novo.value.length);
+      }
+    });
+    return campo;
+  }
+
   var ORDENS_DE_ATIVO = {
     nome: { rotulo: "Ativo", texto: function (i) { return i.nome || ""; } },
     classe: { rotulo: "Classe", texto: function (i) { return i.classe || ""; } },
@@ -3367,6 +3421,8 @@
                 numero: function (i) { return i.valor_unitario; } },
     valor: { rotulo: "Valor total", numero: function (i) { return i.valor; } },
     perc: { rotulo: "% dos recursos", numero: function (i) { return i.perc; } },
+    plfundo: { rotulo: "PL do fundo",
+               numero: function (i) { return i.pl_fundo; } },
     pl: { rotulo: "% do PL do fundo",
           numero: function (i) { return i.perc_pl_fundo; } }
   };
@@ -3425,6 +3481,9 @@
                   ? "—" : reaisExatos(i.valor_unitario) }),
       h("td", { class: "n", texto: reais(i.valor) }),
       h("td", { class: "n", texto: pct(i.perc, 2) }),
+      // O PL é do fundo. Título público não tem patrimônio líquido, e conta
+      // corrente também não: a célula fica vazia em vez de zerada.
+      h("td", { class: "n", texto: i.pl_fundo ? reais(i.pl_fundo) : "—" }),
       h("td", { class: "n " + ((i.perc_pl_fundo || 0) > 10 ? "alerta" : ""),
                 texto: pct(i.perc_pl_fundo) })
     ];
@@ -3439,8 +3498,10 @@
       colunaOrdenavel("Valor unitário", "unitario", true),
       colunaOrdenavel("Valor total", "valor", true),
       colunaOrdenavel("% dos recursos", "perc", true),
+      colunaOrdenavel("PL do fundo", "plfundo", true),
       colunaOrdenavel("% do PL do fundo", "pl", true)
     ];
+    var visiveis = filtrarAtivos(escolhida.itens, estado.buscaAtivoEnte);
 
     var linhas = [];
     if (estado.agruparAtivos) {
@@ -3449,13 +3510,16 @@
        * `escolhida.classes` já traz os totais que o painel publica — recalcular
        * aqui abriria a porta para a tabela e o cartão acima discordarem. */
       escolhida.classes.forEach(function (c) {
-        var doGrupo = escolhida.itens.filter(function (i) {
+        var doGrupo = visiveis.filter(function (i) {
           return (i.classe || "Não informada") === c.rotulo &&
                  (i.segmento || "Não informado") === c.segmento;
         });
         if (!doGrupo.length) return;
-        linhas.push(h("tr", { class: "grupo" }, [
+        var chave = c.segmento + "·" + c.rotulo;
+        var recolhida = !!estado.recolhidasEnte[chave];
+        linhas.push(linhaDeGrupo([
           h("td", { colspan: 2 }, [
+            marcaDeRecolher(recolhida),
             h("b", { texto: classeCurta(c.rotulo) }),
             h("span", { class: "nota", texto: " " + c.segmento + " · " +
                         num(doGrupo.length, 0) + " ativos" })
@@ -3463,21 +3527,27 @@
           h("td", {}), h("td", {}),
           h("td", { class: "n", texto: reais(c.valor) }),
           h("td", { class: "n" + (c.excede ? " ruim" : ""), texto: pct(c.perc, 2) }),
+          h("td", {}),
           h("td", { class: "n", texto: c.limite === null || c.limite === undefined
                     ? "sem teto" : "teto " + pct(c.limite, 0) })
-        ]));
+        ], chave, estado.recolhidasEnte, doGrupo.length));
+        if (recolhida) return;
         ordenarAtivos(doGrupo, ordem.campo, ordem.desc).forEach(function (i) {
           linhas.push(h("tr", { class: "do-grupo" }, celulasDoAtivo(i)));
         });
       });
     } else {
-      ordenarAtivos(escolhida.itens, ordem.campo, ordem.desc).forEach(function (i) {
+      ordenarAtivos(visiveis, ordem.campo, ordem.desc).forEach(function (i) {
         linhas.push(h("tr", {}, celulasDoAtivo(i)));
       });
     }
-    linhas.push(linhaTotal("Total da carteira",
-      ["", "", "", reais(escolhida.total),
-       pct(escolhida.itens.reduce(function (a, i) { return a + i.perc; }, 0), 2), ""]));
+    var somaVisivel = visiveis.reduce(function (a, i) { return a + i.valor; }, 0);
+    linhas.push(linhaTotal(
+      visiveis.length === escolhida.itens.length
+        ? "Total da carteira"
+        : num(visiveis.length, 0) + " de " + num(escolhida.itens.length, 0) + " ativos",
+      ["", "", "", reais(somaVisivel),
+       pct(visiveis.reduce(function (a, i) { return a + i.perc; }, 0), 2), "", ""]));
 
     var alternar = h("button", {
       class: "link limpar",
@@ -3497,7 +3567,16 @@
       " · quantidade × valor unitário tem de bater com o valor total" +
       (escolhida.percentual_da_fonte ? "" :
         " · percentual recalculado sobre o total corrigido"),
-      [h("div", { class: "contexto" }, [alternar]),
+      [h("div", { class: "contexto" }, [
+        campoDeBusca(estado.buscaAtivoEnte, function (v) {
+          estado.buscaAtivoEnte = v;
+        }, "filtro-ente"),
+        alternar,
+        estado.buscaAtivoEnte ? h("button", {
+          class: "link limpar", texto: "limpar o filtro",
+          onclick: function () { estado.buscaAtivoEnte = ""; render(); }
+        }) : null
+      ].filter(Boolean)),
        tabela(colunas, linhas, "extra")]);
   }
 
@@ -3655,7 +3734,8 @@
     valor: { numero: function (i) { return i.valor; } },
     perc: { numero: function (i) { return i.perc; } },
     rpps: { numero: function (i) { return i.rpps; } },
-    maior: { numero: function (i) { return i.maior_posicao; } }
+    maior: { numero: function (i) { return i.maior_posicao; } },
+    plfundo: { numero: function (i) { return i.pl_fundo; } }
   };
 
   function ordenarPor(itens, regras, campo, desc) {
@@ -3696,16 +3776,51 @@
           ? (i.vencimento ? "vence em " + data(i.vencimento)
                           : "vencimento não declarado na fonte")
           : "sem CNPJ na fonte");
+    var aberto = estado.ativoAberto === i.chave;
+    var nome = h("button", {
+      class: "link limpar nome-do-ativo",
+      texto: i.nome,
+      title: aberto ? "Fechar a lista de RPPS"
+                    : "Ver os " + num(i.rpps, 0) + " RPPS que investem neste ativo",
+      onclick: function () {
+        estado.ativoAberto = aberto ? null : i.chave;
+        render();
+      }
+    });
+    /* O PL do fundo é a mediana das declarações da competência mais recente, e
+     * os declarantes discordam muito. A nota diz sobre quantas declarações o
+     * número se apoia e de que mês — sem isso o leitor leria uma mediana de
+     * três como se fosse de duzentas. */
+    var notaPl = null;
+    if (i.pl_fundo) {
+      notaPl = "mediana de " + num(i.pl_declarantes, 0) +
+        (i.pl_declarantes === 1 ? " declaração" : " declarações") +
+        (i.pl_competencia ? " de " + (competencia(i.pl_competencia) || i.pl_competencia) : "") +
+        ((i.pl_divergencia || 0) > 20
+          ? " · declarantes divergem em " + pct(i.pl_divergencia, 0) : "");
+    }
     return [
       h("td", { class: "nome-ativo" }, [
-        h("div", { texto: i.nome }),
-        h("div", { class: "nota", texto: sub })
+        nome, h("div", { class: "nota", texto: sub })
       ]),
       h("td", { texto: classeCurta(i.classe), title: i.classe || "" }),
       h("td", { class: "n", texto: reais(i.valor) }),
       h("td", { class: "n", texto: pct(i.perc, 2) }),
-      h("td", { class: "n", texto: num(i.rpps, 0) }),
-      h("td", { class: "n", texto: reais(i.maior_posicao) })
+      h("td", { class: "n" }, [
+        h("button", {
+          class: "link limpar", texto: num(i.rpps, 0),
+          title: "Ver os RPPS que investem neste ativo",
+          onclick: function () {
+            estado.ativoAberto = aberto ? null : i.chave;
+            render();
+          }
+        })
+      ]),
+      h("td", { class: "n", texto: reais(i.maior_posicao) }),
+      h("td", { class: "n" }, [
+        h("div", { texto: i.pl_fundo ? reais(i.pl_fundo) : "—" }),
+        notaPl ? h("div", { class: "nota", texto: notaPl }) : null
+      ].filter(Boolean))
     ];
   }
 
@@ -3748,6 +3863,75 @@
             num(linhas.reduce(function (x, n) { return x + n.rpps; }, 0), 0),
             reais(total), pct(100, 1), ""])
         ]), true));
+  }
+
+  /* Os RPPS que estão num ativo. O arquivo de cotistas vem em separado — são
+   * 35.524 pares no país — e é buscado no primeiro clique; até chegar, a linha
+   * diz que está carregando em vez de parecer vazia.
+   *
+   * O nome do ente não está no arquivo de cotistas: ele já está no índice que o
+   * painel carrega de qualquer jeito, e repeti-lo trinta e cinco mil vezes
+   * dobraria o arquivo sem dizer nada novo. */
+  var cotistasCarregados = null;
+
+  function linhaDeCotistas(ativo) {
+    var corpo;
+    if (cotistasCarregados === null) {
+      corpo = h("div", { class: "nota", texto: "carregando a lista de RPPS…" });
+      buscar("ativos-cotistas.json").then(function (c) {
+        cotistasCarregados = c || {};
+        render();
+      }).catch(function () {
+        cotistasCarregados = {};
+        render();
+      });
+    } else {
+      var lista = (cotistasCarregados.por_ativo || {})[ativo.chave] || [];
+      corpo = lista.length ? tabelaDeCotistas(ativo, lista)
+        : h("div", { class: "nota", texto:
+            "A lista de RPPS não está no painel para este ativo." });
+    }
+    return h("tr", { class: "cotistas" }, [
+      h("td", { colspan: 7 }, [
+        h("div", { class: "cartao-h" }, [
+          h("h3", { texto: "Quem investe em " + ativo.nome }),
+          h("button", {
+            class: "link limpar", texto: "fechar",
+            onclick: function () { estado.ativoAberto = null; render(); }
+          })
+        ]),
+        corpo
+      ])
+    ]);
+  }
+
+  function nomeDoEnte(cnpj) {
+    var e = (estado.entes || []).filter(function (x) { return x.cnpj === cnpj; })[0];
+    return e ? e.ente + "/" + e.uf : cnpj;
+  }
+
+  function tabelaDeCotistas(ativo, lista) {
+    var total = lista.reduce(function (x, c) { return x + c.valor; }, 0);
+    return tabela([{ t: "RPPS" }, { t: "Posição", n: true },
+                   { t: "% do ativo", n: true },
+                   { t: "% do PL do fundo", n: true }],
+      lista.map(function (c) {
+        var noPl = ativo.pl_fundo ? c.valor / ativo.pl_fundo * 100 : null;
+        return h("tr", {}, [
+          h("td", {}, [h("button", {
+            class: "link limpar", texto: nomeDoEnte(c.cnpj),
+            onclick: function () { irParaAba("carteira", c.cnpj); }
+          })]),
+          h("td", { class: "n", texto: reais(c.valor) }),
+          h("td", { class: "n", texto: pct(total ? c.valor / total * 100 : 0, 2) }),
+          h("td", { class: "n " + ((noPl || 0) > 10 ? "alerta" : ""),
+                    texto: noPl === null ? "—" : pct(noPl, 2) })
+        ]);
+      }).concat([
+        linhaTotal(num(lista.length, 0) + " RPPS",
+          [reais(total), pct(100, 2),
+           ativo.pl_fundo ? pct(total / ativo.pl_fundo * 100, 2) : "—"])
+      ]), true);
   }
 
   function abaInvestimentos() {
@@ -3881,7 +4065,8 @@
       colunaNacional("Valor investido", "valor", true),
       colunaNacional("% do total", "perc", true),
       colunaNacional("RPPS", "rpps", true),
-      colunaNacional("Maior posição", "maior", true)
+      colunaNacional("Maior posição", "maior", true),
+      colunaNacional("PL do fundo", "plfundo", true)
     ];
 
     var linhas = [];
@@ -3898,25 +4083,31 @@
       Object.keys(porClasse).map(function (k) { return porClasse[k]; })
         .sort(function (x, y) { return y.valor - x.valor; })
         .forEach(function (g) {
-          linhas.push(h("tr", { class: "grupo" }, [
+          var chave = (g.segmento || "—") + "·" + (g.classe || "—");
+          var recolhida = !!estado.recolhidasNacional[chave];
+          linhas.push(linhaDeGrupo([
             h("td", { colspan: 2 }, [
+              marcaDeRecolher(recolhida),
               h("b", { texto: classeCurta(g.classe) }),
               h("span", { class: "nota", texto: " " + (g.segmento || "") + " · " +
                           num(g.itens.length, 0) + " ativos" })
             ]),
             h("td", { class: "n", texto: reais(g.valor) }),
             h("td", { class: "n", texto: pct(g.perc, 2) }),
-            h("td", {}), h("td", {})
-          ]));
+            h("td", {}), h("td", {}), h("td", {})
+          ], chave, estado.recolhidasNacional, g.itens.length));
+          if (recolhida) return;
           ordenarPor(g.itens, ORDENS_NACIONAIS, ordem.campo, ordem.desc)
             .forEach(function (i) {
               linhas.push(h("tr", { class: "do-grupo" }, celulasDoAtivoNacional(i)));
+              if (estado.ativoAberto === i.chave) linhas.push(linhaDeCotistas(i));
             });
         });
     } else {
       ordenarPor(filtrados, ORDENS_NACIONAIS, ordem.campo, ordem.desc)
         .forEach(function (i) {
           linhas.push(h("tr", {}, celulasDoAtivoNacional(i)));
+          if (estado.ativoAberto === i.chave) linhas.push(linhaDeCotistas(i));
         });
     }
 
@@ -3926,21 +4117,11 @@
         ? "Total de " + num(a.itens.length, 0) + " ativos"
         : num(filtrados.length, 0) + " de " + num(a.itens.length, 0) + " ativos",
       [reais(somaFiltrada),
-       pct(a.total ? somaFiltrada / a.total * 100 : 0, 2), "", ""]));
+       pct(a.total ? somaFiltrada / a.total * 100 : 0, 2), "", "", ""]));
 
-    var campo = h("input", {
-      type: "search", class: "filtro-ativo", value: estado.buscaAtivo,
-      placeholder: "Filtrar por nome, CNPJ, classe ou vencimento…",
-      "aria-label": "Filtrar a relação de ativos"
-    });
-    campo.addEventListener("input", function () {
-      estado.buscaAtivo = campo.value;
-      render();
-      // O render recria o campo: devolve o foco e o cursor ao fim, senão
-      // digitar a segunda letra exige clicar de novo.
-      var novo = document.querySelector(".filtro-ativo");
-      if (novo) { novo.focus(); novo.setSelectionRange(novo.value.length, novo.value.length); }
-    });
+    var campo = campoDeBusca(estado.buscaAtivo, function (v) {
+      estado.buscaAtivo = v;
+    }, "filtro-nacional");
 
     var ident = a.por_identidade || {};
     return [

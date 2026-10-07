@@ -518,10 +518,15 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                             rotulo_da_classe.split("  ")[0], nome[:18])
                     else:
                         fundo_id, fundo_nome = _fundo(segmento, ordem * 4 + n)
-                    # Conta e caixa não têm PL; fundo tem, e é sempre maior que
-                    # a posição de um cotista só.
-                    fundo_pl = (None if segmento == "Disponibilidades Financeiras"
-                                else max(_PL_FUNDO, valor * rnd.uniform(8, 300)))
+                    # Quem tem PL e quem não tem, como na fonte real: em
+                    # 07/10/2026, as 17.650 linhas de disponibilidades não
+                    # traziam PL nenhuma, e das 7.091 de título público só duas
+                    # traziam — um título não tem patrimônio líquido. Fundo tem.
+                    # O valor é preenchido depois, em _preencher_pl_dos_fundos:
+                    # o PL é do fundo e só se conhece com todos os cotistas.
+                    sem_pl = (segmento == "Disponibilidades Financeiras"
+                              or "Títulos Públicos" in rotulo_da_classe)
+                    fundo_pl = None if sem_pl else 0.0
                     cotas = valor / _COTA
                     registro = dict(
                         ident, dt_ano=ANO, dt_mes_bimestre=competencia,
@@ -532,7 +537,7 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                         vl_atual_ativo="{:.10f}".format(_COTA),
                         vl_total_atual="{:.2f}".format(valor),
                         pc_rpps="{:.2f}".format(peso / soma / ativos * 100),
-                        vl_patrimonio="{:.2f}".format(fundo_pl) if fundo_pl else None,
+                        vl_patrimonio=None if fundo_pl is None else "0",
                         pc_patrimonio="{:.2f}".format(rnd.uniform(0.4, 16.0)))
                     # Um lançamento envenenado, reproduzindo o caso de Santo
                     # Afonso/MT: a cota digitada com a vírgula seis casas à
@@ -546,6 +551,13 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                         registro["vl_atual_ativo"] = "{:.10f}".format(_COTA * 1e6)
                         registro["vl_total_atual"] = "{:.2f}".format(valor * 1e6)
                         registro["pc_patrimonio"] = "1611016.66"
+                        # A posição envenenada não entra no cálculo do PL do
+                        # fundo. Na realidade o PL é apurado pelo administrador
+                        # e não conhece o erro de digitação de um cotista; se
+                        # entrasse, o PL inflaria junto e a régua de qualidade
+                        # deixaria de ver a impossibilidade — a amostra
+                        # esconderia o caso que ela existe para testar.
+                        registro["_envenenado"] = True
                     if nivel_a:
                         registro["ds_plano"] = (
                             "TAXA DE ADMINISTRAÇÃO" if n == 0 and rnd.random() < 0.12
@@ -893,7 +905,51 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                 if saldo <= 0:
                     break
 
+    _preencher_pl_dos_fundos(tabelas["DAIR_CARTEIRA"], rnd)
     return tabelas
+
+
+#: Quanto o PL de um fundo excede a soma do que os RPPS têm nele. Mais de um,
+#: sempre: o fundo tem cotistas que não são RPPS, e uma posição maior que o
+#: fundo inteiro é impossível — é essa aritmética que sustenta a régua de
+#: qualidade, e uma amostra que a violasse acusaria lançamentos legítimos.
+_FOLGA_DO_PL = 1.6
+
+#: Um declarante em cada trinta erra a ordem de grandeza do PL. É o ruído real
+#: do campo — em 07/10/2026, de 867 fundos com PL declarado, 557 tinham mais de
+#: um valor distinto, com dispersão mediana de 85% da mediana.
+_UM_EM_CADA = 30
+
+
+def _preencher_pl_dos_fundos(linhas, rnd):
+    """O PL de cada fundo, depois de conhecidos todos os cotistas.
+
+    O patrimônio líquido é **do fundo**, não da posição: só se conhece quando se
+    sabe quem está dentro. Preencher linha a linha, como a amostra fazia, dava
+    um PL diferente para cada cotista do mesmo fundo — 11.000% de dispersão
+    onde a base real tem 85% — e, pior, às vezes menor que a posição de um
+    cotista só, o que fazia a régua de qualidade acusar lançamento legítimo.
+
+    Aqui o PL é calculado por fundo e por competência, com folga sobre a soma
+    das posições, e cada declarante o repete com variação de alguns por cento.
+    """
+    somas = {}
+    for linha in linhas:
+        if linha.get("vl_patrimonio") is None or linha.pop("_envenenado", False):
+            continue
+        chave = (linha["id_ativo"], linha["dt_ano"], linha["dt_mes_bimestre"])
+        somas[chave] = somas.get(chave, 0.0) + float(linha["vl_total_atual"])
+    for linha in linhas:
+        if linha.get("vl_patrimonio") is None:
+            continue
+        chave = (linha["id_ativo"], linha["dt_ano"], linha["dt_mes_bimestre"])
+        base = max(_PL_FUNDO, somas[chave] * _FOLGA_DO_PL)
+        valor = base * rnd.uniform(0.97, 1.03)
+        if rnd.randrange(_UM_EM_CADA) == 0:
+            valor = base / rnd.choice((100.0, 1000.0))
+        linha["vl_patrimonio"] = "{:.2f}".format(valor)
+
+
 def entes_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """A tabela de entes da federação, no formato do SICONFI.
 

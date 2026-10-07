@@ -463,3 +463,21 @@ input.filtro-ativo{font:inherit;font-size:.82rem;padding:6px 10px;min-width:19re
   background:var(--surface);color:var(--ink)}
 input.filtro-ativo:focus{outline:2px solid var(--accent);outline-offset:1px}
 @media (max-width:560px){input.filtro-ativo{min-width:100%}}
+
+/* Linha de grupo que recolhe. O cursor e o triângulo dizem que dá para clicar;
+   a linha inteira é a área de clique, não só o símbolo. */
+table.dados tr.grupo{cursor:pointer}
+table.dados tr.grupo:hover td{background:var(--accent-soft)}
+table.dados tr.grupo .recolher{display:inline-block;width:1em;color:var(--muted)}
+table.dados tr.grupo.recolhida td{border-bottom:1px solid var(--rule-strong)}
+
+/* O nome do ativo vira botão quando abre a lista de cotistas: sublinhado só no
+   hover, para a tabela não parecer um campo de links. */
+button.nome-do-ativo{text-align:left;font:inherit;color:inherit;cursor:pointer}
+button.nome-do-ativo:hover{text-decoration:underline;color:var(--accent-ink)}
+
+/* A lista de RPPS de um ativo, embutida na própria tabela. Fundo próprio e
+   recuo para ler como um painel aberto dentro da linha, não como mais ativos. */
+table.dados tr.cotistas > td{background:var(--surface-2);padding:14px 16px}
+table.dados tr.cotistas .cartao-h{margin-bottom:8px}
+table.dados tr.cotistas table.dados{background:var(--surface)}

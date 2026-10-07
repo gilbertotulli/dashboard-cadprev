@@ -751,11 +751,60 @@ maior linha é `NTN-B` **sem vencimento declarado** — R$ 115,1 bi em 320 RPPS,
 28% do total: é informação verdadeira sobre um conjunto, e a tela diz que o
 vencimento não veio da fonte em vez de inventar um.
 
-A tabela usa o mesmo modelo da carteira detalhada de um ente — agrupar por
-classe com subtotais, ou lista única, colunas ordenáveis — mais um **filtro de
-texto**, porque quatro mil linhas não se navegam rolando. O filtro casa no
-nome, no CNPJ (aceita colado com pontuação), na classe, no segmento e no
-vencimento, sem acento e sem caixa.
+As duas tabelas de ativos — a carteira detalhada de um ente e a relação
+nacional — compartilham o mesmo modelo: agrupar por classe com subtotais ou
+lista única, colunas ordenáveis, **filtro de texto** e **grupos recolhíveis**.
+O filtro casa no nome, no CNPJ (aceita colado com pontuação), na classe, no
+segmento e no vencimento, sem acento e sem caixa. Clicar na linha de subtotal
+de uma classe recolhe os ativos dela; o estado sobrevive a reordenar a tabela,
+porque a ordem e o que está visível são decisões independentes.
+
+### O PL do fundo, entre declarações que discordam
+
+Um título público não tem patrimônio líquido, e uma conta corrente também não:
+nessas linhas a célula fica vazia. Na base real de 07/10/2026 as 17.650 linhas
+de disponibilidades não traziam PL nenhuma, e das 7.091 de título público só
+duas traziam.
+
+Nos fundos o campo existe e é **ruidoso**. O mesmo fundo aparece na carteira de
+centenas de RPPS, cada um declara o PL dele, e eles discordam: de 867 fundos com
+PL declarado, 557 tinham mais de um valor distinto, com dispersão mediana de 85%
+e casos de cinco ordens de grandeza. O CAIXA APORTE IMEDIATO II tinha 249
+declarações, a maioria em R$ 3,5 bi e a menor em R$ 858 mi.
+
+Duas regras, e a tela mostra as duas:
+
+- **Só a competência mais recente conta** — o PL se move mês a mês, e misturar
+  junho com agosto somaria ruído de data ao de declarante. Mas "mais recente"
+  sozinho deixaria dois RPPS adiantados definirem o PL de um fundo que outros
+  cinquenta e três declararam no mês anterior, e o demo mostrou isso
+  acontecendo: vale a mais recente que alcance três declarantes, o mesmo mínimo
+  da régua de qualidade.
+- **Entre as daquele mês, a mediana** — um erro de vírgula destrói a média e não
+  move a mediana.
+
+Ao lado do número, a tela diz de quantas declarações e de que mês ele sai, e
+avisa quando os declarantes divergem mais de 20%: uma mediana de três não vale o
+que vale uma de duzentas, e o leitor tem direito de saber antes de usar o
+número. `qualidade.teto_por_fundo` usa o **máximo** das mesmas declarações, e
+isso não é incoerência — lá o objetivo é um limite que nenhum declarante
+sustenta, aqui é a melhor estimativa do tamanho.
+
+### Quem investe em cada ativo
+
+Clicar no nome de um ativo, ou na contagem de RPPS, abre a lista de quem está
+nele: a posição de cada RPPS, o quanto ela representa do ativo e o quanto
+representa do PL do fundo. O nome leva à carteira daquele RPPS.
+
+A lista vem em arquivo próprio, buscado no primeiro clique: são 35.524 pares
+(ativo, RPPS) no país, e embutir isso na relação faria toda visita à aba pagar o
+custo de uma lista que se abre uma por vez. O arquivo guarda CNPJ e valor, não o
+nome do ente — o nome já está no índice que o painel carrega de qualquer jeito.
+
+A **maior posição** publicada é a de um RPPS, não a de uma linha: um ente pode
+declarar o mesmo fundo em duas linhas — plano diferente, duas aplicações — e a
+posição dele é a soma. Publicar a maior linha responderia a uma pergunta que
+ninguém fez.
 
 ## A unidade gestora, e por que ela não vem da API
 
