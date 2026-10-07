@@ -13,7 +13,8 @@ em vez de gravar silenciosamente uma planilha velha.
 
 import logging
 import re
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple
+from typing import (Any, Dict, Iterable, Iterator, List, Optional, Sequence,
+                    Tuple)
 
 PAGINA_PROGESTAO = ("https://www.gov.br/previdencia/pt-br/assuntos/rpps/"
                     "pro-gestao-rpps-certificacao-institucional/"
@@ -162,6 +163,21 @@ def ler_pro_gestao(endereco: str) -> Iterator[Dict[str, str]]:
     wb = _abrir(endereco)
     ws = wb.worksheets[0]
     n, cab = _cabecalho(ws, "CNPJ")
+    return mapear_pro_gestao(cab, ws.iter_rows(min_row=n + 1, values_only=True))
+
+
+def mapear_pro_gestao(cabecalho: Sequence[str],
+                      linhas: Iterable[Sequence[Any]]) -> Iterator[Dict[str, str]]:
+    """Casa o cabeçalho da planilha com os campos do projeto.
+
+    Separado da leitura do arquivo de propósito: a armadilha está na **escolha
+    das colunas**, não no xlsx. A planilha tem duas colunas de nível, e a
+    errada — "nível inicial" — guarda o histórico numa string só, `I-II-II`
+    para três certificações sucessivas. Trocar uma pela outra é uma mudança de
+    uma palavra que nenhum teste de arquivo pega; com o mapeamento em função
+    pura, um teste pega.
+    """
+    cab = list(cabecalho)
     c_cnpj = _coluna(cab, "CNPJ")
     c_ente = _coluna(cab, "ENTE")
     c_uf = _coluna(cab, "UF")
@@ -171,7 +187,7 @@ def ler_pro_gestao(endereco: str) -> Iterator[Dict[str, str]]:
     c_ren = _coluna(cab, "RENOVA")
     c_nivel = _coluna(cab, "ATUAL")
     c_certa = _coluna(cab, "CERTI", "DORA")
-    for linha in ws.iter_rows(min_row=n + 1, values_only=True):
+    for linha in linhas:
         cnpj = _digitos(linha[c_cnpj])
         if len(cnpj) != 14:
             continue
@@ -225,7 +241,8 @@ def consolidar_pro_gestao(linhas: Iterator[Dict[str, str]]
             por_cnpj[cnpj] = linha
             continue
         repetidos.append(cnpj)
-        por_cnpj[cnpj] = linha
+        if forca(linha) > forca(anterior):
+            por_cnpj[cnpj] = linha
     return (sorted(por_cnpj.values(), key=lambda l: l["cnpj_ente"]),
             sorted(set(repetidos)))
 
@@ -244,6 +261,19 @@ def ler_isp(endereco: str, exercicio: str = "") -> Iterator[Dict[str, str]]:
     wb = _abrir(endereco)
     ws = wb["RESULTADO"] if "RESULTADO" in wb.sheetnames else wb.worksheets[0]
     n, cab = _cabecalho(ws, "ENTE")
+    return mapear_isp(cab, ws.iter_rows(min_row=n + 1, values_only=True),
+                      exercicio)
+
+
+def mapear_isp(cabecalho: Sequence[str], linhas: Iterable[Sequence[Any]],
+               exercicio: str = "") -> Iterator[Dict[str, str]]:
+    """Casa o cabeçalho da aba RESULTADO com os campos do projeto.
+
+    Pelo mesmo motivo de ``mapear_pro_gestao``: a aba tem vinte e cinco
+    colunas, três classificações por eixo e um indicador final, e pegar o eixo
+    no lugar da nota é uma troca de índice que só um teste de mapeamento vê.
+    """
+    cab = list(cabecalho)
     c_cnpj = _coluna(cab, "CNPJ")
     c_ente = _coluna(cab, "ENTE")
     c_uf = _coluna(cab, "UF")
@@ -253,7 +283,7 @@ def ler_isp(endereco: str, exercicio: str = "") -> Iterator[Dict[str, str]]:
     c_fin = _coluna(cab, "CLASSIFICA", "FINAN")
     c_atu = _coluna(cab, "CLASSIFICA", "ATU")
     c_isp = _coluna(cab, "INDICADOR DE SITUA")
-    for linha in ws.iter_rows(min_row=n + 1, values_only=True):
+    for linha in linhas:
         cnpj = _digitos(linha[c_cnpj])
         if len(cnpj) != 14:
             continue

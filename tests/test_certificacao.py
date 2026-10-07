@@ -76,21 +76,44 @@ class TestConversao(unittest.TestCase):
     def test_cnpj_repetido_fica_com_a_linha_que_afirma_mais(self):
         """Sete CNPJ aparecem duas ou três vezes na planilha, e numa delas a
         linha nova é a adesão sem certificação. Deixar a última ganhar, que é
-        o que um dict faz sozinho, tiraria a certificação de quem a tem."""
+        o que um dict faz sozinho, tiraria a certificação de quem a tem.
+
+        Nas duas ordens, de propósito: com as linhas numa ordem só, "fica a
+        última" e "fica a que afirma mais" dão o mesmo resultado, e o teste
+        passaria em cima do defeito — foi o que aconteceu aqui.
+        """
+        sem = {"cnpj_ente": "87612750000100", "nivel": "", "adesao": "2026-02-23"}
+        com = {"cnpj_ente": "87612750000100", "nivel": "II", "adesao": "2025-02-20"}
+        for ordem in ([sem, com], [com, sem]):
+            linhas, repetidos = planilhas.consolidar_pro_gestao(iter(ordem))
+            self.assertEqual(len(linhas), 1)
+            self.assertEqual(linhas[0]["nivel"], "II",
+                             "ordem {0}".format([l["nivel"] for l in ordem]))
+            self.assertEqual(repetidos, ["87612750000100"])
+
+    def test_entre_linhas_sem_nivel_fica_a_adesao_mais_recente(self):
+        velha = {"cnpj_ente": "10408839000117", "nivel": "", "adesao": "2023-07-18"}
+        nova = {"cnpj_ente": "10408839000117", "nivel": "", "adesao": "2026-07-16"}
+        for ordem in ([velha, nova], [nova, velha]):
+            linhas, _ = planilhas.consolidar_pro_gestao(iter(ordem))
+            self.assertEqual(linhas[0]["adesao"], "2026-07-16",
+                             "ordem {0}".format([l["adesao"] for l in ordem]))
+
+    def test_tres_linhas_do_mesmo_cnpj_rendem_uma(self):
+        """O CNPJ 46.634.218/0001-07 aparece três vezes, e numa delas com o
+        nome de outro município. A chave é o CNPJ."""
         linhas, repetidos = planilhas.consolidar_pro_gestao(iter([
-            {"cnpj_ente": "87612750000100", "nivel": "", "adesao": "2026-02-23"},
-            {"cnpj_ente": "87612750000100", "nivel": "II", "adesao": "2025-02-20"},
+            {"cnpj_ente": "46634218000107", "ente": "Taquaritinga",
+             "nivel": "", "adesao": "2024-12-17"},
+            {"cnpj_ente": "46634218000107", "ente": "Taquarituba",
+             "nivel": "II", "adesao": "2024-12-17"},
+            {"cnpj_ente": "46634218000107", "ente": "Taquarituba",
+             "nivel": "II", "adesao": "2021-05-03"},
         ]))
         self.assertEqual(len(linhas), 1)
         self.assertEqual(linhas[0]["nivel"], "II")
-        self.assertEqual(repetidos, ["87612750000100"])
-
-    def test_entre_linhas_sem_nivel_fica_a_adesao_mais_recente(self):
-        linhas, _ = planilhas.consolidar_pro_gestao(iter([
-            {"cnpj_ente": "10408839000117", "nivel": "", "adesao": "2023-07-18"},
-            {"cnpj_ente": "10408839000117", "nivel": "", "adesao": "2026-07-16"},
-        ]))
-        self.assertEqual(linhas[0]["adesao"], "2026-07-16")
+        self.assertEqual(linhas[0]["adesao"], "2024-12-17")
+        self.assertEqual(repetidos, ["46634218000107"])
 
     def test_o_link_escolhido_e_o_da_data_mais_alta(self):
         """A página do ISP guarda todas as edições desde 2017, e a mais nova
@@ -100,6 +123,78 @@ class TestConversao(unittest.TestCase):
                          2025)
         self.assertGreater(planilhas._ano_mais_alto("resultado-isp-2025-1.xlsx"),
                            planilhas._ano_mais_alto("ISP_2018_resultado.xlsx"))
+
+    #: O cabeçalho real da planilha de adesões, com as duas colunas de nível.
+    CABECALHO_PROGESTAO = [
+        "", "CNPJ", "ENTE FEDERATIVO", "UF", "DATA RECEBIMENTO TERMO DE ADESÃO",
+        "DATA DO TERMO DE ADESÃO", "DATA DA CERTIFICAÇÃO INICIAL",
+        "NÍVEL INICIAL", "DATA DA RENOVAÇÃO DA CERTIFICAÇÃO", "NÍVEL ATUAL",
+        "ENTIDADE CERTICADORA"]
+
+    def test_o_nivel_lido_e_o_atual_e_nao_o_historico(self):
+        """A planilha tem duas colunas de nível. A de "nível inicial" guarda o
+        histórico numa string só — "I-II-II" são três certificações sucessivas
+        — e lê-la como nível daria "I-II-II" a quem hoje é nível II.
+
+        O teste existe porque a troca é de uma palavra e não aparece em lugar
+        nenhum: o CSV convertido já está certo, e o demo escreve o seu direto.
+        """
+        linha = ("", "46.634.218/0001-07", "Taquarituba", "SP",
+                 "2024-12-17 00:00:00", "2024-12-17 00:00:00",
+                 "2021-05-03 00:00:00", "I-II-II",
+                 "26/01/2023-16/01/2026", "II", "ICQ BRASIL")
+        lido = list(planilhas.mapear_pro_gestao(self.CABECALHO_PROGESTAO, [linha]))
+        self.assertEqual(len(lido), 1)
+        self.assertEqual(lido[0]["nivel"], "II")
+        self.assertEqual(lido[0]["nivel_inicial"], "I-II-II")
+        # E o CNPJ chega sem pontuação, com catorze dígitos.
+        self.assertEqual(lido[0]["cnpj_ente"], "46634218000107")
+        # A renovação múltipla vira a mais recente, que é a que vale.
+        self.assertEqual(lido[0]["renovacao"], "2026-01-16")
+
+    def test_linha_sem_cnpj_nao_vira_registro(self):
+        """A planilha tem linhas de rodapé e separadores. Uma delas viraria um
+        ente de CNPJ vazio, que casaria com nada e inflaria a contagem."""
+        vazia = ("", None, "total", "", "", "", "", "", "", "", "")
+        self.assertEqual(
+            list(planilhas.mapear_pro_gestao(self.CABECALHO_PROGESTAO, [vazia])), [])
+
+    def test_a_nota_do_isp_e_o_indicador_final_e_nao_um_eixo(self):
+        """A aba RESULTADO tem três classificações por eixo e o indicador
+        final, todos com as mesmas letras. Pegar um eixo no lugar da nota
+        passaria despercebido: o valor continua sendo "A", "B", "C" ou "D"."""
+        cab = ["ENTE", "CNPJ", "UF", "GRUPO", "SUBGRUPO",
+               "INDICADOR DE REGULARIDADE", "INDICADOR ENVIO DE INFORMAÇÕES",
+               "INDICADOR DE GESTÃO", "CLASSIFICAÇÃO EM GESTÃO E TRANSPARÊNCIA",
+               "INDICADOR DE SUFICIÊNCIA FINANCEIRA",
+               "INDICADOR ACUMULAÇÃO DE RECURSOS",
+               "INDICADOR DE RESULTADO FINANCEIRO",
+               "CLASSIFICAÇÃO EM FINANÇAS E LIQUIDEZ",
+               "INDICADOR DE COBERTURA PREVIDENCIÁRIA",
+               "INDICADOR DE SUSTENTABILIDADE",
+               "INDICADOR DE REFORMA RPPS E VIGÊNCIA RPC",
+               "CLASSIFICAÇÃO EM ATUÁRIA",
+               "INDICADOR DE SITUAÇÃO PREVIDENCIÁRIA", "PERFIL ATUARIAL"]
+        linha = ("ABADIA DE GOIÁS - GO", 1613940000119, "GO", "MÉDIO PORTE",
+                 "MENOR MATURIDADE", "A", "B", "C", "B", "A", "A", "C", "D",
+                 "C", "C", "B", "A", "C", "II")
+        lido = list(planilhas.mapear_isp(cab, [linha], "2025"))[0]
+        self.assertEqual(lido["isp"], "C")
+        # Os três eixos têm valores distintos de propósito: se o mapeamento
+        # deslizasse uma coluna, pelo menos um deles mudaria.
+        self.assertEqual(lido["gestao"], "B")
+        self.assertEqual(lido["financas"], "D")
+        self.assertEqual(lido["atuaria"], "A")
+        self.assertEqual(lido["exercicio"], "2025")
+        # O CNPJ vem como número e perde o zero da frente na planilha.
+        self.assertEqual(lido["cnpj_ente"], "01613940000119")
+
+    def test_coluna_que_nao_existe_falha_alto(self):
+        """Se a SPREV renomear uma coluna, a conversão para — em vez de gravar
+        um CSV com a coluna em branco e o painel dizer que ninguém tem nível."""
+        cab = [c for c in self.CABECALHO_PROGESTAO if c != "NÍVEL ATUAL"]
+        with self.assertRaises(planilhas.ErroDaPlanilha):
+            list(planilhas.mapear_pro_gestao(cab, []))
 
     def test_a_pagina_rende_o_arquivo_mais_novo_e_nao_o_preliminar(self):
         """A escolha é feita sobre o HTML da página, que guarda todas as
