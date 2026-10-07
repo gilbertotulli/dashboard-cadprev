@@ -650,7 +650,13 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                  "Resultado", deficit * 0.46, deficit * 0.18),
                 (500000, "ATIVOS GARANTIDORES DOS COMPROMISSOS DO PLANO", "Resultado",
                  patrimonio, 0),
-                (600100, "Déficit Atuarial", "Resultado", deficit, 0),
+                # Negativo, como a fonte declara. A amostra trazia este valor
+                # positivo e concordava com o defeito da leitura: os testes
+                # passavam, e no painel real todo RPPS em déficit aparecia em
+                # equilíbrio. Em 07/10/2026, das 20.468 linhas desta conta no
+                # conjunto aberto da SPREV, 15.424 eram negativas e nenhuma
+                # positiva.
+                (600100, "Déficit Atuarial", "Resultado", -deficit, 0),
                 (121000, "Benefícios a Conceder - Contribuições Futuras do Ente",
                  "Resultado", deficit * 0.35, deficit * 0.12),
                 (211000, "Benefícios Concedidos - Encargos - Aposentadorias Programadas",
@@ -717,7 +723,9 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                      "Resultado", deficit_mil * 0.29, 0),
                     (500000, "ATIVOS GARANTIDORES DOS COMPROMISSOS DO PLANO",
                      "Resultado", garantidores, 0),
-                    (600100, "Déficit Atuarial", "Resultado", deficit_mil, 0),
+                    # Negativo, pela mesma razão da massa civil: é o sinal
+                    # que a fonte usa.
+                    (600100, "Déficit Atuarial", "Resultado", -deficit_mil, 0),
                     (211000, "Benefícios Concedidos - Encargos - Aposentadorias Programadas",
                      "Resultado", deficit_mil * 0.88, 0)):
                 tabelas["DRAA_VALORES_COMPROMISSOS"].append(dict(

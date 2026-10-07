@@ -2805,13 +2805,33 @@ def _resultado_atuarial(compromissos: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     A API declara os dois em linhas separadas (600100 e 600300) e preenche a que
     se aplica. Somar as duas seria errado; o que vale é qual delas tem valor.
+
+    **O déficit vem com sinal negativo, o superávit com sinal positivo.** A
+    fonte usa uma convenção de sinal, e o painel não usava: a leitura antiga
+    testava ``deficit > 0``, que nunca era verdade, e todo RPPS em déficit caía
+    em "equilíbrio". Era o defeito que o quadro consolidado nacional expôs ao
+    publicar "0 RPPS com déficit" entre 1.890 com DRAA.
+
+    Medido em 07/10/2026 sobre o conjunto aberto da SPREV — 1,7 milhão de
+    linhas, 29.491 blocos: a conta 600100 tem **15.424 valores negativos,
+    nenhum positivo** e 5.044 zerados; a 600300 tem 7.871 positivos e nenhum
+    negativo. A 909100 ("Déficit Financeiro"), que o painel não lê, repete o
+    padrão: 6.230 negativos, nenhum positivo. É a terceira fonte deste projeto
+    a declarar valor negativo onde a leitura ingênua espera positivo — depois
+    do saldo do Anexo 04 e da provisão do Anexo I-AB.
+
+    Por isso o déficit entra pela magnitude. Derivá-lo de ``ativos
+    garantidores − provisões`` foi descartado por medição: em 749 dos 914
+    blocos que declaram superávit, o valor declarado **não** é essa diferença,
+    e trocar a declaração por uma derivação publicaria um número que o atuário
+    não assinou.
     """
     deficit = superavit = 0.0
     ativos = provisoes = 0.0
     for linha in compromissos:
         valor = linha["geracao_atual"] or 0.0
         if linha["codigo"] == codigos.COMPROMISSO_DEFICIT:
-            deficit += valor
+            deficit += abs(valor)
         elif linha["codigo"] == codigos.COMPROMISSO_SUPERAVIT:
             superavit += valor
         elif linha["codigo"] == codigos.COMPROMISSO_ATIVOS_GARANTIDORES:

@@ -650,40 +650,48 @@ meses que declarou. Todo RPPS entra com a própria janela e ninguém é
 extrapolado, e a distribuição de meses declarados fica ao lado, para o leitor
 ver de que séries o total é feito.
 
-## Em aberto: o déficit atuarial que a tela não vê
+## O déficit atuarial vem com sinal negativo
 
-**Achado de 22/09/2026, e ainda sem correção.** O quadro consolidado de Atuária
-publicou "0 RPPS com déficit em algum fundo" entre 1.890 com DRAA. Isso não pode
-ser verdade, e a amostra de 45 fichas publicadas confirmou que não é:
+**Achado em 22/09/2026, resolvido em 07/10/2026 sem a API.** O quadro
+consolidado de Atuária publicou "0 RPPS com déficit em algum fundo" entre 1.890
+com DRAA. Não podia ser verdade, e não era.
 
-| Situação publicada | Blocos |
-| --- | ---: |
-| `superavit` | 20 |
-| `equilibrio` | 29 |
-| `deficit` | **0** |
+A causa não era o código do demonstrativo, que estava certo o tempo todo: **é
+convenção de sinal.** O DRAA declara o déficit atuarial negativo e o superávit
+positivo, e a leitura testava `deficit > 0` — que nunca era verdade. Todo RPPS
+em déficit caía em "equilíbrio".
 
-Nos mesmos 49 blocos, **6 trazem uma rubrica chamada literalmente "Déficit
-Atuarial"** e 30 trazem "Valor Atual do Plano de Amortização do Déficit
-Atuarial". Vitória/ES é o caso mais claro: o fundo Financeiro tem R$ 5,53 bi de
-provisões contra R$ 721 mi de ativos garantidores e uma rubrica de "Valor Atual
-da Cobertura da Insuficiência Financeira" de R$ 4,81 bi — e a ficha diz
-`situacao: equilibrio`.
+Medido sobre o conjunto aberto da SPREV (1,7 milhão de linhas, 29.491 blocos):
 
-`_resultado_atuarial` decide a situação pelo código do demonstrativo
-(`COMPROMISSO_DEFICIT = 600100`). Os códigos de provisão, ativos garantidores e
-superávit funcionam — os valores saem certos na tela. O de déficit nunca dispara.
-As três amostras de `cd_demonstrativo` no schema observado (800501, 123000,
-109001) sugerem uma família de códigos diferente da que as constantes assumem,
-mas três amostras não bastam para reescrever a tabela.
+| Conta | > 0 | < 0 | = 0 |
+| --- | ---: | ---: | ---: |
+| 600100 Déficit Atuarial | **0** | 15.424 | 5.044 |
+| 600300 Superávit Atuarial | 7.871 | 0 | 9.912 |
+| 909100 Déficit Financeiro | **0** | 6.230 | 8.795 |
+| 909300 Superávit Financeiro | 16.554 | 0 | 4.977 |
 
-**Isso depende da API do CADPREV voltar**, para varrer os códigos reais de
-`DRAA_VALORES_COMPROMISSOS` e conferir qual carrega "Déficit Atuarial". Até lá a
-constante fica como está: trocá-la por adivinhação produziria um déficit
-nacional que ninguém declarou, que é pior que a omissão atual.
+É a terceira fonte deste projeto a declarar valor negativo onde a leitura
+ingênua espera positivo — depois do saldo do Anexo 04 e da provisão do Anexo
+I-AB. O padrão já devia ser procurado por hábito.
 
-O defeito é anterior ao quadro consolidado — a aba Atuária de cada ente já lia
-assim. O que o consolidado fez foi tornar a soma visível: "0 de 1.890" é um
-número que obriga a pergunta, e a ficha isolada não obrigava.
+**A amostra concordava com o defeito.** O demo declarava o déficit positivo, e
+por isso os testes passavam enquanto o painel real errava em todo RPPS
+deficitário. O teste novo confere as duas pontas: que a amostra reproduz o sinal
+da fonte, e que a tela mostra a magnitude.
+
+**Derivar foi descartado por medição.** A alternativa óbvia seria calcular o
+resultado como `ativos garantidores − provisões`. Em 749 dos 914 blocos que
+declaram superávit, o valor declarado **não** é essa diferença — trocar a
+declaração por uma derivação publicaria um número que o atuário não assinou.
+
+### Ainda em aberto: o resultado financeiro
+
+As contas `909100`/`909300` ("Déficit" e "Superávit Financeiro") existem e são
+preenchidas — 6.230 e 16.554 registros não nulos —, e o painel **não as lê**.
+Elas medem outra coisa: equilíbrio financeiro do exercício, não equilíbrio
+atuarial de longo prazo. Mostrá-las ao lado do resultado atuarial é decisão de
+conteúdo, não correção de defeito, e está esperando quem entende do assunto
+dizer se cabe na mesma tela ou em outra.
 
 ## Certificação de quem responde pelos recursos
 

@@ -631,6 +631,51 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(provisoes["entes"] + provisoes["sem_dado"], atuaria["rpps"])
         self.assertEqual(atuaria["indicadores"]["provisoes"]["n"], provisoes["entes"])
 
+    def test_deficit_e_declarado_com_sinal_negativo(self):
+        """A fonte usa convenção de sinal, e a leitura tem de usar a mesma.
+
+        O DRAA declara o déficit atuarial negativo e o superávit positivo. A
+        leitura antiga testava ``deficit > 0``, que nunca era verdade, e todo
+        RPPS em déficit caía em "equilíbrio" — o painel publicou "0 RPPS com
+        déficit" entre 1.890 com DRAA. O defeito sobreviveu porque a própria
+        amostra declarava o valor positivo e concordava com ele.
+
+        Medido em 07/10/2026 no conjunto aberto da SPREV, 1,7 milhão de linhas:
+        a conta 600100 tem 15.424 valores negativos e **nenhum positivo**.
+        """
+        from cadprev import codigos
+        with Store(self.banco) as store:
+            linhas = [dict(l) for l in store.consultar(
+                "SELECT geracao_atual FROM draa_valores_compromissos "
+                "WHERE codigo = ?", (codigos.COMPROMISSO_DEFICIT,))]
+        self.assertTrue(linhas, "a amostra precisa declarar a conta de déficit")
+        # A amostra tem de reproduzir o sinal da fonte, senão ela concorda com
+        # o defeito e o teste abaixo não prova nada.
+        self.assertTrue(all((l["geracao_atual"] or 0) < 0 for l in linhas),
+                        "a amostra declarou o déficit positivo, como a fonte "
+                        "não faz")
+
+        # E a tela mostra o déficit pela magnitude, não o sinal cru.
+        achou = False
+        for ente in self._json("entes.json"):
+            a = (self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+                 .get("atuaria") or {})
+            if not a.get("disponivel"):
+                continue
+            for bloco in a.get("blocos") or []:
+                r = bloco.get("resultado") or {}
+                self.assertGreaterEqual(r["deficit"], 0, ente["ente"])
+                if r["deficit"] > 0:
+                    achou = True
+                    self.assertEqual(r["situacao"], "deficit", ente["ente"])
+        self.assertTrue(achou, "nenhum RPPS da amostra chega à tela com déficit")
+
+        # E o consolidado nacional enxerga esses entes.
+        atuaria = self._consolidado("atuaria")
+        self.assertTrue(atuaria["com_deficit"],
+                        "o consolidado voltou a dizer que ninguém tem déficit")
+        self.assertGreater(atuaria["compromissos"]["deficit"]["total"], 0)
+
     def test_deficit_e_superavit_nao_se_compensam(self):
         """O superávit de um RPPS não cobre o déficit de outro.
 
