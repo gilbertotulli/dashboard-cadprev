@@ -15,7 +15,3 @@ venv/
 # Gerados por `python -m cadprev demo` / `build` — reproduzíveis, não versionados.
 web/data/
 fixtures/demo/
-
-# Planilhas geradas pelas ferramentas avulsas — reconstruíveis a partir dos
-# dados abertos da fonte, e grandes demais para versionar.
-entregas/
