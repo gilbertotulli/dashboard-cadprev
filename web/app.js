@@ -284,6 +284,23 @@
     }));
   }
 
+  function ordemAria(ordem) {
+    return ordem === "asc" ? "ascending"
+         : (ordem === "desc" ? "descending" : "none");
+  }
+
+  /* Um rótulo de coluna que ordena. A seta vem presa à última palavra por um
+   * espaço inquebrável: o rótulo pode quebrar em duas linhas numa tabela
+   * larga, e a seta sozinha numa terceira linha não aponta para nada. */
+  function botaoDeOrdem(rotulo, ordem, aoClicar, classe) {
+    return h("button", { class: "link limpar" + (classe ? " " + classe : ""),
+                         onclick: aoClicar }, [
+      document.createTextNode(rotulo),
+      h("span", { class: "seta", texto: ordem === "asc" ? "\u00a0\u2191"
+                  : (ordem === "desc" ? "\u00a0\u2193" : "\u00a0\u21c5") })
+    ]);
+  }
+
   function tabela(colunas, linhas, larga) {
     var thead = h("thead", {}, [h("tr", {}, colunas.map(function (c) {
       var classe = (c.n ? "n" : "") + (c.classe ? " " + c.classe : "");
@@ -291,15 +308,17 @@
        * manda agora ("asc"/"desc"). A seta some quando a ordem é outra, para
        * que a tabela tenha uma única afirmação sobre por onde está ordenada. */
       if (!c.ordenar) return h("th", { class: classe, texto: c.t });
-      return h("th", { class: classe + " ordenavel" + (c.ordem ? " ativa" : ""),
+      /* Coluna que carrega duas medidas na mesma célula — a quantidade de
+       * cotas e quanto cada uma vale, que são uma afirmação só. O cabeçalho
+       * traz os dois rótulos, cada um ordenando o seu, porque juntar as
+       * medidas para caber na tela não é motivo para tirar uma ordenação. */
+      var dupla = !!c.ordenar2;
+      return h("th", { class: classe + " ordenavel" + (dupla ? " dupla" : "") +
+                       ((c.ordem || c.ordem2) ? " ativa" : ""),
                        title: "Ordenar por " + c.t,
-                       "aria-sort": c.ordem === "asc" ? "ascending"
-                                  : (c.ordem === "desc" ? "descending" : "none") },
-        [h("button", { class: "link limpar", onclick: c.ordenar }, [
-          document.createTextNode(c.t),
-          h("span", { class: "seta", texto: c.ordem === "asc" ? " \u2191"
-                      : (c.ordem === "desc" ? " \u2193" : " \u21c5") })
-        ])]);
+                       "aria-sort": ordemAria(c.ordem || c.ordem2) },
+        [botaoDeOrdem(c.t, c.ordem, c.ordenar)].concat(
+          dupla ? [botaoDeOrdem(c.t2, c.ordem2, c.ordenar2, "segunda")] : []));
     }))]);
     var tbody = h("tbody", {}, linhas);
     /* `larga` aceita `true` para o mínimo de 560px e "extra" para tabelas de
@@ -3483,6 +3502,17 @@
     };
   }
 
+  /* Duas medidas na mesma coluna, cada rótulo ordenando a sua. Serve para o par
+   * que só faz sentido junto — a quantidade de cotas e o valor de cada uma. */
+  function colunaDupla(titulo, campo, titulo2, campo2) {
+    var a = colunaOrdenavel(titulo, campo, true);
+    var b = colunaOrdenavel(titulo2, campo2, true);
+    a.t2 = b.t;
+    a.ordem2 = b.ordem;
+    a.ordenar2 = b.ordenar;
+    return a;
+  }
+
   function celulasDoAtivo(i) {
     /* O título público aparece pelo que é — sigla e vencimento — com a
      * descrição que o RPPS escreveu logo abaixo. O rótulo é derivado e a
@@ -3497,18 +3527,27 @@
         abaixo ? h("div", { class: "nota", texto: abaixo }) : null
       ].filter(Boolean)),
       h("td", { texto: classeCurta(i.classe), title: i.classe || "" }),
-      h("td", { class: "n", texto: i.cotas === null || i.cotas === undefined
-                ? "—" : num(i.cotas, 4) }),
-      h("td", { class: "n", texto: i.valor_unitario === null ||
-                i.valor_unitario === undefined
-                  ? "—" : reaisExatos(i.valor_unitario) }),
+      /* Quantidade e valor unitário na mesma célula: são uma afirmação só —
+       * tantas cotas, a tanto cada — e a coluna que a tabela economiza é
+       * exatamente a que fazia a relação de ativos passar da largura da tela.
+       * O valor unitário vai abaixo porque é o fator, não o resultado. */
+      h("td", { class: "n" }, [
+        h("div", { texto: i.cotas === null || i.cotas === undefined
+                   ? "\u2014" : num(i.cotas, 4) }),
+        h("div", { class: "nota", texto: i.valor_unitario === null ||
+                   i.valor_unitario === undefined
+                     ? "" : "\u00d7 " + reaisExatos(i.valor_unitario) })
+      ]),
       h("td", { class: "n", texto: reais(i.valor) }),
       h("td", { class: "n", texto: pct(i.perc, 2) }),
       // O PL é do fundo. Título público não tem patrimônio líquido, e conta
       // corrente também não: a célula fica vazia em vez de zerada.
-      h("td", { class: "n", texto: i.pl_fundo ? reais(i.pl_fundo) : "—" }),
+      h("td", { class: "n", texto: i.pl_fundo ? reais(i.pl_fundo) : "\u2014" }),
+      /* Sem PL não há percentual do PL. "0,0%" ali afirmaria que a posição é
+       * uma fração nula de um patrimônio que existe — e num título público não
+       * existe patrimônio nenhum. Ausência não é zero. */
       h("td", { class: "n " + ((i.perc_pl_fundo || 0) > 10 ? "alerta" : ""),
-                texto: pct(i.perc_pl_fundo) })
+                texto: i.pl_fundo ? pct(i.perc_pl_fundo) : "\u2014" })
     ];
   }
 
@@ -3517,8 +3556,7 @@
     var colunas = [
       colunaOrdenavel("Ativo", "nome", false),
       colunaOrdenavel("Classe", "classe", false),
-      colunaOrdenavel("Quantidade", "cotas", true),
-      colunaOrdenavel("Valor unitário", "unitario", true),
+      colunaDupla("Quantidade", "cotas", "Valor unitário", "unitario"),
       colunaOrdenavel("Valor total", "valor", true),
       colunaOrdenavel("% dos recursos", "perc", true),
       colunaOrdenavel("PL do fundo", "plfundo", true),
@@ -3547,7 +3585,7 @@
             h("span", { class: "nota", texto: " " + c.segmento + " · " +
                         num(doGrupo.length, 0) + " ativos" })
           ]),
-          h("td", {}), h("td", {}),
+          h("td", {}),
           h("td", { class: "n", texto: reais(c.valor) }),
           h("td", { class: "n" + (c.excede ? " ruim" : ""), texto: pct(c.perc, 2) }),
           h("td", {}),
@@ -3569,7 +3607,7 @@
       visiveis.length === escolhida.itens.length
         ? "Total da carteira"
         : num(visiveis.length, 0) + " de " + num(escolhida.itens.length, 0) + " ativos",
-      ["", "", "", reais(somaVisivel),
+      ["", "", reais(somaVisivel),
        pct(visiveis.reduce(function (a, i) { return a + i.perc; }, 0), 2), "", ""]));
 
     var alternar = h("button", {

@@ -177,9 +177,11 @@ table.dados{width:100%;border-collapse:collapse;font-size:.85rem}
 /* Tabela de muitas colunas rola no próprio contêiner; sem isso ela
    comprime e os valores quebram em três linhas no telefone. */
 table.dados.larga{min-width:560px}
-/* Sete ou mais colunas não cabem em 560px sem quebrar valores no meio. A
-   tabela passa da largura da tela e rola — .rolar existe para isso. */
-table.dados.larga.extra{min-width:900px}
+/* Sete ou mais colunas não cabem em 560px sem quebrar valores no meio. Com o
+   cabeçalho quebrando em duas linhas o mínimo baixou de 900px para 760px, que
+   é onde os valores ainda ficam inteiros: abaixo disso a tabela passa da
+   largura da tela e rola — .rolar existe para isso. */
+table.dados.larga.extra{min-width:760px}
 table.dados th{
   text-align:left;font-family:"IBM Plex Mono",monospace;font-weight:500;
   font-size:.64rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);
@@ -195,10 +197,17 @@ table.dados td.n,table.dados th.n{white-space:nowrap}
 /* Numa tabela de muitas colunas os cabeçalhos numéricos encostam uns nos
    outros e viram uma palavra só — "LINHASINGERIDO EM". A folga vale só aqui
    porque nas tabelas de duas ou três colunas ela desperdiçaria largura. */
-table.dados.extra th.n,table.dados.extra td.n{padding-left:22px}
+table.dados.extra th.n,table.dados.extra td.n{padding-left:16px}
 /* O mesmo motivo vale para a coluna de texto que vem logo após uma numérica:
    sem folga, o valor e o texto seguinte saem grudados. */
-table.dados.extra th.n + th,table.dados.extra td.n + td{padding-left:22px}
+table.dados.extra th.n + th,table.dados.extra td.n + td{padding-left:16px}
+/* Medido: a relação de ativos do ente pedia 1.135px de largura, e a soma dos
+   oito cabeçalhos dava 1.134 — a tabela rolava por causa dos rótulos, não dos
+   valores, que cabiam folgados. Deixar o rótulo quebrar em duas linhas devolve
+   cerca de 250px sem esconder nenhuma coluna. Os valores continuam em linha
+   única (a regra de nowrap em td.n acima), que é o que não pode quebrar. */
+table.dados.extra th{white-space:normal}
+table.dados.extra th.ordenavel button{white-space:normal}
 table.dados tr:last-child td{border-bottom:none}
 table.dados tr.clicavel{cursor:pointer}
 table.dados tr.clicavel:hover td{background:var(--surface-2)}
@@ -442,6 +451,14 @@ table.dados th.ordenavel button{font:inherit;color:inherit;letter-spacing:inheri
   text-transform:inherit;padding:9px 10px;width:100%;text-align:inherit;
   cursor:pointer;white-space:nowrap}
 table.dados th.ordenavel.n button{text-align:right}
+/* Cabeçalho de uma coluna que carrega duas medidas. Os dois rótulos ficam
+   empilhados, cada um ordenando o seu; o segundo vem mais apagado porque é o
+   fator e não o resultado — a mesma hierarquia que a célula tem embaixo. */
+table.dados th.ordenavel.dupla button{display:block;padding-top:0;padding-bottom:0}
+table.dados th.ordenavel.dupla button:first-child{padding-top:9px}
+table.dados th.ordenavel.dupla button.segunda{padding-bottom:8px;opacity:.68;
+  font-weight:400;text-transform:none;letter-spacing:.02em}
+table.dados th.ordenavel.dupla button.segunda:hover{opacity:1}
 table.dados th.ordenavel button:hover{color:var(--ink)}
 table.dados th.ordenavel .seta{opacity:.35}
 table.dados th.ordenavel.ativa .seta{opacity:1}
