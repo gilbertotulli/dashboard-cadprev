@@ -761,6 +761,52 @@ segmento e no vencimento, sem acento e sem caixa. Clicar na linha de subtotal
 de uma classe recolhe os ativos dela; o estado sobrevive a reordenar a tabela,
 porque a ordem e o que está visível são decisões independentes.
 
+### Escolher de que competências os agregados são feitos
+
+**O problema.** O prazo do DAIR vai até o fim do mês seguinte, então durante todo
+o mês de outubro os RPPS vão entregando a competência de setembro. No dia 29 a
+maioria já entregou, e comparar "o último DAIR de cada um" passa a comparar
+setembro de uns com agosto de outros — e julho de alguns. A diferença entre dois
+RPPS deixa de ser entre as carteiras e passa a incluir o tempo entre as
+declarações.
+
+**A solução.** A carga guarda três competências por vez (`for VOLTA in 0 1 2`) e
+o `dair-atrasados` completa ente a ente. Com mais de um mês no banco, as abas
+Carteira e Investimentos abrem com um seletor de **faixas de competência**:
+
+| Faixa | O que é |
+| --- | --- |
+| A mais recente da base | setembro, no exemplo |
+| Um mês antes dela | agosto |
+| Dois meses ou mais atrás | julho e o que houver antes |
+
+Cada RPPS entra com a competência mais recente dele **entre as marcadas**, e quem
+não declarou nenhuma delas fica de fora — é esse o ponto: desmarcando a faixa
+mais recente, quem só declarou nela sai do agregado em vez de ser puxado para um
+mês que não declarou. Marcando só a faixa do meio, todos entram por agosto e a
+comparação fica agosto contra agosto.
+
+As faixas são **relativas**, não meses fixos: a base avança e os rótulos
+continuam valendo. A terceira junta tudo o que for mais antigo, porque ali a
+pergunta não é "qual mês" — é "aceito dado velho ou não".
+
+**A etiqueta nunca mente.** Qualquer escolha publica de quais competências o
+total é feito, e quando são mais de uma a tela avisa. Por uma versão este painel
+calculava isso só quando a escolha não era a padrão — e o padrão já misturava
+três: o número vinha misturado com rótulo de data única, que é pior que
+misturado assumido.
+
+**Com uma competência só na base, o seletor não aparece.** Um controle com sete
+opções que não mudam nada é pior que nenhum controle, e a tela diz que há um mês
+só. É a situação de 07/10/2026: o laço de três competências entrou no workflow em
+17/09 e a API caiu em 22/09, então ele nunca rodou — a base tem apenas 2026-06. O
+seletor está pronto e ativa sozinho na primeira carga com a fonte de pé.
+
+A relação de ativos vai em **um arquivo por escolha** (`ativos-nacional-010.json`
+e companhia): cada um passa de um mega na base real, e o navegador busca só o que
+o leitor escolheu. A carteira nacional cabe toda num arquivo — são quatro
+quilobytes por escolha.
+
 ### O PL e os cotistas oficiais, da CVM
 
 Terceira fonte do projeto, e a primeira que não fala de RPPS — fala de **fundos**.

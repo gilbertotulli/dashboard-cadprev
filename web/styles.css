@@ -481,3 +481,12 @@ button.nome-do-ativo:hover{text-decoration:underline;color:var(--accent-ink)}
 table.dados tr.cotistas > td{background:var(--surface-2);padding:14px 16px}
 table.dados tr.cotistas .cartao-h{margin-bottom:8px}
 table.dados tr.cotistas table.dados{background:var(--surface)}
+
+/* O seletor de faixas de competência. Caixas empilhadas e não em linha: o
+   rótulo de cada faixa traz os meses, e numa linha só eles se atropelam. */
+div.faixas{display:flex;flex-direction:column;gap:8px;margin-bottom:4px}
+label.faixa{display:flex;align-items:flex-start;gap:8px;cursor:pointer;
+  font-size:.86rem;line-height:1.4}
+label.faixa input{margin-top:3px;flex:none}
+label.faixa .nota{display:inline;margin-left:4px}
+label.faixa:hover b{color:var(--accent-ink)}

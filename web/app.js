@@ -38,6 +38,9 @@
                  recolhidasEnte: {}, recolhidasNacional: {},
                  // Qual ativo teve a lista de cotistas aberta.
                  ativoAberto: null,
+                 // Quais faixas de competência do DAIR entram nos agregados.
+                 // "111" é todas, e é o comportamento de sempre.
+                 faixas: "111",
                  // Qual lista de entes está aberta no quadro de cobertura.
                  listaDeEntes: null };
   var conteudo = document.getElementById("conteudo");
@@ -197,9 +200,32 @@
   function nacional(caminho) {
     return buscar(caminho).then(function (j) {
       var v = j.variantes || {};
-      return v[estado.filtros] || v[(estado.chaves && estado.chaves.padrao)] ||
+      var variante = v[estado.filtros] || v[(estado.chaves && estado.chaves.padrao)] ||
         v[Object.keys(v)[0]] || {};
+      /* A carteira nacional tem um nível a mais: a escolha de faixa de
+       * competência. As outras variantes não têm, e por isso a detecção é pela
+       * presença da máscara padrão em vez de pelo nome do arquivo. */
+      if (variante && variante[FAIXAS_TODAS]) {
+        return variante[estado.faixas] || variante[FAIXAS_TODAS];
+      }
+      return variante;
     });
+  }
+
+  /* A escolha de faixa que reproduz o comportamento de sempre: todas ligadas. */
+  var FAIXAS_TODAS = "111";
+
+  /* As escolhas de faixa que a carteira nacional publicou. Vem do próprio
+   * arquivo, já em cache quando a aba desenha: assim o seletor oferece só o que
+   * existe nesta base, em vez de sete opções fixas que podem não existir. */
+  function mascarasDaCarteira() {
+    var j = estado.cache["carteira-nacional.json"];
+    if (!j) return [FAIXAS_TODAS];
+    var v = (j.variantes || {})[estado.filtros] ||
+      (j.variantes || {})[(estado.chaves && estado.chaves.padrao)] ||
+      (j.variantes || {})[Object.keys(j.variantes || {})[0]] || {};
+    var chaves = Object.keys(v).filter(function (k) { return /^[01]{3}$/.test(k); });
+    return chaves.length ? chaves : [FAIXAS_TODAS];
   }
 
   /* O índice por RPPS é único; só as estatísticas de grupo mudam com as chaves,
@@ -433,6 +459,8 @@
           texto: "O agregado de todos os RPPS ingeridos. Escolha um ente na busca " +
             "para ver a carteira dele, com o teto da norma em cada classe de ativo."
         }),
+        seletorDeFaixas(c.faixas, mascarasDaCarteira()),
+        avisoDasCompetencias(c.competencias_usadas),
         h("div", { class: "contexto" }, [
           h("span", { class: "pilula" }, ["Ente ", h("b", { texto: "Todos os RPPS" })]),
           h("span", { class: "pilula nivel", title: c.nivel_descricao },
@@ -1773,7 +1801,7 @@
         if (o.chave !== "selecao") {
           estado.selecao = []; estado.selecaoUf = ""; estado.selecaoAberta = false;
         }
-        render();
+        render(true);
       });
       return b2;
     });
@@ -1818,7 +1846,7 @@
       cnpjs.forEach(function (c) {
         if (estado.selecao.indexOf(c) < 0) estado.selecao.push(c);
       });
-      render();
+      render(true);
     }
 
     function listar() {
@@ -1873,7 +1901,7 @@
           type: "button", "aria-label": "Remover " + (r ? r.ente : c), texto: "×",
           onclick: function () {
             estado.selecao = estado.selecao.filter(function (x) { return x !== c; });
-            render();
+            render(true);
           }
         })
       ]);
@@ -1905,7 +1933,7 @@
       caixaFichas.appendChild(h("button", {
         type: "button", class: "link limpar", texto: "limpar seleção",
         onclick: function () {
-          estado.selecao = []; estado.selecaoAberta = false; render();
+          estado.selecao = []; estado.selecaoAberta = false; render(true);
         }
       }));
     }
@@ -3382,7 +3410,7 @@
     tr.addEventListener("click", function () {
       if (recolhida) delete recolhidas[chave];
       else recolhidas[chave] = true;
-      render();
+      render(true);
     });
     return tr;
   }
@@ -3395,20 +3423,15 @@
 
   function campoDeBusca(valor, aoDigitar, marca) {
     var campo = h("input", {
-      type: "search", class: "filtro-ativo " + marca, value: valor,
+      type: "search", class: "filtro-ativo", "data-foco": marca, value: valor,
       placeholder: "Filtrar por nome, CNPJ, classe ou vencimento…",
       "aria-label": "Filtrar a relação de ativos"
     });
+    // `data-foco` é o que o render devolve ao foco depois de remontar; sem isso
+    // a segunda letra digitada ia para o vazio e a página subia para o topo.
     campo.addEventListener("input", function () {
       aoDigitar(campo.value);
-      render();
-      // O render recria o campo: devolve o foco e o cursor ao fim, senão
-      // digitar a segunda letra exige clicar de novo.
-      var novo = document.querySelector("." + marca);
-      if (novo) {
-        novo.focus();
-        novo.setSelectionRange(novo.value.length, novo.value.length);
-      }
+      render(true);
     });
     return campo;
   }
@@ -3455,7 +3478,7 @@
         estado.ordemAtivos = atual.campo === campo
           ? { campo: campo, desc: !atual.desc }
           : { campo: campo, desc: !!numerica };
-        render();
+        render(true);
       }
     };
   }
@@ -3555,7 +3578,7 @@
                                   : "agrupar por classe de ativo",
       onclick: function () {
         estado.agruparAtivos = !estado.agruparAtivos;
-        render();
+        render(true);
       }
     });
 
@@ -3574,7 +3597,7 @@
         alternar,
         estado.buscaAtivoEnte ? h("button", {
           class: "link limpar", texto: "limpar o filtro",
-          onclick: function () { estado.buscaAtivoEnte = ""; render(); }
+          onclick: function () { estado.buscaAtivoEnte = ""; render(true); }
         }) : null
       ].filter(Boolean)),
        tabela(colunas, linhas, "extra")]);
@@ -3607,7 +3630,7 @@
         ]);
         botao.addEventListener("click", function () {
           estado.competencia = c.competencia;
-          render();
+          render(true);
         });
         return botao;
       }));
@@ -3762,7 +3785,7 @@
         estado.ordemNacional = atual.campo === campo
           ? { campo: campo, desc: !atual.desc }
           : { campo: campo, desc: !!numerica };
-        render();
+        render(true);
       }
     };
   }
@@ -3785,7 +3808,7 @@
                     : "Ver os " + num(i.rpps, 0) + " RPPS que investem neste ativo",
       onclick: function () {
         estado.ativoAberto = aberto ? null : i.chave;
-        render();
+        render(true);
       }
     });
     /* O PL é o da CVM — número do administrador, não a mediana do que os
@@ -3812,7 +3835,7 @@
           title: "Ver os RPPS que investem neste ativo",
           onclick: function () {
             estado.ativoAberto = aberto ? null : i.chave;
-            render();
+            render(true);
           }
         }),
         h("span", { texto: " / " + (i.cotistas_cvm === null ||
@@ -3884,12 +3907,14 @@
     var corpo;
     if (cotistasCarregados === null) {
       corpo = h("div", { class: "nota", texto: "carregando a lista de RPPS…" });
-      buscar("ativos-cotistas.json").then(function (c) {
+      buscar("ativos-cotistas" +
+             (estado.faixas === FAIXAS_TODAS ? "" : "-" + estado.faixas) +
+             ".json").then(function (c) {
         cotistasCarregados = c || {};
-        render();
+        render(true);
       }).catch(function () {
         cotistasCarregados = {};
-        render();
+        render(true);
       });
     } else {
       var lista = (cotistasCarregados.por_ativo || {})[ativo.chave] || [];
@@ -3903,7 +3928,7 @@
           h("h3", { texto: "Quem investe em " + ativo.nome }),
           h("button", {
             class: "link limpar", texto: "fechar",
-            onclick: function () { estado.ativoAberto = null; render(); }
+            onclick: function () { estado.ativoAberto = null; render(true); }
           })
         ]),
         corpo
@@ -4001,13 +4026,102 @@
          "de mostrar vazio sem explicação." })]);
   }
 
+  /* O seletor de faixas de competência. Fica no alto das duas abas que agregam
+   * o país, porque é a primeira decisão: de que mês são os números abaixo.
+   *
+   * O problema que ele resolve: o prazo do DAIR vai até o fim do mês seguinte,
+   * então durante outubro os RPPS vão entregando setembro. No dia 29 a maioria
+   * já entregou, e "o último DAIR de cada um" compara setembro de uns com agosto
+   * de outros. Desligando a faixa mais recente, quem já entregou setembro volta
+   * a entrar por agosto e a comparação fica agosto contra agosto.
+   *
+   * Com uma competência só na base o seletor não aparece: um controle com sete
+   * opções que não mudam nada é pior que nenhum controle. */
+  function seletorDeFaixas(faixas, mascaras) {
+    if (!faixas || !mascaras || mascaras.length < 2) {
+      return faixas && faixas.length
+        ? h("p", { class: "nota", texto:
+            "A base tem uma competência de DAIR só (" +
+            (faixas[0].competencias[0] || "—") + "), então não há o que " +
+            "escolher. Com mais de uma, aparece aqui a opção de deixar a mais " +
+            "recente de fora e comparar todos na mesma data." })
+        : null;
+    }
+    var marcadas = estado.faixas;
+    var caixas = faixas.map(function (f, i) {
+      if (!f.existe) return null;
+      var entrada = h("input", {
+        type: "checkbox", id: "faixa-" + i,
+        "data-foco": "faixa-" + i
+      });
+      entrada.checked = marcadas[i] === "1";
+      entrada.addEventListener("change", function () {
+        var bits = marcadas.split("");
+        bits[i] = entrada.checked ? "1" : "0";
+        var nova = bits.join("");
+        // Desmarcar tudo não é escolha: sem faixa nenhuma não há agregado, e a
+        // tela ficaria vazia sem o leitor ter pedido isso.
+        if (mascaras.indexOf(nova) < 0) {
+          entrada.checked = !entrada.checked;
+          return;
+        }
+        estado.faixas = nova;
+        render(true);
+      });
+      return h("label", { class: "faixa" }, [
+        entrada,
+        h("span", {}, [
+          h("b", { texto: f.rotulo }),
+          h("span", { class: "nota", texto: " " + f.competencias.join(", ") })
+        ])
+      ]);
+    }).filter(Boolean);
+
+    return cartao("Competências do DAIR consideradas", "DAIR_CARTEIRA",
+      "Cada RPPS entra com a competência mais recente dele entre as marcadas · " +
+      "quem não declarou nenhuma delas fica fora do agregado",
+      [h("div", { class: "faixas" }, caixas),
+       h("p", { class: "nota", texto:
+         "O prazo do DAIR vai até o fim do mês seguinte, então durante o mês " +
+         "os RPPS vão entregando a competência anterior — e comparar o último " +
+         "DAIR de cada um passa a comparar meses diferentes. Desmarcando a " +
+         "faixa mais recente, quem já entregou volta a entrar pela anterior, e " +
+         "a comparação fica na mesma data." }),
+       estado.faixas === FAIXAS_TODAS ? null : h("button", {
+         class: "link limpar", texto: "voltar a considerar todas",
+         onclick: function () { estado.faixas = FAIXAS_TODAS; render(true); }
+       })].filter(Boolean));
+  }
+
+  /* De que meses o número na tela é feito. Vai junto do total, não numa nota de
+   * rodapé: um patrimônio somado de três competências não pode se apresentar
+   * como posição de uma data. */
+  function avisoDasCompetencias(usadas) {
+    if (!usadas || usadas.length < 2) return null;
+    return h("div", { class: "aviso-linha" }, [
+      h("span", { class: "ico", texto: "\u26a0" }),
+      h("span", { texto:
+        "Este total soma " + num(usadas.length, 0) + " competências diferentes (" +
+        usadas.join(", ") + "): cada RPPS entrou com a mais recente dele. Para " +
+        "comparar todos na mesma data, marque uma faixa só acima." })
+    ]);
+  }
+
   function abaInvestimentos() {
+    var sufixo = estado.faixas === FAIXAS_TODAS ? "" : "-" + estado.faixas;
     return Promise.all([
-      buscar("ativos-nacional.json"),
+      buscar("ativos-nacional" + sufixo + ".json").catch(function () {
+        // A base pode não ter aquela escolha publicada: cai no padrão em vez de
+        // deixar a aba vazia.
+        estado.faixas = FAIXAS_TODAS;
+        return buscar("ativos-nacional.json");
+      }),
       nacional("dair-cobertura.json")
     ]).then(function (r) {
       var a = r[0], c = r[1];
       var nos = [h("h2", { class: "secao", texto: "Investimentos do país" })];
+      nos.push(seletorDeFaixas(a && a.faixas, a && a.mascaras));
+      nos.push(avisoDasCompetencias(a && a.competencias));
       if (c && c.disponivel) nos = nos.concat(quadroDeCobertura(c));
       if (a && a.disponivel) nos = nos.concat(quadroDeAtivos(a));
       if (nos.length === 1) nos.push(semDado("investimentos", "DAIR_CARTEIRA"));
@@ -4090,7 +4204,7 @@
       onclick: function () {
         estado.listaDeEntes = aberta ? null
           : { chave: chave, rotulo: rotulo, entes: entes };
-        render();
+        render(true);
       }
     });
   }
@@ -4116,7 +4230,7 @@
         }), true),
        h("button", { class: "link limpar", texto: "fechar a lista",
                      onclick: function () {
-                       estado.listaDeEntes = null; render();
+                       estado.listaDeEntes = null; render(true);
                      } })]);
   }
 
@@ -4228,12 +4342,12 @@
                                           : "agrupar por classe de ativo",
             onclick: function () {
               estado.agruparNacional = !estado.agruparNacional;
-              render();
+              render(true);
             }
           }),
           estado.buscaAtivo ? h("button", {
             class: "link limpar", texto: "limpar o filtro",
-            onclick: function () { estado.buscaAtivo = ""; render(); }
+            onclick: function () { estado.buscaAtivo = ""; render(true); }
           }) : null
         ].filter(Boolean)),
          tabela(colunas, linhas, "extra")])
@@ -4278,7 +4392,7 @@
         estado.filtros = bits.join("");
         guardarFiltros();
         atualizarEfeito();
-        render();
+        render(true);
       });
       /* Sem a fonte no banco, "−0" afirmaria que ninguém está atrasado quando o
        * que houve foi não ter como saber. A chave fica inerte e diz o porquê. */
@@ -4347,11 +4461,31 @@
   var pendentes = [];
   function depoisDeMontar(fn) { pendentes.push(fn); return null; }
 
-  function render() {
+  /* `preservar` é para quando a interação acontece **dentro** da página: digitar
+   * no filtro, ordenar uma coluna, recolher uma classe, abrir a lista de
+   * cotistas. Nesses casos o conteúdo é o mesmo com outra forma, e trocar a
+   * página por "Carregando…" fazia a altura colapsar — o navegador subia para o
+   * topo e a segunda letra digitada ia para o vazio. Guarda a rolagem, o campo
+   * em foco e a posição do cursor, e devolve os três depois de remontar.
+   *
+   * A alternativa seria remontar só o corpo da tabela, que é mais cirúrgico e
+   * bem mais código: o painel inteiro é remontado a cada clique desde o começo,
+   * e essa simplicidade é o que mantém o estado e a tela sempre coerentes. O
+   * custo é remontar alguns milhares de nós, que o navegador faz sem piscar. */
+  function render(preservar) {
     var fn = ABAS[estado.aba] || abaPanorama;
+    var rolagem = preservar ? (window.scrollY || window.pageYOffset || 0) : 0;
+    var ativo = preservar ? document.activeElement : null;
+    var focado = ativo && ativo.getAttribute
+      ? ativo.getAttribute("data-foco") : null;
+    var cursor = focado && ativo.selectionStart !== undefined
+      ? [ativo.selectionStart, ativo.selectionEnd] : null;
+
     pendentes = [];
-    conteudo.textContent = "";
-    conteudo.appendChild(h("p", { class: "carregando", texto: "Carregando…" }));
+    if (!preservar) {
+      conteudo.textContent = "";
+      conteudo.appendChild(h("p", { class: "carregando", texto: "Carregando…" }));
+    }
 
     fn().then(function (nos) {
       conteudo.textContent = "";
@@ -4359,6 +4493,15 @@
       pendentes.forEach(function (f) { f(); });
       pendentes = [];
       Charts.esconderDica();
+      if (!preservar) return;
+      window.scrollTo(0, rolagem);
+      if (!focado) return;
+      var devolta = document.querySelector("[data-foco=\"" + focado + "\"]");
+      if (!devolta) return;
+      devolta.focus();
+      if (cursor && devolta.setSelectionRange) {
+        try { devolta.setSelectionRange(cursor[0], cursor[1]); } catch (e) { /* não é texto */ }
+      }
     }).catch(function (erro) {
       conteudo.textContent = "";
       conteudo.appendChild(vazio("Não consegui carregar os dados",

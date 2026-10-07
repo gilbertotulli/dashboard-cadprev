@@ -84,10 +84,18 @@ class TestPipeline(unittest.TestCase):
         with open(os.path.join(self.saida, nome), encoding="utf-8") as fh:
             return json.load(fh)
 
-    def _nacional(self, nome):
-        """O agregado nacional na combinação de chaves que abre por padrão."""
-        from cadprev import qualidade
-        return self._json(nome)["variantes"][qualidade.chave_padrao()]
+    def _nacional(self, nome, mascara=None):
+        """O agregado nacional na combinação de chaves que abre por padrão.
+
+        A carteira nacional tem um nível a mais — a escolha de faixa de
+        competência —, e o padrão é "todas as faixas", que é o comportamento de
+        sempre. As outras variantes não têm esse nível.
+        """
+        from cadprev import build as b, qualidade
+        variante = self._json(nome)["variantes"][qualidade.chave_padrao()]
+        if isinstance(variante, dict) and b.FAIXAS_TODAS in variante:
+            return variante[mascara or b.FAIXAS_TODAS]
+        return variante
 
     def test_ingestao_sem_erros(self):
         self.assertEqual(self.resultado["erros"], [])
@@ -1109,6 +1117,101 @@ class TestPipeline(unittest.TestCase):
         self.assertTrue(achou_divergente,
                         "nenhum cotista divergindo do PL oficial — o caso que a "
                         "coluna existe para mostrar")
+
+    # ------------------------ faixas de competência que o leitor escolhe
+
+    def test_faixas_sao_relativas_e_a_terceira_junta_o_resto(self):
+        """Não são meses fixos: são posições relativas à competência mais
+        recente da base, para que os rótulos continuem valendo quando a base
+        avança. A terceira junta tudo o que for mais antigo."""
+        from cadprev import build as b
+        with Store(self.banco) as store:
+            faixas = b.faixas_das_competencias(store)
+        self.assertTrue(len(faixas) > 3,
+                        "o demo precisa de mais de três competências para que a "
+                        "faixa que agrupa o resto seja exercitada")
+        ordenadas = sorted(faixas, key=lambda f: (f["ano"], f["mes"]), reverse=True)
+        self.assertEqual([f["faixa"] for f in ordenadas[:3]], [0, 1, 2])
+        for f in ordenadas[3:]:
+            self.assertEqual(f["faixa"], 2)
+
+    def test_uma_competencia_so_nao_produz_seletor(self):
+        """Um controle com sete opções que não mudam nada é pior que nenhum."""
+        from cadprev import build as b
+        uma = [{"ano": 2026, "mes": 6, "faixa": 0, "competencia": "2026-06"}]
+        self.assertEqual(b.mascaras_de_faixa(uma), [b.FAIXAS_TODAS])
+        self.assertEqual(b.mascaras_de_faixa([]), [b.FAIXAS_TODAS])
+        with Store(self.banco) as store:
+            muitas = b.mascaras_de_faixa(b.faixas_das_competencias(store))
+        self.assertEqual(len(muitas), 7)
+        self.assertEqual(muitas[0], b.FAIXAS_TODAS,
+                         "a escolha padrão vem primeiro: é o arquivo sem sufixo")
+
+    def test_desligar_a_faixa_recente_compara_na_mesma_data(self):
+        """É o caso que o seletor existe para resolver.
+
+        Durante outubro os RPPS vão entregando setembro: comparar o último DAIR
+        de cada um mistura setembro com agosto. Marcando só a faixa do meio, quem
+        já entregou setembro volta a entrar por agosto e todos ficam na mesma
+        data.
+        """
+        todas = self._nacional("carteira-nacional.json")
+        self.assertTrue(todas["varias"],
+                        "o demo precisa de agregado misturando competências, "
+                        "senão não há o que o seletor resolva")
+        self.assertGreater(len(todas["competencias_usadas"]), 1)
+
+        # "010": só a faixa do meio. Todo RPPS que entra está na mesma data.
+        so_a_anterior = self._nacional("carteira-nacional.json", "010")
+        self.assertEqual(len(so_a_anterior["competencias_usadas"]), 1)
+        self.assertFalse(so_a_anterior["varias"])
+        # E quem só declarou a faixa mais recente fica fora, em vez de ser
+        # puxado para um mês que não declarou.
+        self.assertLess(so_a_anterior["rpps_com_dair"], todas["rpps_com_dair"])
+
+    def test_etiqueta_da_competencia_nunca_mente(self):
+        """Um total somado de três competências não pode se apresentar como
+        posição de uma data.
+
+        Por uma versão este painel calculava `competencias_usadas` só quando a
+        escolha não era a padrão — e o padrão já misturava três. O número vinha
+        misturado com rótulo de data única, que é pior que misturado assumido.
+        """
+        variantes = self._json("carteira-nacional.json")["variantes"]
+        from cadprev import qualidade
+        for mascara, dados in variantes[qualidade.chave_padrao()].items():
+            if not dados.get("disponivel"):
+                continue
+            usadas = dados["competencias_usadas"]
+            self.assertTrue(usadas, mascara)
+            self.assertEqual(dados["varias"], len(usadas) > 1, mascara)
+            if len(usadas) == 1:
+                self.assertEqual(dados["competencia"], usadas[0], mascara)
+
+    def test_relacao_de_ativos_tem_um_arquivo_por_escolha(self):
+        """Cada arquivo passa de um mega na base real: o navegador busca o que o
+        leitor escolheu, não os sete."""
+        from cadprev import build as b
+        padrao = self._json("ativos-nacional.json")
+        self.assertEqual(padrao["mascara"], b.FAIXAS_TODAS)
+        self.assertEqual(len(padrao["mascaras"]), 7)
+        for mascara in padrao["mascaras"]:
+            if mascara == b.FAIXAS_TODAS:
+                continue
+            caminho = "ativos-nacional-{}.json".format(mascara)
+            outro = self._json(caminho)
+            self.assertEqual(outro["mascara"], mascara)
+            # E o de cotistas acompanha, senão a lista aberta mostraria quem
+            # investia em outra competência.
+            cotistas = self._json("ativos-cotistas-{}.json".format(mascara))
+            self.assertTrue(cotistas["disponivel"])
+            por_chave = {i["chave"]: i for i in outro["itens"]}
+            for chave, lista in cotistas["por_ativo"].items():
+                self.assertEqual(len(lista), por_chave[chave]["rpps"])
+
+        # "010" usa uma competência só: é a escolha que compara na mesma data.
+        so_uma = self._json("ativos-nacional-010.json")
+        self.assertEqual(len(so_uma["competencias"]), 1)
 
     def test_norma_dos_investimentos_vem_de_um_lugar_so(self):
         """O painel não mantém tabela de limites — quem declara o teto de cada

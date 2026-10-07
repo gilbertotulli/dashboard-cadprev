@@ -1012,6 +1012,105 @@ def montar_atuaria_nacional(fichas: Mapping[str, Mapping[str, Any]],
 TETO_DA_LISTA_DE_ATIVOS = 20000
 
 
+#: As três faixas de competência que o painel deixa o leitor escolher. Não são
+#: meses fixos: são posições relativas à competência mais recente que a base
+#: tem. A terceira junta tudo o que for mais antigo, porque a pergunta ali não é
+#: "qual mês" — é "aceito dado velho ou não".
+FAIXAS_DE_COMPETENCIA = (
+    (0, "A mais recente da base"),
+    (1, "Um mês antes dela"),
+    (2, "Dois meses ou mais atrás"),
+)
+
+#: A escolha que reproduz o comportamento de sempre: todas as faixas valem, e
+#: cada RPPS entra com a competência mais recente dele.
+FAIXAS_TODAS = "111"
+
+
+def faixas_das_competencias(store: Store) -> List[Dict[str, Any]]:
+    """Em que faixa cai cada competência que a base guarda.
+
+    **O problema que isto resolve.** O prazo do DAIR vai até o fim do mês
+    seguinte, então durante todo o mês de outubro os RPPS vão entregando a
+    competência de setembro. No dia 29 a maioria já entregou, e comparar "o
+    último DAIR de cada um" passa a comparar setembro de uns com agosto de
+    outros — e com julho de alguns. A diferença entre dois RPPS deixa de ser
+    entre as carteiras e passa a incluir o tempo entre as declarações.
+
+    Guardando mais de uma competência, dá para escolher: desligando a faixa mais
+    recente, quem já entregou setembro volta a entrar por agosto, e a comparação
+    fica agosto contra agosto.
+
+    As faixas são **relativas**, não meses fixos: a base avança e os rótulos
+    continuam valendo. A terceira junta tudo o que for mais antigo.
+    """
+    if not store.tem_tabela("DAIR_CARTEIRA"):
+        return []
+    presentes = sorted(
+        ((l["ano"], l["mes"]) for l in store.consultar(
+            "SELECT DISTINCT ano, mes FROM dair_carteira"
+            " WHERE ano IS NOT NULL AND mes IS NOT NULL")),
+        reverse=True)
+    saida = []
+    for ordem, (ano, mes) in enumerate(presentes):
+        faixa = min(ordem, len(FAIXAS_DE_COMPETENCIA) - 1)
+        saida.append({"ano": ano, "mes": mes, "faixa": faixa,
+                      "competencia": "{:04d}-{:02d}".format(ano, mes)})
+    return saida
+
+
+def mascaras_de_faixa(faixas: Sequence[Mapping[str, Any]]) -> List[str]:
+    """As escolhas de faixa que fazem diferença nesta base.
+
+    Com uma competência só, as sete combinações possíveis dão todas o mesmo
+    resultado, e publicar sete arquivos idênticos seria desperdício — e um
+    seletor com sete opções que não mudam nada seria pior que não ter seletor.
+    Então só entram as máscaras que selecionam ao menos uma faixa **que existe**,
+    e quando existe uma faixa só a lista tem um item.
+    """
+    ocupadas = {f["faixa"] for f in faixas}
+    if len(ocupadas) <= 1:
+        return [FAIXAS_TODAS]
+    mascaras = []
+    for n in range(1, 8):
+        bits = "".join("1" if n & (1 << i) else "0" for i in range(3))
+        if {i for i in range(3) if bits[i] == "1"} & ocupadas:
+            mascaras.append(bits)
+    # "111" primeiro: é o padrão, e é o arquivo que o painel busca sem sufixo.
+    mascaras.sort(key=lambda m: (m != FAIXAS_TODAS, m))
+    return mascaras
+
+
+def competencia_por_ente(faixas: Sequence[Mapping[str, Any]], mascara: str,
+                         declaradas: Mapping[str, Sequence[tuple]]
+                         ) -> Dict[str, tuple]:
+    """A competência de cada ente, dentro das faixas que o leitor permitiu.
+
+    Para cada RPPS, a mais recente das competências dele que caia numa faixa
+    ligada. Quem não tem nenhuma fica **fora** do agregado — e isso é o ponto:
+    desligar a faixa mais recente tira do cálculo quem só declarou nela, em vez
+    de puxá-lo para um mês que ele não declarou.
+    """
+    permitidas = {(f["ano"], f["mes"]) for f in faixas
+                  if mascara[f["faixa"]] == "1"}
+    escolhida: Dict[str, tuple] = {}
+    for cnpj, competencias in declaradas.items():
+        validas = [c for c in competencias if c in permitidas]
+        if validas:
+            escolhida[cnpj] = max(validas)
+    return escolhida
+
+
+def _competencias_declaradas(store: Store) -> Dict[str, List[tuple]]:
+    """Que competências cada ente declarou na carteira."""
+    por_ente: Dict[str, List[tuple]] = defaultdict(list)
+    for linha in store.consultar(
+            "SELECT DISTINCT cnpj_ente, ano, mes FROM dair_carteira"
+            " WHERE ano IS NOT NULL AND mes IS NOT NULL"):
+        por_ente[linha["cnpj_ente"]].append((linha["ano"], linha["mes"]))
+    return por_ente
+
+
 def montar_dair_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                          fora: Optional[AbstractSet[str]] = None
                          ) -> Dict[str, Any]:
@@ -1142,7 +1241,8 @@ def _fechamento_da_cvm(store: Store) -> Dict[str, Dict[str, Any]]:
 def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                            fora: Optional[AbstractSet[str]] = None,
                            linhas_fora: Optional[AbstractSet[int]] = None,
-                           cotistas: Optional[Dict[str, Any]] = None
+                           cotistas: Optional[Dict[str, Any]] = None,
+                           mascara: str = FAIXAS_TODAS
                            ) -> Dict[str, Any]:
     """Todo ativo em que algum RPPS do país está investido, somado.
 
@@ -1174,13 +1274,14 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         "SELECT rowid AS rowid, cnpj_ente, ano, mes, segmento, tipo_ativo,"
         " identificacao_ativo, nome_ativo, valor_total, pl_fundo"
         " FROM dair_carteira")]
-    recente: Dict[str, tuple] = {}
+    # A competência de cada ente, dentro das faixas que o leitor permitiu. Com
+    # a máscara padrão é a mais recente dele, como sempre foi.
+    faixas = faixas_das_competencias(store)
+    declaradas: Dict[str, List[tuple]] = defaultdict(list)
     for linha in linhas:
-        cnpj, ano, mes = linha["cnpj_ente"], linha.get("ano"), linha.get("mes")
-        if ano is None or mes is None:
-            continue
-        if cnpj not in recente or (ano, mes) > recente[cnpj]:
-            recente[cnpj] = (ano, mes)
+        if linha.get("ano") is not None and linha.get("mes") is not None:
+            declaradas[linha["cnpj_ente"]].append((linha["ano"], linha["mes"]))
+    recente = competencia_por_ente(faixas, mascara, declaradas)
 
     da_cvm = _fechamento_da_cvm(store)
     agregado: Dict[tuple, Dict[str, Any]] = {}
@@ -1256,6 +1357,8 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         },
         "por_natureza": _carteira_por_natureza(por_ente, entes, fora),
         "cvm": _resumo_da_cvm(publicados, da_cvm),
+        "mascara": mascara,
+        "faixas": _descrever_faixas(faixas, mascara),
         "itens": publicados,
     }
     # Quem chamou pode querer a lista de cotistas, que vai em arquivo próprio.
@@ -1414,6 +1517,26 @@ def _resumo_da_cvm(itens: Sequence[Mapping[str, Any]],
         "pl_divergente": len(divergentes),
         "limiar_divergencia": DIVERGENCIA_DO_PL,
     }
+
+
+def _descrever_faixas(faixas: Sequence[Mapping[str, Any]],
+                      mascara: str) -> List[Dict[str, Any]]:
+    """As faixas como a tela precisa mostrá-las: rótulo, meses e se está ligada.
+
+    Os meses vão na etiqueta porque "a mais recente da base" não diz nada sem a
+    data ao lado — e porque a faixa mais antiga junta vários, e o leitor tem de
+    ver quais.
+    """
+    por_faixa: Dict[int, List[str]] = defaultdict(list)
+    for f in faixas:
+        por_faixa[f["faixa"]].append(f["competencia"])
+    return [{
+        "faixa": indice,
+        "rotulo": rotulo,
+        "competencias": sorted(por_faixa.get(indice, []), reverse=True),
+        "ligada": mascara[indice] == "1",
+        "existe": bool(por_faixa.get(indice)),
+    } for indice, rotulo in FAIXAS_DE_COMPETENCIA]
 
 
 def _oficial_da_cvm(ativo: Mapping[str, Any],
@@ -1655,7 +1778,8 @@ def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
 def montar_carteira_nacional(store: Store,
                              entes: Mapping[str, Dict[str, Any]],
                              fora: Optional[AbstractSet[str]] = None,
-                             linhas_fora: Optional[AbstractSet[int]] = None
+                             linhas_fora: Optional[AbstractSet[int]] = None,
+                             mascara: str = FAIXAS_TODAS
                              ) -> Dict[str, Any]:
     """Agregado nacional da carteira, com os recortes por grupo.
 
@@ -1679,16 +1803,34 @@ def montar_carteira_nacional(store: Store,
     linhas_fora = linhas_fora or frozenset()
     # A competência mais recente, e só ela: com duas no banco o patrimônio
     # nacional dobraria sem que um centavo tivesse sido aplicado.
-    if competencia.get("ano") is not None:
-        cru = store.consultar(
-            "SELECT rowid AS rowid, {} FROM dair_carteira "
-            "WHERE ano = ? AND mes = ?".format(colunas),
-            (competencia["ano"], competencia["mes"]))
-    else:
-        cru = store.consultar(
-            "SELECT rowid AS rowid, {} FROM dair_carteira".format(colunas))
-    linhas = [dict(linha) for linha in cru
-              if linha["rowid"] not in linhas_fora and linha["cnpj_ente"] not in fora]
+    # Uma competência por ente, escolhida dentro das faixas que o leitor
+    # permitiu. Com a máscara padrão o resultado é o de sempre: a competência de
+    # referência do país, que é a que quase todo mundo declarou. Desligando a
+    # faixa mais recente, quem só declarou nela sai do agregado em vez de ser
+    # puxado para um mês que não declarou.
+    faixas = faixas_das_competencias(store)
+    cru = store.consultar(
+        "SELECT rowid AS rowid, ano, mes, {} FROM dair_carteira".format(colunas))
+    todas = [dict(linha) for linha in cru
+             if linha["rowid"] not in linhas_fora and linha["cnpj_ente"] not in fora]
+    declaradas: Dict[str, List[tuple]] = defaultdict(list)
+    for linha in todas:
+        if linha.get("ano") is not None and linha.get("mes") is not None:
+            declaradas[linha["cnpj_ente"]].append((linha["ano"], linha["mes"]))
+    escolhida = competencia_por_ente(faixas, mascara, declaradas)
+    linhas = [l for l in todas
+              if (l.get("ano"), l.get("mes")) == escolhida.get(l["cnpj_ente"])]
+    # **Sempre** diz de que meses o total é feito, qualquer que seja a máscara.
+    # Calcular isso só quando a escolha não é a padrão produziu o pior caso
+    # possível por uma versão: o total já vinha de três competências e a etiqueta
+    # dizia uma. Um número misturado com rótulo de data única é pior que um
+    # número misturado assumido.
+    meses = sorted({"{:04d}-{:02d}".format(*c) for c in escolhida.values()},
+                   reverse=True)
+    competencia = dict(competencia, competencias_usadas=meses,
+                       varias=len(meses) > 1,
+                       competencia=meses[0] if len(meses) == 1
+                       else competencia.get("competencia"))
 
     total = sum(linha.get("valor_total") or 0.0 for linha in linhas)
 
@@ -1724,6 +1866,8 @@ def montar_carteira_nacional(store: Store,
         "disponivel": True,
         "nivel": nivel,
         "nivel_descricao": fundos.descrever_nivel(nivel),
+        "mascara": mascara,
+        "faixas": _descrever_faixas(faixas, mascara),
         "competencia": (execucao.get("filtros") and
                         json.loads(execucao["filtros"])) or {},
         "total": round(total, 2),
@@ -3488,6 +3632,12 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     linhas_fora = qual["linhas_excluidas"]
     marcas = qual["marcas"]
 
+    # As faixas de competência que esta base permite escolher. Com uma
+    # competência só a lista tem um item, e o seletor não aparece na tela: um
+    # controle com sete opções que não mudam nada é pior que nenhum controle.
+    faixas = faixas_das_competencias(store)
+    mascaras = mascaras_de_faixa(faixas)
+
     # Uma variante por combinação de chaves. São dezesseis agregados pequenos:
     # pré-calcular sai mais barato que reimplementar as somas em JavaScript, e
     # garante que o número da tela vem do mesmo código que os testes cobrem.
@@ -3495,8 +3645,14 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     for combinacao in qualidade.combinacoes():
         fora = qualidade.entes_fora(entes, marcas, combinacao)
         panoramas[combinacao] = montar_panorama(store, entes, fora)
-        carteiras[combinacao] = montar_carteira_nacional(
-            store, entes, fora, linhas_fora)
+        # Uma entrada por escolha de faixa de competência. São quatro quilobytes
+        # cada, então caber tudo num arquivo é mais simples que buscar por
+        # escolha — ao contrário da relação de ativos, que passa de um mega.
+        carteiras[combinacao] = {
+            mascara: montar_carteira_nacional(
+                store, entes, fora, linhas_fora, mascara)
+            for mascara in mascaras
+        }
         conformidades[combinacao] = montar_conformidade_nacional(
             store, entes, fora)
         militares[combinacao] = montar_militar_nacional(store, entes, fora)
@@ -3505,15 +3661,24 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
     # são milhares de linhas, e repeti-las nas dezesseis combinações de chaves
     # daria um arquivo grande que ninguém abre. A régua de qualidade das linhas
     # continua valendo — é o recorte por ente que não se multiplica aqui.
-    cotistas: Dict[str, Any] = {}
-    gerados = [
-        _gravar("ativos-nacional.json",
-                montar_ativos_nacional(store, entes, frozenset(), linhas_fora,
-                                       cotistas),
-                dir_saida),
+    # A relação de ativos em um arquivo por escolha de faixa. Arquivos separados
+    # porque cada um passa de um mega na base real, e o navegador busca só o que
+    # o leitor escolheu — repetir as sete escolhas dentro de um arquivo só faria
+    # toda visita baixar sete vezes o que ela usa uma.
+    gerados = []
+    for mascara in mascaras:
+        cotistas: Dict[str, Any] = {}
+        relacao = montar_ativos_nacional(store, entes, frozenset(), linhas_fora,
+                                         cotistas, mascara)
+        relacao["mascaras"] = mascaras
+        sufixo = "" if mascara == FAIXAS_TODAS else "-" + mascara
+        gerados.append(_gravar("ativos-nacional{}.json".format(sufixo),
+                               relacao, dir_saida))
         # Quem está em cada ativo. Arquivo próprio: 35.524 pares no país, e a
         # lista se abre um ativo por vez.
-        _gravar("ativos-cotistas.json", cotistas, dir_saida),
+        gerados.append(_gravar("ativos-cotistas{}.json".format(sufixo),
+                               cotistas, dir_saida))
+    gerados += [
         _gravar("dair-cobertura.json", {"variantes": {
             combinacao: montar_dair_nacional(
                 store, entes, qualidade.entes_fora(entes, marcas, combinacao))
