@@ -26,7 +26,7 @@ class TestPipeline(unittest.TestCase):
         with Store(cls.banco) as store:
             cls.resultado = ingest.ingerir_varios(cliente, store, [
                 "RPPS_REGIME_PREVIDENCIARIO", "RPPS_CRP", "RPPS_ALIQUOTA", "DIPR",
-                "DAIR_CARTEIRA", "DAIR_GOVERNANCA",
+                "DAIR_CARTEIRA", "DAIR_GOVERNANCA", "DAIR_IDENTIFICACAO",
                 "DRAA_ESTATISTICA", "DRAA_SEGREGACAO_MASSA",
                 "DRAA_FLUXO_ATUARIAL", "DRAA_VALORES_COMPROMISSOS",
                 "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO"])
@@ -748,6 +748,156 @@ class TestPipeline(unittest.TestCase):
         razao = ficha["indicadores"]["razao_ativos_inativos"]
         self.assertTrue(razao["disponivel"])
         self.assertLess(razao["p25"], razao["p75"])
+
+    # -------------------------------- cobertura do DAIR e ativos do país
+
+    def _cobertura(self):
+        from cadprev import qualidade
+        return (self._json("dair-cobertura.json")["variantes"]
+                [qualidade.chave_padrao()])
+
+    def test_universo_da_cobertura_e_quem_tem_rpps(self):
+        """Dividir por todo ente federativo faria a maior parte dos municípios
+        aparecer como inadimplente de um demonstrativo que não devem.
+
+        São 5.580 entes no cadastro de regime previdenciário e 2.132 com RPPS
+        em vigor em 07/10/2026 — a diferença é maior que o próprio universo.
+        """
+        indice = self._json("entes.json")
+        com_rpps = [e for e in indice if e.get("tem_rpps")]
+        self.assertLess(len(com_rpps), len(indice),
+                        "o demo precisa de ente sem RPPS, senão a regra não "
+                        "se distingue de contar todo mundo")
+
+        # A conferência usa a variante "0000", com o filtro "somente entes com
+        # RPPS vigente" DESLIGADO. É a única em que a regra aparece: na
+        # variante padrão o filtro já tirou esses entes, e o universo sairia
+        # certo mesmo sem a regra. Desligar o filtro muda quem o painel lista,
+        # não de quem o DAIR é exigido.
+        sem_filtro = self._json("dair-cobertura.json")["variantes"]["0000"]
+        self.assertEqual(sem_filtro["universo"], len(com_rpps))
+        self.assertEqual(sem_filtro["com_dair"] + sem_filtro["sem_dair"]["rpps"],
+                         sem_filtro["universo"])
+
+        c = self._cobertura()
+        self.assertLessEqual(c["universo"], len(com_rpps))
+        self.assertEqual(c["com_dair"] + c["sem_dair"]["rpps"], c["universo"])
+
+    def test_nunca_declarou_e_declarou_sem_carteira_sao_coisas_diferentes(self):
+        """Duas ausências, e uma é maior que a outra.
+
+        Quem nunca apareceu no DAIR não tem nem o cabeçalho mensal; quem
+        apareceu e não declarou carteira entregou o cabeçalho e nada mais.
+        Somar as duas numa só esconderia que a segunda é a maior.
+        """
+        c = self._cobertura()
+        self.assertTrue(c["sem_dair"]["rpps"],
+                        "o demo precisa de RPPS que nunca declarou")
+        self.assertTrue(c["sem_carteira"]["rpps"],
+                        "o demo precisa de RPPS sem carteira")
+        self.assertGreater(c["sem_carteira"]["rpps"], c["sem_dair"]["rpps"])
+        sem_dair = {e["cnpj"] for e in c["sem_dair"]["entes"]}
+        sem_carteira = {e["cnpj"] for e in c["sem_carteira"]["entes"]}
+        # Quem nunca declarou também não tem carteira: o primeiro conjunto está
+        # contido no segundo.
+        self.assertTrue(sem_dair <= sem_carteira)
+        self.assertEqual(len(c["sem_dair"]["entes"]), c["sem_dair"]["rpps"])
+
+    def test_faixas_de_atraso_somam_quem_tem_dair(self):
+        """E a régua é a competência de referência, não o mês de hoje.
+
+        A base é uma fotografia: enquanto a fonte estiver fora do ar ela não
+        envelhece sozinha, e medir contra o calendário faria todo RPPS parecer
+        mais atrasado a cada dia sem carga nova.
+        """
+        c = self._cobertura()
+        nacional = self._nacional("carteira-nacional.json")
+        self.assertEqual(c["referencia"], nacional["competencia"])
+        self.assertEqual(sum(f["rpps"] for f in c["faixas"]), c["com_dair"])
+        # Quem declarou adiantado entra na faixa "em dia": estar à frente da
+        # referência não é atraso.
+        em_dia = next(f for f in c["faixas"] if f["meses"] == 0)
+        adiantados = [e for e in em_dia["entes"] if e.get("adiantado")]
+        self.assertEqual(len(adiantados), c["adiantados"])
+        self.assertTrue(adiantados, "o demo precisa de quem declarou adiantado")
+        for e in adiantados:
+            self.assertGreater(e["competencia"], c["referencia"])
+
+    def test_ativo_do_pais_tem_as_tres_identidades_da_fonte(self):
+        """CNPJ nos fundos, sigla com vencimento nos títulos, nome no resto.
+
+        As três existem na base real — 3.327, 26 e 1.204 ativos em 07/10/2026 —
+        e cada uma identifica com força diferente. Publicar as três sob o mesmo
+        rótulo faria o leitor tratar um nome digitado à mão como registro.
+        """
+        a = self._json("ativos-nacional.json")
+        self.assertTrue(a["disponivel"])
+        tipos = {i["tipo_de_identidade"] for i in a["itens"]}
+        self.assertEqual(tipos, {"cnpj", "titulo", "nome"})
+        for i in a["itens"]:
+            if i["tipo_de_identidade"] == "cnpj":
+                self.assertEqual(len(i["identificacao"]), 14)
+            elif i["tipo_de_identidade"] == "titulo":
+                self.assertTrue(i["identificacao"].startswith(("NTN", "LFT", "LTN")))
+            else:
+                self.assertIsNone(i["identificacao"])
+        soma = sum(d["ativos"] for d in a["por_identidade"].values())
+        self.assertEqual(soma, a["ativos"])
+
+    def test_cnpj_junta_o_mesmo_fundo_declarado_por_varios_rpps(self):
+        """É o que torna a relação nacional uma relação, e não uma lista.
+
+        Os mesmos fundos aparecem em centenas de carteiras, e os RPPS escrevem
+        o nome de formas diferentes. Agrupar por nome os separaria; agrupar por
+        CNPJ os junta, que é o fato.
+        """
+        a = self._json("ativos-nacional.json")
+        compartilhados = [i for i in a["itens"]
+                          if i["tipo_de_identidade"] == "cnpj" and i["rpps"] > 1]
+        self.assertTrue(compartilhados,
+                        "nenhum fundo aparece em mais de um RPPS — sem isso o "
+                        "agrupamento por CNPJ não está provado")
+        for i in compartilhados:
+            # A maior posição isolada não pode ser o total: se fosse, o ativo
+            # estaria somando uma vez só e o "rpps" estaria errado.
+            self.assertLess(i["maior_posicao"], i["valor"] + 0.01)
+
+    def test_relacao_de_ativos_usa_o_ultimo_dair_de_cada_rpps(self):
+        """A pergunta é onde está o dinheiro, e para ela a posição mais recente
+        de cada um é a resposta mais fiel.
+
+        O total não pode ser a soma de todas as competências do banco: com três
+        no banco daria quase o triplo. E tem de bater com a soma das fichas,
+        que já leem a competência própria de cada ente.
+        """
+        a = self._json("ativos-nacional.json")
+        esperado = 0.0
+        competencias = set()
+        for ente in self._json("entes.json"):
+            c = (self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+                 .get("carteira") or {})
+            if not c.get("disponivel"):
+                continue
+            esperado += c["total"]
+            competencias.add(c["competencia"])
+        self.assertAlmostEqual(a["total"], round(esperado, 2), delta=1.0)
+        self.assertTrue(len(competencias) > 1,
+                        "o demo precisa de RPPS em competências diferentes")
+        self.assertEqual(set(a["competencias"]), competencias)
+
+    def test_linha_impossivel_nao_entra_na_relacao_nacional(self):
+        """A régua de qualidade vale aqui como vale no agregado.
+
+        Um painel que exclui um lançamento do total do país e o mantém na
+        relação de ativos publica dois números incompatíveis sobre o mesmo
+        fato — e, no caso da cota digitada com a vírgula deslocada, o ativo
+        envenenado lideraria a relação com 88% do total.
+        """
+        a = self._json("ativos-nacional.json")
+        nacional = self._nacional("carteira-nacional.json")
+        # O maior ativo não pode valer mais que o patrimônio do país.
+        self.assertLessEqual(a["itens"][0]["valor"], nacional["total"] + 1.0)
+        self.assertLessEqual(a["itens"][0]["perc"], 100.0)
 
     def test_norma_dos_investimentos_vem_de_um_lugar_so(self):
         """O painel não mantém tabela de limites — quem declara o teto de cada

@@ -25,8 +25,8 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import AbstractSet, Any, Dict, List, Mapping, Optional, Sequence
 
-from . import (ativos, benchmark, codigos, distribuicao, fundos, grupos,
-               massas, qualidade)
+from . import (ativos, benchmark, codigos, competencia as competencia_mod,
+               distribuicao, fundos, grupos, massas, qualidade)
 from .store import Store
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -994,6 +994,211 @@ def montar_atuaria_nacional(fichas: Mapping[str, Mapping[str, Any]],
                 presentes, frozenset(),
                 lambda f: _somar(f, "ativos_garantidores", militar=True)),
         },
+    }
+
+
+#: Tamanho máximo da lista de ativos que o painel publica. Em 07/10/2026 o país
+#: inteiro cabia em 4.557 ativos distintos; o teto existe para que uma carga
+#: futura com dez vezes isso não produza um arquivo que ninguém baixa.
+TETO_DA_LISTA_DE_ATIVOS = 20000
+
+
+def montar_dair_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
+                         fora: Optional[AbstractSet[str]] = None
+                         ) -> Dict[str, Any]:
+    """Quem declara o DAIR, quem não declara, e há quanto tempo cada um parou.
+
+    Três perguntas que o painel respondia por ente e não respondia pelo país:
+    quantos RPPS nunca aparecem no DAIR, quantos estão em dia e quantos estão
+    atrasados — e por quanto.
+
+    **O universo é quem tem RPPS vigente**, não todo ente federativo. São 5.580
+    entes no cadastro de regime previdenciário e 2.132 com RPPS em vigor em
+    07/10/2026; dividir pelo total faria 60% dos municípios brasileiros
+    aparecerem como inadimplentes de um demonstrativo que eles não devem.
+
+    **A régua é a competência de referência da base, não o mês de hoje.** A
+    base é uma fotografia: enquanto a fonte estiver fora do ar ela não envelhece
+    sozinha, e medir a defasagem contra o calendário faria todo RPPS parecer
+    mais atrasado a cada dia que passa sem nova carga. A tela diz qual é a
+    referência.
+    """
+    if not store.tem_tabela("DAIR_IDENTIFICACAO"):
+        return {"disponivel": False}
+    fora = fora or frozenset()
+
+    universo = {cnpj: dados for cnpj, dados in entes.items()
+                if dados.get("tem_rpps") and cnpj not in fora}
+    if not universo:
+        return {"disponivel": False}
+
+    declaradas = competencia_mod.ultima_de_cada(
+        dict(l) for l in store.consultar(
+            "SELECT cnpj_ente, ano, mes FROM dair_identificacao "
+            "WHERE ano IS NOT NULL AND mes IS NOT NULL"))
+    com_carteira = {l["cnpj_ente"] for l in store.consultar(
+        "SELECT DISTINCT cnpj_ente FROM dair_carteira")}
+    referencia = _competencias_do_dair(store)
+    ref_ano, ref_mes = referencia.get("ano"), referencia.get("mes")
+
+    def _ficha(cnpj):
+        d = universo[cnpj]
+        return {"cnpj": cnpj, "ente": d.get("ente"), "uf": d.get("uf"),
+                "esfera": d.get("esfera")}
+
+    sem_dair, faixas = [], {}
+    for cnpj in universo:
+        ultima = declaradas.get(cnpj)
+        if ultima is None:
+            sem_dair.append(_ficha(cnpj))
+            continue
+        if ref_ano is None:
+            continue
+        atraso = (ref_ano * 12 + ref_mes) - (ultima[0] * 12 + ultima[1])
+        # Negativo é quem declarou adiantado: entra na faixa "em dia", porque
+        # estar à frente da referência não é atraso.
+        chave = max(atraso, 0)
+        faixas.setdefault(chave, []).append(dict(
+            _ficha(cnpj),
+            competencia="{:04d}-{:02d}".format(ultima[0], ultima[1]),
+            adiantado=atraso < 0))
+
+    def _faixa(chave, rotulo):
+        lista = sorted(faixas.get(chave, []), key=lambda d: (d["uf"] or "", d["ente"] or ""))
+        return {"meses": chave, "rotulo": rotulo, "rpps": len(lista),
+                "perc": _pct(len(lista), len(universo)), "entes": lista}
+
+    atrasados_longos = sorted(
+        (d for chave, lista in faixas.items() if chave > 2 for d in lista),
+        key=lambda d: (d["competencia"], d["uf"] or "", d["ente"] or ""))
+    detalhadas = [
+        _faixa(0, "Em dia com a competência de referência"),
+        _faixa(1, "Um mês atrás da referência"),
+        _faixa(2, "Dois meses atrás da referência"),
+        {"meses": 3, "rotulo": "Mais de dois meses atrás da referência",
+         "rpps": len(atrasados_longos),
+         "perc": _pct(len(atrasados_longos), len(universo)),
+         "entes": atrasados_longos},
+    ]
+
+    sem_dair.sort(key=lambda d: (d["uf"] or "", d["ente"] or ""))
+    sem_carteira = sorted(
+        (_ficha(c) for c in universo if c not in com_carteira),
+        key=lambda d: (d["uf"] or "", d["ente"] or ""))
+    return {
+        "disponivel": True,
+        "universo": len(universo),
+        "referencia": referencia.get("competencia"),
+        "com_dair": len(universo) - len(sem_dair),
+        "perc_com_dair": _pct(len(universo) - len(sem_dair), len(universo)),
+        # Duas ausências diferentes: nunca apareceu no DAIR, e apareceu sem
+        # declarar carteira. A segunda é maior e não é a mesma coisa.
+        "sem_dair": {"rpps": len(sem_dair),
+                     "perc": _pct(len(sem_dair), len(universo)),
+                     "entes": sem_dair},
+        "sem_carteira": {"rpps": len(sem_carteira),
+                         "perc": _pct(len(sem_carteira), len(universo)),
+                         "entes": sem_carteira},
+        "adiantados": sum(1 for d in faixas.get(0, []) if d["adiantado"]),
+        "faixas": detalhadas,
+    }
+
+
+def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
+                           fora: Optional[AbstractSet[str]] = None,
+                           linhas_fora: Optional[AbstractSet[int]] = None
+                           ) -> Dict[str, Any]:
+    """Todo ativo em que algum RPPS do país está investido, somado.
+
+    **O último DAIR de cada ente, não uma competência comum.** A pergunta aqui
+    é "onde está o dinheiro dos RPPS", e para ela a posição mais recente de
+    cada um é a resposta mais fiel — diferente do comparativo entre RPPS, que
+    precisa de data única para não medir o tempo entre as declarações.
+
+    A identidade do ativo é o problema central, e a fonte dá três respostas
+    diferentes:
+
+    * **fundo**: ``identificacao_ativo`` é o CNPJ, e é ele que identifica. Dois
+      RPPS que declaram o mesmo CNPJ estão no mesmo fundo, ainda que escrevam o
+      nome de formas diferentes — e escrevem.
+    * **título público**: não há CNPJ. A identidade é a sigla com o vencimento
+      (``NTN-B 15/08/2045``), lida da descrição por ``cadprev.ativos``. Quem não
+      declarou vencimento entra na linha da sigla sem data, e a tela diz isso.
+    * **o resto**: nem CNPJ nem sigla — CDB, poupança, imóvel, consignado
+      descritos em texto livre. Em 07/10/2026 eram 1.204 ativos e 6,3% do total.
+      Agrupar por texto normalizado é o que a fonte permite, e a tela marca
+      essas linhas como identificadas só pelo nome.
+    """
+    if not store.tem_tabela("DAIR_CARTEIRA"):
+        return {"disponivel": False}
+    fora = fora or frozenset()
+    linhas_fora = linhas_fora or frozenset()
+
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT rowid AS rowid, cnpj_ente, ano, mes, segmento, tipo_ativo,"
+        " identificacao_ativo, nome_ativo, valor_total, pl_fundo"
+        " FROM dair_carteira")]
+    recente: Dict[str, tuple] = {}
+    for linha in linhas:
+        cnpj, ano, mes = linha["cnpj_ente"], linha.get("ano"), linha.get("mes")
+        if ano is None or mes is None:
+            continue
+        if cnpj not in recente or (ano, mes) > recente[cnpj]:
+            recente[cnpj] = (ano, mes)
+
+    agregado: Dict[tuple, Dict[str, Any]] = {}
+    competencias: Dict[str, int] = defaultdict(int)
+    for linha in linhas:
+        cnpj = linha["cnpj_ente"]
+        if (cnpj in fora or linha["rowid"] in linhas_fora
+                or (linha.get("ano"), linha.get("mes")) != recente.get(cnpj)):
+            continue
+        chave, dados = ativos.identidade(linha)
+        alvo = agregado.setdefault(chave, dict(
+            dados, valor=0.0, entes=set(), maior_posicao=0.0))
+        valor = linha.get("valor_total") or 0.0
+        alvo["valor"] += valor
+        alvo["entes"].add(cnpj)
+        alvo["maior_posicao"] = max(alvo["maior_posicao"], valor)
+        competencias["{:04d}-{:02d}".format(*recente[cnpj])] += 1
+
+    if not agregado:
+        return {"disponivel": False}
+    total = sum(a["valor"] for a in agregado.values())
+    itens = sorted(agregado.values(), key=lambda a: -a["valor"])
+    publicados = [{
+        "nome": a["nome"],
+        "identificacao": a["identificacao"],
+        "tipo_de_identidade": a["tipo_de_identidade"],
+        "vencimento": a.get("vencimento"),
+        "segmento": a["segmento"],
+        "classe": a["classe"],
+        "valor": round(a["valor"], 2),
+        "perc": _pct(a["valor"], total),
+        "rpps": len(a["entes"]),
+        "maior_posicao": round(a["maior_posicao"], 2),
+    } for a in itens[:TETO_DA_LISTA_DE_ATIVOS]]
+
+    por_identidade = defaultdict(lambda: {"ativos": 0, "valor": 0.0})
+    for a in itens:
+        alvo = por_identidade[a["tipo_de_identidade"]]
+        alvo["ativos"] += 1
+        alvo["valor"] += a["valor"]
+    return {
+        "disponivel": True,
+        "ativos": len(agregado),
+        "publicados": len(publicados),
+        "total": round(total, 2),
+        "rpps": len(recente),
+        # A base pode ter cada ente numa competência diferente: a tela precisa
+        # dizer de quantas competências o total é feito.
+        "competencias": sorted(competencias),
+        "por_identidade": {
+            chave: {"ativos": d["ativos"], "valor": round(d["valor"], 2),
+                    "perc": _pct(d["valor"], total)}
+            for chave, d in por_identidade.items()
+        },
+        "itens": publicados,
     }
 
 
@@ -3006,7 +3211,19 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
             store, entes, fora)
         militares[combinacao] = montar_militar_nacional(store, entes, fora)
 
+    # A relação nacional de ativos vai em arquivo próprio e numa variante só:
+    # são milhares de linhas, e repeti-las nas dezesseis combinações de chaves
+    # daria um arquivo grande que ninguém abre. A régua de qualidade das linhas
+    # continua valendo — é o recorte por ente que não se multiplica aqui.
     gerados = [
+        _gravar("ativos-nacional.json",
+                montar_ativos_nacional(store, entes, frozenset(), linhas_fora),
+                dir_saida),
+        _gravar("dair-cobertura.json", {"variantes": {
+            combinacao: montar_dair_nacional(
+                store, entes, qualidade.entes_fora(entes, marcas, combinacao))
+            for combinacao in qualidade.combinacoes()
+        }}, dir_saida),
         _gravar("panorama.json", {"variantes": panoramas}, dir_saida),
         _gravar("carteira-nacional.json", {"variantes": carteiras}, dir_saida),
         _gravar("conformidade.json", {"variantes": conformidades}, dir_saida),

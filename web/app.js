@@ -22,7 +22,16 @@
                  // pergunta que a tela responde é "quanto tenho em cada
                  // classe", e a lista solta só responde "o que tenho".
                  ordemAtivos: { campo: "valor", desc: true },
-                 agruparAtivos: true };
+                 agruparAtivos: true,
+                 // Relação nacional de ativos: ordem, agrupamento e filtro.
+                 // Separados do estado da carteira de um ente porque são duas
+                 // telas, e levar o filtro de uma para a outra esconderia
+                 // linhas sem que o leitor tivesse pedido.
+                 ordemNacional: { campo: "valor", desc: true },
+                 agruparNacional: false,
+                 buscaAtivo: "",
+                 // Qual lista de entes está aberta no quadro de cobertura.
+                 listaDeEntes: null };
   var conteudo = document.getElementById("conteudo");
 
   // ------------------------------------------------------------ utilidades
@@ -3600,11 +3609,341 @@
     });
   }
 
+  // ------------------------------------- aba: investimentos do país
+
+  /* Filtro de texto sobre a relação de ativos. Casa no nome, no CNPJ, na
+   * classe e no segmento, sem acento e sem caixa: quem procura "cdb" acha
+   * "CDB", quem cola um CNPJ com pontuação acha o fundo, e quem digita
+   * "ntnb" acha "NTN-B". */
+  function filtrarAtivos(itens, busca) {
+    var termo = semAcento(String(busca || "").trim());
+    if (!termo) return itens;
+    var digitos = termo.replace(/\D/g, "");
+    return itens.filter(function (i) {
+      var alvo = semAcento([i.nome, i.classe, i.segmento,
+                            i.identificacao || "", i.vencimento || ""].join(" "))
+        .replace(/-/g, "");
+      if (alvo.indexOf(termo.replace(/-/g, "")) >= 0) return true;
+      // CNPJ: compara só os dígitos, para aceitar colado com pontuação.
+      return digitos.length >= 6 && (i.identificacao || "")
+        .replace(/\D/g, "").indexOf(digitos) >= 0;
+    });
+  }
+
+  var ORDENS_NACIONAIS = {
+    nome: { texto: function (i) { return i.nome || ""; } },
+    classe: { texto: function (i) { return i.classe || ""; } },
+    identificacao: { texto: function (i) { return i.identificacao || ""; } },
+    valor: { numero: function (i) { return i.valor; } },
+    perc: { numero: function (i) { return i.perc; } },
+    rpps: { numero: function (i) { return i.rpps; } },
+    maior: { numero: function (i) { return i.maior_posicao; } }
+  };
+
+  function ordenarPor(itens, regras, campo, desc) {
+    var regra = regras[campo] || regras.valor;
+    var sinal = desc ? -1 : 1;
+    return itens.slice().sort(function (a, b) {
+      if (regra.texto) {
+        return sinal * semAcento(regra.texto(a)).localeCompare(semAcento(regra.texto(b)));
+      }
+      var x = regra.numero(a), y = regra.numero(b);
+      var faltaX = x === null || x === undefined, faltaY = y === null || y === undefined;
+      if (faltaX || faltaY) return faltaX && faltaY ? 0 : (faltaX ? 1 : -1);
+      return sinal * (x - y);
+    });
+  }
+
+  function colunaNacional(titulo, campo, numerica) {
+    var atual = estado.ordemNacional;
+    return {
+      t: titulo, n: numerica,
+      ordem: atual.campo === campo ? (atual.desc ? "desc" : "asc") : null,
+      ordenar: function () {
+        estado.ordemNacional = atual.campo === campo
+          ? { campo: campo, desc: !atual.desc }
+          : { campo: campo, desc: !!numerica };
+        render();
+      }
+    };
+  }
+
+  var ROTULO_DA_IDENTIDADE = {
+    cnpj: "CNPJ do fundo", titulo: "título público", nome: "só pelo nome"
+  };
+
+  function celulasDoAtivoNacional(i) {
+    var sub = i.tipo_de_identidade === "cnpj" ? formatarCnpj(i.identificacao)
+      : (i.tipo_de_identidade === "titulo"
+          ? (i.vencimento ? "vence em " + data(i.vencimento)
+                          : "vencimento não declarado na fonte")
+          : "sem CNPJ na fonte");
+    return [
+      h("td", { class: "nome-ativo" }, [
+        h("div", { texto: i.nome }),
+        h("div", { class: "nota", texto: sub })
+      ]),
+      h("td", { texto: classeCurta(i.classe), title: i.classe || "" }),
+      h("td", { class: "n", texto: reais(i.valor) }),
+      h("td", { class: "n", texto: pct(i.perc, 2) }),
+      h("td", { class: "n", texto: num(i.rpps, 0) }),
+      h("td", { class: "n", texto: reais(i.maior_posicao) })
+    ];
+  }
+
+  function formatarCnpj(d) {
+    var s = String(d || "").replace(/\D/g, "");
+    if (s.length !== 14) return s || "—";
+    return s.slice(0, 2) + "." + s.slice(2, 5) + "." + s.slice(5, 8) +
+           "/" + s.slice(8, 12) + "-" + s.slice(12);
+  }
+
+  function abaInvestimentos() {
+    return Promise.all([
+      buscar("ativos-nacional.json"),
+      nacional("dair-cobertura.json")
+    ]).then(function (r) {
+      var a = r[0], c = r[1];
+      var nos = [h("h2", { class: "secao", texto: "Investimentos do país" })];
+      if (c && c.disponivel) nos = nos.concat(quadroDeCobertura(c));
+      if (a && a.disponivel) nos = nos.concat(quadroDeAtivos(a));
+      if (nos.length === 1) nos.push(semDado("investimentos", "DAIR_CARTEIRA"));
+      return nos;
+    });
+  }
+
+  /* Quem declara, quem não declara e há quanto tempo cada um parou. A régua é a
+   * competência de referência da base e não o mês de hoje: a base é uma
+   * fotografia, e medir contra o calendário faria todo RPPS parecer mais
+   * atrasado a cada dia sem carga nova. */
+  function quadroDeCobertura(c) {
+    var ref = competencia(c.referencia) || "—";
+    var nos = [
+      h("p", { class: "intro", texto:
+        "Cobertura do DAIR entre os " + num(c.universo, 0) + " RPPS em vigor. " +
+        "O universo é quem tem regime próprio vigente, não todo ente " +
+        "federativo: dividir pelo total faria a maior parte dos municípios " +
+        "aparecer como inadimplente de um demonstrativo que não devem. A " +
+        "defasagem é medida contra a competência de referência da base (" +
+        ref + "), não contra o mês corrente." }),
+      h("div", { class: "kpis" }, [
+        kpi("RPPS que declaram o DAIR", num(c.com_dair, 0),
+          pct(c.perc_com_dair, 1) + " dos " + num(c.universo, 0) + " em vigor"),
+        kpi("Nunca declararam", num(c.sem_dair.rpps, 0),
+          pct(c.sem_dair.perc, 1) + " do universo",
+          c.sem_dair.rpps ? "ruim" : "bom"),
+        kpi("Sem carteira declarada", num(c.sem_carteira.rpps, 0),
+          pct(c.sem_carteira.perc, 1) + " · inclui quem declarou só o cabeçalho",
+          c.sem_carteira.rpps ? "alerta" : "bom"),
+        kpi("Declararam adiantado", num(c.adiantados, 0),
+          "à frente de " + ref, "bom")
+      ])
+    ];
+
+    nos.push(cartao("Há quanto tempo cada RPPS declarou", "DAIR_IDENTIFICACAO",
+      "Contra a competência de referência da base (" + ref + ") · clique para " +
+      "ver quais são",
+      tabela([{ t: "Situação" }, { t: "RPPS", n: true }, { t: "% do universo", n: true },
+              { t: "" }],
+        c.faixas.map(function (f) {
+          return h("tr", {}, [
+            h("td", { texto: f.rotulo }),
+            h("td", { class: "n", texto: num(f.rpps, 0) }),
+            h("td", { class: "n", texto: pct(f.perc, 1) }),
+            h("td", {}, [f.rpps ? botaoDeLista("faixa-" + f.meses, f.rotulo,
+                                               f.entes) : null])
+          ]);
+        }).concat([
+          linhaTotal("Total com DAIR", [num(c.com_dair, 0),
+            pct(c.perc_com_dair, 1), ""]),
+          h("tr", {}, [
+            h("td", { texto: "Nunca declararam o DAIR" }),
+            h("td", { class: "n ruim", texto: num(c.sem_dair.rpps, 0) }),
+            h("td", { class: "n", texto: pct(c.sem_dair.perc, 1) }),
+            h("td", {}, [c.sem_dair.rpps
+              ? botaoDeLista("sem-dair", "RPPS que nunca declararam o DAIR",
+                             c.sem_dair.entes) : null])
+          ]),
+          h("tr", {}, [
+            h("td", { texto: "Sem carteira declarada" }),
+            h("td", { class: "n alerta", texto: num(c.sem_carteira.rpps, 0) }),
+            h("td", { class: "n", texto: pct(c.sem_carteira.perc, 1) }),
+            h("td", {}, [c.sem_carteira.rpps
+              ? botaoDeLista("sem-carteira", "RPPS sem carteira declarada",
+                             c.sem_carteira.entes) : null])
+          ])
+        ]))));
+
+    var aberta = estado.listaDeEntes;
+    if (aberta) nos.push(listaDeEntes(aberta));
+    return nos;
+  }
+
+  function botaoDeLista(chave, rotulo, entes) {
+    var aberta = estado.listaDeEntes && estado.listaDeEntes.chave === chave;
+    return h("button", {
+      class: "link limpar",
+      texto: aberta ? "fechar a lista" : "listar os " + num(entes.length, 0),
+      onclick: function () {
+        estado.listaDeEntes = aberta ? null
+          : { chave: chave, rotulo: rotulo, entes: entes };
+        render();
+      }
+    });
+  }
+
+  function listaDeEntes(aberta) {
+    return cartao(aberta.rotulo, "DAIR_IDENTIFICACAO · RPPS_REGIME_PREVIDENCIARIO",
+      num(aberta.entes.length, 0) + " RPPS · clique no nome para abrir a ficha",
+      [tabela([{ t: "Ente" }, { t: "UF" }, { t: "Esfera" },
+               { t: "Última competência" }],
+        aberta.entes.map(function (e) {
+          return h("tr", {}, [
+            h("td", {}, [h("button", {
+              class: "link limpar", texto: e.ente || "—",
+              onclick: function () { irParaAba("carteira", e.cnpj); }
+            })]),
+            h("td", { texto: e.uf || "—" }),
+            h("td", { texto: e.esfera || "—" }),
+            h("td", { texto: e.competencia
+              ? (competencia(e.competencia) || e.competencia) +
+                (e.adiantado ? " (adiantado)" : "")
+              : "nunca declarou" })
+          ]);
+        }), true),
+       h("button", { class: "link limpar", texto: "fechar a lista",
+                     onclick: function () {
+                       estado.listaDeEntes = null; render();
+                     } })]);
+  }
+
+  /* A relação nacional de ativos. Mesmo modelo da carteira detalhada de um
+   * ente — agrupar por classe ou lista única, colunas ordenáveis — e um filtro,
+   * porque quatro mil linhas não se navegam rolando. */
+  function quadroDeAtivos(a) {
+    var filtrados = filtrarAtivos(a.itens, estado.buscaAtivo);
+    var ordem = estado.ordemNacional;
+    var colunas = [
+      colunaNacional("Ativo", "nome", false),
+      colunaNacional("Classe", "classe", false),
+      colunaNacional("Valor investido", "valor", true),
+      colunaNacional("% do total", "perc", true),
+      colunaNacional("RPPS", "rpps", true),
+      colunaNacional("Maior posição", "maior", true)
+    ];
+
+    var linhas = [];
+    if (estado.agruparNacional) {
+      var porClasse = {};
+      filtrados.forEach(function (i) {
+        var k = (i.segmento || "—") + " \u00b7 " + (i.classe || "—");
+        (porClasse[k] = porClasse[k] || { itens: [], valor: 0, perc: 0,
+                                          classe: i.classe, segmento: i.segmento })
+          .itens.push(i);
+        porClasse[k].valor += i.valor;
+        porClasse[k].perc += i.perc;
+      });
+      Object.keys(porClasse).map(function (k) { return porClasse[k]; })
+        .sort(function (x, y) { return y.valor - x.valor; })
+        .forEach(function (g) {
+          linhas.push(h("tr", { class: "grupo" }, [
+            h("td", { colspan: 2 }, [
+              h("b", { texto: classeCurta(g.classe) }),
+              h("span", { class: "nota", texto: " " + (g.segmento || "") + " · " +
+                          num(g.itens.length, 0) + " ativos" })
+            ]),
+            h("td", { class: "n", texto: reais(g.valor) }),
+            h("td", { class: "n", texto: pct(g.perc, 2) }),
+            h("td", {}), h("td", {})
+          ]));
+          ordenarPor(g.itens, ORDENS_NACIONAIS, ordem.campo, ordem.desc)
+            .forEach(function (i) {
+              linhas.push(h("tr", { class: "do-grupo" }, celulasDoAtivoNacional(i)));
+            });
+        });
+    } else {
+      ordenarPor(filtrados, ORDENS_NACIONAIS, ordem.campo, ordem.desc)
+        .forEach(function (i) {
+          linhas.push(h("tr", {}, celulasDoAtivoNacional(i)));
+        });
+    }
+
+    var somaFiltrada = filtrados.reduce(function (x, i) { return x + i.valor; }, 0);
+    linhas.push(linhaTotal(
+      filtrados.length === a.itens.length
+        ? "Total de " + num(a.itens.length, 0) + " ativos"
+        : num(filtrados.length, 0) + " de " + num(a.itens.length, 0) + " ativos",
+      [reais(somaFiltrada),
+       pct(a.total ? somaFiltrada / a.total * 100 : 0, 2), "", ""]));
+
+    var campo = h("input", {
+      type: "search", class: "filtro-ativo", value: estado.buscaAtivo,
+      placeholder: "Filtrar por nome, CNPJ, classe ou vencimento…",
+      "aria-label": "Filtrar a relação de ativos"
+    });
+    campo.addEventListener("input", function () {
+      estado.buscaAtivo = campo.value;
+      render();
+      // O render recria o campo: devolve o foco e o cursor ao fim, senão
+      // digitar a segunda letra exige clicar de novo.
+      var novo = document.querySelector(".filtro-ativo");
+      if (novo) { novo.focus(); novo.setSelectionRange(novo.value.length, novo.value.length); }
+    });
+
+    var ident = a.por_identidade || {};
+    return [
+      h("h3", { class: "secao", texto: "Todos os ativos do país" }),
+      h("p", { class: "intro", texto:
+        "Cada ativo em que algum RPPS está investido, somado, pelo último DAIR " +
+        "de cada um. A identidade do ativo vem da fonte e tem três formas: o " +
+        "CNPJ, nos fundos; a sigla com o vencimento, nos títulos públicos; e " +
+        "só o nome no que não tem nenhum dos dois — CDB, poupança, imóvel, " +
+        "conta corrente." }),
+      h("div", { class: "kpis" }, [
+        kpi("Ativos distintos", num(a.ativos, 0),
+          num(a.rpps, 0) + " RPPS declararam carteira"),
+        kpi("Valor somado", reais(a.total), "pelo último DAIR de cada RPPS"),
+        kpi("Identificados por CNPJ", num((ident.cnpj || {}).ativos, 0),
+          pct((ident.cnpj || {}).perc, 1) + " do valor"),
+        kpi("Identificados só pelo nome", num((ident.nome || {}).ativos, 0),
+          pct((ident.nome || {}).perc, 1) + " do valor · sem CNPJ na fonte",
+          "alerta")
+      ]),
+      cartao("Todos os ativos", "DAIR_CARTEIRA",
+        num(a.ativos, 0) + " ativos" +
+        (a.competencias.length > 1
+          ? " · competências de " + a.competencias[0] + " a " +
+            a.competencias[a.competencias.length - 1] +
+            ", uma por RPPS"
+          : " · competência " + (a.competencias[0] || "—")) +
+        " · clique no título da coluna para ordenar" +
+        (estado.agruparNacional ? " dentro de cada classe" : ""),
+        [h("div", { class: "contexto" }, [
+          campo,
+          h("button", {
+            class: "link limpar",
+            texto: estado.agruparNacional ? "ver como lista única"
+                                          : "agrupar por classe de ativo",
+            onclick: function () {
+              estado.agruparNacional = !estado.agruparNacional;
+              render();
+            }
+          }),
+          estado.buscaAtivo ? h("button", {
+            class: "link limpar", texto: "limpar o filtro",
+            onclick: function () { estado.buscaAtivo = ""; render(); }
+          }) : null
+        ].filter(Boolean)),
+         tabela(colunas, linhas, "extra")])
+    ];
+  }
+
   var ABAS = {
     panorama: abaPanorama, ficha: abaFicha, caixa: abaCaixa,
     carteira: abaCarteiraEnte, atuaria: abaAtuaria,
     comparativo: abaComparativo, conformidade: abaConformidade,
     militares: abaMilitares, qualidade: abaQualidade,
+    investimentos: abaInvestimentos,
     "carteira-detalhe": abaCarteiraDetalhe,
     ajuda: abaAjuda
   };

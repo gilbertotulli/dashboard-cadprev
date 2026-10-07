@@ -96,8 +96,15 @@ _CLASSES = [
     ("Fundos Imobiliários", "Fundo/Classe de Investimento Imobiliário  art. 11", 20.0, 0.02),
     ("Empréstimos Consignados", "Empréstimos Consignados  art. 12", 5.0, 0.005),
     ("Imóveis", "Imóveis  art. 13", None, 0.02),
+    ("Renda Fixa", "Depósitos em Poupança  Art. 7° V", 20.0, 0.015),
     ("Disponibilidades Financeiras", None, None, 0.045),
 ]
+
+#: Classes cujo ativo a fonte descreve só pelo nome, sem CNPJ e sem sigla de
+#: título: conta corrente, poupança, imóvel. São 1.204 dos 4.557 ativos
+#: nacionais em 07/10/2026 — 6,3% do valor —, e sem elas a relação nacional de
+#: ativos não testaria a terceira forma de identidade que a fonte usa.
+_CLASSES_SEM_CNPJ = ("Conta corrente", "Depósitos em Poupança", "Imóveis")
 
 #: Entes que declaram imóveis na carteira. Só 57 dos 857 RPPS confrontáveis
 #: fazem isso em 22/09/2026, e a amostra reproduz os dois comportamentos que a
@@ -268,6 +275,15 @@ _ENTES_CRP_ANTIGO = frozenset({2, 9})
 #: mas não têm RPPS. São 3.411 no país, e contá-los como RPPS inflava todo
 #: denominador nacional.
 _ENTES_SEM_RPPS = frozenset({7, 13, 19})
+
+#: Entes que têm RPPS em vigor e nunca aparecem no DAIR. São 109 dos 2.132 com
+#: RPPS vigente em 07/10/2026 — 5,1% —, e são diferentes dos que aparecem no
+#: DAIR sem declarar carteira. Sem eles, o quadro de cobertura nacional diria
+#: "100% declaram" e não provaria que sabe contar a ausência.
+#: Índices escolhidos fora dos usados pelos outros casos do demo: o ente sem
+#: DAIR não tem carteira, e o Anexo 04 da amostra é derivado dela — colidir com
+#: o ente de saldo parcial apagava aquele caso sem que nada dissesse por quê.
+_ENTES_SEM_DAIR = frozenset({21, 26, 34})
 
 _ULTIMO_DIA = {1: 31, 2: 28, 3: 31, 4: 30, 5: 31, 6: 30,
                7: 31, 8: 31, 9: 30, 10: 31, 11: 30, 12: 31}
@@ -481,6 +497,8 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
             competencias.insert(0, MES_DAIR + 1)
         if indice in _ENTES_DEFASADOS:
             competencias = [] if indice == _ENTE_SO_CABECALHO else [2]
+        if indice in _ENTES_SEM_DAIR:
+            competencias = []
         for competencia in competencias:
             # A carteira se move de um mês para o outro; o que não muda é a
             # identidade quantidade × cota = valor total.
@@ -491,8 +509,13 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
                           else rnd.randint(1, 3))
                 for n in range(ativos):
                     valor = valor_classe / ativos
-                    if "Títulos Públicos" in (classe or ""):
+                    rotulo_da_classe = classe or "Conta corrente"
+                    if "Títulos Públicos" in rotulo_da_classe:
                         fundo_id, fundo_nome = _titulo_publico(ordem * 4 + n)
+                    elif rotulo_da_classe.startswith(_CLASSES_SEM_CNPJ):
+                        # Sem CNPJ: a identidade do ativo é só o nome.
+                        fundo_id, fundo_nome = None, "{} — {}".format(
+                            rotulo_da_classe.split("  ")[0], nome[:18])
                     else:
                         fundo_id, fundo_nome = _fundo(segmento, ordem * 4 + n)
                     # Conta e caixa não têm PL; fundo tem, e é sempre maior que
@@ -535,6 +558,10 @@ def gerar(nivel_a: bool = False, semente: int = 20260914) -> Dict[str, List[Dict
         # posição envelhecendo.
         ultimo_mes = (2 if indice in _ENTES_DEFASADOS
                       else MES_DAIR + (1 if indice in _ENTES_ADIANTADOS else 0))
+        # Quem nunca declarou não tem nem cabeçalho: é ausência de DAIR, e não
+        # DAIR vazio. A diferença é o que o quadro de cobertura mede.
+        if indice in _ENTES_SEM_DAIR:
+            ultimo_mes = 0
         for mes in range(1, ultimo_mes + 1):
             tabelas["DAIR_IDENTIFICACAO"].append(dict(
                 ident, dt_ano=ANO, dt_mes=mes,

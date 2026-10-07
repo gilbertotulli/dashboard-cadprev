@@ -693,6 +693,69 @@ atuarial de longo prazo. Mostrá-las ao lado do resultado atuarial é decisão d
 conteúdo, não correção de defeito, e está esperando quem entende do assunto
 dizer se cabe na mesma tela ou em outra.
 
+## Investimentos do país: cobertura do DAIR e a relação de ativos
+
+Aba própria, e as duas perguntas que ela responde não tinham resposta nacional.
+
+### Quem declara, e há quanto tempo
+
+**O universo é quem tem RPPS vigente**, não todo ente federativo: são 5.580
+entes no cadastro de regime previdenciário e 2.132 com RPPS em vigor em
+07/10/2026. Dividir pelo total faria a maior parte dos municípios brasileiros
+aparecer como inadimplente de um demonstrativo que não devem. A regra vale
+mesmo quando o leitor desliga o filtro "somente entes com RPPS vigente":
+desligá-lo muda quem o painel lista, não de quem o DAIR é exigido.
+
+Duas ausências diferentes, e a segunda é a maior:
+
+| | RPPS | % do universo |
+| --- | ---: | ---: |
+| Nunca apareceram no DAIR | 109 | 5,1% |
+| Sem carteira declarada (inclui os acima) | 323 | 15,1% |
+
+Quem nunca apareceu não tem nem o cabeçalho mensal; quem apareceu e não
+declarou carteira entregou o cabeçalho e nada mais. Somar as duas numa só
+esconderia que a segunda é o dobro da primeira.
+
+**A defasagem é medida contra a competência de referência da base, não contra o
+mês corrente.** A base é uma fotografia: enquanto a fonte estiver fora do ar ela
+não envelhece sozinha, e medir contra o calendário faria todo RPPS parecer mais
+atrasado a cada dia sem carga nova. Quem declarou **adiantado** entra na faixa
+"em dia" — estar à frente da referência não é atraso.
+
+Cada faixa abre a lista dos RPPS que a compõem, com a última competência de
+cada um, e o nome leva à carteira do ente.
+
+### A relação nacional de ativos
+
+Cada ativo em que algum RPPS está investido, somado, **pelo último DAIR de cada
+um** — a pergunta aqui é "onde está o dinheiro", e para ela a posição mais
+recente de cada RPPS é a resposta mais fiel. É o oposto do comparativo entre
+RPPS, que precisa de data única para não medir o tempo entre as declarações.
+
+A identidade do ativo é o problema central, e a fonte dá **três** respostas:
+
+| Identidade | Ativos | O que identifica |
+| --- | ---: | --- |
+| **CNPJ** | 3.327 | O fundo. Identidade forte: dois RPPS que declaram o mesmo CNPJ estão no mesmo fundo ainda que escrevam o nome diferente — e escrevem |
+| **Título** | 26 | A sigla com o vencimento (`NTN-B 15/08/2045`). Não há CNPJ num título público, e o que define o papel é vencer em tal data |
+| **Nome** | 1.204 | Nem CNPJ nem sigla: CDB, poupança, imóvel, conta corrente em texto livre. 6,3% do valor |
+
+Agrupar por nome separaria o mesmo fundo escrito de duas formas; agrupar por
+CNPJ o junta, que é o fato. A tela marca cada linha com a identidade que a
+sustenta, para que ninguém tome um nome digitado à mão por registro.
+
+O resultado nacional em 07/10/2026: R$ 411,3 bi em 4.557 ativos distintos. A
+maior linha é `NTN-B` **sem vencimento declarado** — R$ 115,1 bi em 320 RPPS,
+28% do total: é informação verdadeira sobre um conjunto, e a tela diz que o
+vencimento não veio da fonte em vez de inventar um.
+
+A tabela usa o mesmo modelo da carteira detalhada de um ente — agrupar por
+classe com subtotais, ou lista única, colunas ordenáveis — mais um **filtro de
+texto**, porque quatro mil linhas não se navegam rolando. O filtro casa no
+nome, no CNPJ (aceita colado com pontuação), na classe, no segmento e no
+vencimento, sem acento e sem caixa.
+
 ## Certificação de quem responde pelos recursos
 
 O `DAIR_GOVERNANCA` traz uma linha por pessoa **e por certificação**. Quem tem

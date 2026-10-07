@@ -454,3 +454,12 @@ table.dados tr.grupo td{background:var(--surface-2);border-top:2px solid var(--r
   padding-top:10px;padding-bottom:10px}
 table.dados tr.grupo .nota{display:inline;margin-left:6px}
 table.dados tr.do-grupo td:first-child{padding-left:20px}
+
+/* Campo de filtro da relação de ativos. Fica na linha de contexto do cartão,
+   ao lado dos botões de modo, porque filtrar e agrupar são a mesma decisão:
+   o que a tabela mostra. */
+input.filtro-ativo{font:inherit;font-size:.82rem;padding:6px 10px;min-width:19rem;
+  max-width:100%;border:1px solid var(--rule-strong);border-radius:6px;
+  background:var(--surface);color:var(--ink)}
+input.filtro-ativo:focus{outline:2px solid var(--accent);outline-offset:1px}
+@media (max-width:560px){input.filtro-ativo{min-width:100%}}

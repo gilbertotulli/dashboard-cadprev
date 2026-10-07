@@ -26,7 +26,7 @@ que a fonte afirmou.
 import re
 import unicodedata
 from datetime import date
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 #: As siglas do Tesouro, na grafia normalizada que a tela usa. A ordem importa:
 #: "NTN-B" tem de ser testada antes de "NTN", senão toda NTN-B vira NTN.
@@ -171,3 +171,70 @@ def titulo(texto: Optional[str]) -> Optional[Dict[str, Any]]:
         "vencimento": venc.isoformat() if venc else None,
         "rotulo": (qual + " " + venc.strftime("%d/%m/%Y")) if venc else qual,
     }
+
+
+#: Quantos dígitos tem um CNPJ. Quando ``identificacao_ativo`` traz exatamente
+#: isso, o campo é o CNPJ do fundo e identifica o ativo entre todos os RPPS.
+DIGITOS_DO_CNPJ = 14
+
+_SO_DIGITO = re.compile(r"\D")
+
+
+def identidade(linha: Mapping[str, Any]) -> Tuple[Tuple[str, str], Dict[str, Any]]:
+    """A chave que diz quando dois RPPS estão no mesmo ativo.
+
+    Devolve ``(chave, dados)``. A chave é o par ``(tipo, valor)`` pelo qual o
+    agregado nacional soma; ``dados`` é o que a tela mostra.
+
+    Três identidades, porque a fonte dá três respostas:
+
+    * **CNPJ** — nos fundos. É a única identidade forte: dois RPPS que declaram
+      o mesmo CNPJ estão no mesmo fundo ainda que escrevam o nome diferente, e
+      escrevem. Em 07/10/2026 identificava 3.327 dos 4.557 ativos do país.
+    * **Título** — a sigla com o vencimento. Não há CNPJ num título público, e
+      o que define o papel é vencer em tal data. Quem não declarou o
+      vencimento entra na linha da sigla sem data, que é informação verdadeira
+      sobre um conjunto, não um ativo inventado.
+    * **Nome** — nem CNPJ nem sigla: CDB, poupança, imóvel, consignado em texto
+      livre. Eram 1.204 ativos e 6,3% do total. Agrupar pelo nome normalizado é
+      o que a fonte permite; a tela marca a linha para que ninguém confunda
+      isso com identidade de registro.
+
+    >>> chave, d = identidade({"identificacao_ativo": "30068135000150",
+    ...                        "nome_ativo": "CAIXA HEDGE FIC",
+    ...                        "tipo_ativo": "Fundo", "segmento": "Renda Fixa"})
+    >>> chave
+    ('cnpj', '30068135000150')
+    >>> d["tipo_de_identidade"], d["identificacao"]
+    ('cnpj', '30068135000150')
+    """
+    classe = (linha.get("tipo_ativo") or "").strip()
+    segmento = (linha.get("segmento") or "Não informado").strip()
+    escolha = nome(linha.get("nome_ativo"), linha.get("identificacao_ativo"), classe)
+    rotulo = escolha["rotulo"]
+
+    bruto = str(linha.get("identificacao_ativo") or "")
+    digitos = _SO_DIGITO.sub("", bruto)
+    if len(digitos) == DIGITOS_DO_CNPJ:
+        return ("cnpj", digitos), {
+            "nome": rotulo, "identificacao": digitos,
+            "tipo_de_identidade": "cnpj",
+            "segmento": segmento, "classe": classe}
+
+    reconhecido = titulo(rotulo) if ("ítulos Públicos" in classe
+                                     or "itulos Publicos" in classe) else None
+    if reconhecido:
+        return ("titulo", reconhecido["rotulo"]), {
+            "nome": reconhecido["rotulo"],
+            "identificacao": reconhecido["sigla"],
+            "tipo_de_identidade": "titulo",
+            "vencimento": reconhecido["vencimento"],
+            "segmento": segmento, "classe": classe}
+
+    # Nome normalizado: sem acento, sem caixa e sem espaço repetido, para que
+    # "CDB  Banco do Brasil" e "cdb banco do brasil" não virem dois ativos.
+    normalizado = " ".join(_sem_acento(rotulo).split())
+    return ("nome", normalizado), {
+        "nome": rotulo, "identificacao": None,
+        "tipo_de_identidade": "nome",
+        "segmento": segmento, "classe": classe}
