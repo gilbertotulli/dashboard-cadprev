@@ -98,9 +98,15 @@ class Store:
                    for c in campos]
         self.con.execute("CREATE TABLE IF NOT EXISTS {} ({})".format(
             endpoint.lower(), ", ".join(colunas + ["_ingerido_em TEXT"])))
-        self.con.execute(
-            "CREATE INDEX IF NOT EXISTS idx_{0}_cnpj ON {0} (cnpj_ente)".format(
-                endpoint.lower()))
+        # O índice vai na chave que a tabela tem. Quase todas são por ente, mas
+        # não todas: a tabela da CVM é por fundo, e fixar "cnpj_ente" aqui fazia
+        # a criação dela falhar com "no such column".
+        chave = next((c.nome for c in campos if c.nome == "cnpj_ente"),
+                     next((c.nome for c in campos if c.tipo == "cnpj"), None))
+        if chave:
+            self.con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_{0}_cnpj ON {0} ({1})".format(
+                    endpoint.lower(), chave))
         self.con.commit()
         return [c.nome for c in campos]
 

@@ -238,6 +238,18 @@ jobs:
             --exercicio "$ANO" --periodo "$BIMESTRE" $FILTRO_UF \
             2>&1 | tee -a ingest.log || true
 
+          # A CVM: o PL e o número de cotistas que o administrador de cada fundo
+          # apurou. Um arquivo por mês para o país inteiro — 11 MB zipados, uma
+          # requisição só —, contra os três mil e trezentos fundos que os RPPS
+          # declaram. É a única fonte externa que diz o tamanho de um fundo sem
+          # depender do que o cotista declarou, e é dela que sai a checagem
+          # firme de posição maior que o fundo.
+          #
+          # Sem --mes: o padrão é o mês anterior, que é o último fechado. O
+          # informe do mês corrente existe com poucos dias e faria a tela dizer
+          # que o fundo fechou o mês no dia 3.
+          python -m cadprev cvm 2>&1 | tee -a ingest.log || true
+
           # O balanço patrimonial anual, de onde sai a provisão matemática que
           # a contabilidade do ente reconhece. Também uma requisição por ente.
           #

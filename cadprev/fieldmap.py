@@ -316,6 +316,25 @@ MAPA: Dict[str, Tuple[Campo, ...]] = {
     # previdenciária **reconhecida na contabilidade** — o mesmo compromisso que o
     # DRAA avalia, medido por outro profissional, com outra norma e outra data de
     # corte. Divergir aí é achado de primeira ordem.
+    #: O informe diário da CVM, reduzido ao fechamento de cada fundo no mês. Os
+    #: nomes aqui já são os do cliente, que normaliza o CSV — a CVM mudou
+    #: ``CNPJ_FUNDO`` para ``CNPJ_FUNDO_CLASSE`` na Resolução 175, e essa
+    #: tradução fica em ``cadprev.cvm`` para que o resto do painel não precise
+    #: saber de qual versão o arquivo veio.
+    "CVM_FUNDO": (
+        _c("cnpj_fundo", "cnpj_fundo", tipo="cnpj"),
+        _c("exercicio", "exercicio", tipo="inteiro"),
+        _c("mes", "mes", tipo="inteiro"),
+        _c("data", "data", obrigatorio=False,
+           nota="o último dia com informe no mês, como '2026-09-30'"),
+        _c("patrimonio_liquido", "patrimonio_liquido", tipo="decimal",
+           obrigatorio=False,
+           nota="o PL apurado pelo administrador, não o declarado pelo RPPS"),
+        _c("cotistas", "cotistas", tipo="inteiro", obrigatorio=False),
+        _c("valor_cota", "valor_cota", tipo="decimal", obrigatorio=False),
+        _c("tipo", "tipo", obrigatorio=False),
+    ),
+
     "SICONFI_DCA": (
         _c("cnpj_ente", "cnpj_ente", tipo="cnpj"),
         _c("cod_ibge", "cod_ibge", tipo="inteiro"),

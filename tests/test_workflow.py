@@ -143,6 +143,17 @@ class TestOrdemDaCarga(unittest.TestCase):
         self.assertLess(self.passo.index("for VOLTA in 0 1 2"),
                         self.passo.index("cadprev dair-atrasados"))
 
+    def test_cvm_vem_depois_da_carteira(self):
+        """A ingestão da CVM filtra pelos fundos que algum RPPS declarou.
+
+        São 25 mil fundos no informe contra 3.327 que interessam, e gravar os
+        outros 24 mil ocuparia vinte vezes o espaço do que se usa. Sem a
+        carteira no banco o filtro não existe, e a carga grava tudo.
+        """
+        self.assertIn("cadprev cvm", self.passo)
+        self.assertLess(self.passo.index("ingest DAIR_CARTEIRA"),
+                        self.passo.index("cadprev cvm"))
+
     def test_filtro_de_uf_definido_antes_de_ser_usado(self):
         primeiro_uso = self.passo.index("$FILTRO_UF")
         self.assertLess(self.passo.index('FILTRO_UF=""'), primeiro_uso)

@@ -23,9 +23,13 @@ interface no estado honesto. ``--nivel-a`` gera o campo para quem quiser ver a
 decomposição de três vias antes de o Swagger ser lido.
 """
 
+import csv
+import io
 import json
 import os
 import random
+import re
+import zipfile
 from typing import Any, Dict, List
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1173,6 +1177,97 @@ def dca_do_siconfi(tabelas: Dict[str, List[Dict[str, Any]]],
     return linhas
 
 
+#: Mês do informe da CVM na amostra. Um mês antes da competência do DAIR: o
+#: informe é publicado depois do fechamento, e é esse par de datas que o painel
+#: precisa saber comparar — o PL do administrador e o declarado pelo cotista não
+#: são do mesmo dia, e a folga de 5% existe por isso.
+MES_CVM = MES_DAIR
+
+#: Fundos da amostra que a CVM **não** traz. Na base real a CVM alcança 19,7%
+#: dos fundos por contagem — os que faltam são pequenos, e a coluna vazia tem de
+#: aparecer na tela com explicação, não como defeito.
+_FUNDOS_FORA_DA_CVM = 3
+
+#: Um fundo em que a soma das posições dos RPPS excede o PL oficial. É o achado
+#: que a fonte externa permite e a interna não permitia: a régua do painel usa o
+#: maior PL autodeclarado, que é frouxo de propósito; contra o número do
+#: administrador a impossibilidade fica firme. Eram 29 casos em setembro/2026.
+_FUNDO_ACIMA_DO_PL = 1
+
+#: Um fundo cujo PL declarado pelos RPPS diverge do oficial além do limiar.
+#: Eram 376 na base real.
+_FUNDO_PL_DIVERGENTE = 2
+
+
+def cvm_dos_fundos(tabelas: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    """O informe diário da CVM, coerente com a carteira que os RPPS declararam.
+
+    Coerente, não idêntico: o PL do administrador e o declarado pelo cotista não
+    são do mesmo dia nem da mesma apuração, e uma amostra em que batem
+    exatamente não testaria o confronto — testaria só que a tela subtrai.
+
+    Quatro casos, porque são os que a base real tem: o fundo que casa com folga
+    pequena, o que a CVM não traz, o que tem PL declarado divergente, e o que
+    tem a soma das posições dos RPPS acima do PL oficial.
+    """
+    rnd = random.Random(20261007)
+    # A posição total dos RPPS em cada fundo, na competência mais recente.
+    posicoes: Dict[str, float] = {}
+    for linha in tabelas["DAIR_CARTEIRA"]:
+        if linha["dt_mes_bimestre"] != MES_DAIR or linha.get("vl_patrimonio") is None:
+            continue
+        cnpj = re.sub(r"\D", "", linha["id_ativo"] or "")
+        if len(cnpj) != 14:
+            continue
+        posicoes[cnpj] = posicoes.get(cnpj, 0.0) + float(linha["vl_total_atual"])
+
+    itens = []
+    for n, (cnpj, posicao) in enumerate(sorted(posicoes.items())):
+        if n % 7 == _FUNDOS_FORA_DA_CVM:
+            continue            # a CVM não traz este
+        if n % 11 == _FUNDO_ACIMA_DO_PL:
+            pl = posicao * 0.42  # impossível: os RPPS têm mais que o fundo
+        elif n % 11 == _FUNDO_PL_DIVERGENTE:
+            pl = posicao * _FOLGA_DO_PL * 1.35   # declarado diverge muito
+        else:
+            pl = posicao * _FOLGA_DO_PL * rnd.uniform(0.985, 1.015)
+        formatado = "{}.{}.{}/{}-{}".format(
+            cnpj[:2], cnpj[2:5], cnpj[5:8], cnpj[8:12], cnpj[12:])
+        cotistas = rnd.randint(40, 2400)
+        cota = rnd.uniform(1.5, 400.0)
+        # Uma linha por dia, como o arquivo real: 54 MB para um mês. A amostra
+        # traz dois dias com PL e cotistas diferentes, porque é o que torna
+        # testável a regra de o painel usar o **último** dia — com uma data só,
+        # pegar a primeira ou a última dá no mesmo e o teste não prova nada.
+        for dia, fator in ((1, 0.93), (_ULTIMO_DIA[MES_CVM], 1.0)):
+            itens.append({
+                "TP_FUNDO_CLASSE": "CLASSES - FIF",
+                "CNPJ_FUNDO_CLASSE": formatado,
+                "ID_SUBCLASSE": "",
+                "DT_COMPTC": "{}-{:02d}-{:02d}".format(ANO, MES_CVM, dia),
+                "VL_TOTAL": "{:.2f}".format(pl * fator * 1.01),
+                "VL_QUOTA": "{:.9f}".format(cota * fator),
+                "VL_PATRIM_LIQ": "{:.2f}".format(pl * fator),
+                "CAPTC_DIA": "0.00", "RESG_DIA": "0.00",
+                "NR_COTST": str(cotistas if fator == 1.0 else cotistas - 7),
+            })
+    return itens
+
+
+def _escrever_cvm(destino: str, itens: List[Dict[str, Any]]) -> None:
+    """Grava o informe no formato real: zip com CSV latin-1 e ponto-e-vírgula."""
+    nome = "inf_diario_fi_{:04d}{:02d}".format(ANO, MES_CVM)
+    buffer = io.StringIO()
+    if itens:
+        escritor = csv.DictWriter(buffer, fieldnames=list(itens[0]), delimiter=";",
+                                  lineterminator="\n")
+        escritor.writeheader()
+        escritor.writerows(itens)
+    with zipfile.ZipFile(os.path.join(destino, nome + ".zip"), "w",
+                         zipfile.ZIP_DEFLATED) as z:
+        z.writestr(nome + ".csv", buffer.getvalue().encode("latin-1"))
+
+
 def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     """Grava as amostras no formato de página da API."""
     os.makedirs(destino, exist_ok=True)
@@ -1189,6 +1284,10 @@ def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     with open(os.path.join(destino, "dca.json"), "w", encoding="utf-8") as fh:
         json.dump({"items": dca_do_siconfi(tabelas, entes_siconfi),
                    "hasMore": False}, fh, ensure_ascii=False)
+    # A CVM é a terceira fonte e o formato dela é outro: um zip com um CSV de
+    # ponto-e-vírgula. A amostra reproduz o formato, não um atalho — o cliente
+    # tem de ser exercitado pelo caminho que ele usa de verdade.
+    _escrever_cvm(destino, cvm_dos_fundos(tabelas))
     contagem = {}
     for nome, registros in tabelas.items():
         caminho = os.path.join(destino, nome + ".json")

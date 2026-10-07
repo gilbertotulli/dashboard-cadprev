@@ -166,6 +166,27 @@ def cmd_demo(args) -> int:
                                      linhas, resolucao)
             print("  {:<28} {:>8} linhas".format("SICONFI_RREO", linhas))
 
+        # A CVM é a terceira fonte: o PL e o número de cotistas apurados pelo
+        # administrador de cada fundo. Um arquivo por mês, o país inteiro.
+        from cadprev import cvm as cvm_mod
+        try:
+            fechamento = cvm_mod.Cliente(fixtures=demo.DIR_DEMO).fechamento(
+                demo.ANO, demo.MES_CVM)
+        except cvm_mod.ErroDaCvm as erro:
+            print("  {:<28} ERRO: {}".format("CVM_FUNDO", erro), file=sys.stderr)
+            fechamento = {}
+        if fechamento:
+            registros = [dict(d, exercicio=demo.ANO, mes=demo.MES_CVM)
+                         for d in fechamento.values()]
+            resolucao = fieldmap.resolver("CVM_FUNDO", registros[0].keys())
+            linhas = store.gravar(
+                "CVM_FUNDO", (fieldmap.aplicar(resolucao, r) for r in registros),
+                {"exercicio": demo.ANO, "mes": demo.MES_CVM})
+            store.registrar_execucao(
+                "CVM_FUNDO", {"exercicio": demo.ANO, "mes": demo.MES_CVM},
+                linhas, resolucao)
+            print("  {:<28} {:>8} linhas".format("CVM_FUNDO", linhas))
+
         # O balanço patrimonial é anual e fecha no exercício anterior ao do
         # DRAA — é esse par que compara a mesma data.
         dca = siconfi.ClienteDCA(fixtures=demo.DIR_DEMO, pausa=0)
@@ -511,6 +532,63 @@ def cmd_siconfi_rreo(args) -> int:
     return 0
 
 
+def cmd_cvm(args) -> int:
+    """Traz o PL e o número de cotistas oficiais dos fundos, da CVM.
+
+    Um arquivo por mês, o país inteiro de uma vez — não há consulta por CNPJ, e
+    nem faz falta: o informe diário de um mês tem 25 mil fundos, e os 3.327 que
+    os RPPS declaram estão dentro dele. Uma requisição substitui três mil.
+
+    Grava só os fundos que **algum RPPS declarou**, quando a carteira já está no
+    banco. Os outros 24 mil não dizem nada sobre RPPS e ocupariam vinte vezes o
+    espaço do que interessa. Sem a carteira no banco, grava tudo — é o caso de
+    quem ingere a CVM antes do CADPREV.
+    """
+    from cadprev import cvm
+    hoje = datetime.now(timezone.utc).date()
+    ano = args.ano or hoje.year
+    mes = args.mes
+    if not mes:
+        # O informe de um mês só está completo depois que o mês acaba; no
+        # primeiro dia o arquivo existe com uma data só, e a tela diria que o
+        # fundo fechou o mês naquele dia.
+        mes = hoje.month - 1 or 12
+        if hoje.month == 1:
+            ano -= 1
+    cliente = cvm.Cliente(pausa=args.pausa, fixtures=args.fixtures)
+    try:
+        fechamento = cliente.fechamento(ano, mes)
+    except cvm.ErroDaCvm as erro:
+        print("CVM: {}".format(erro), file=sys.stderr)
+        return 1
+
+    with store_mod.Store(args.banco) as store:
+        interesse = None
+        if store.tem_tabela("DAIR_CARTEIRA"):
+            interesse = {
+                l["cnpj"] for l in store.consultar(
+                    "SELECT DISTINCT REPLACE(REPLACE(REPLACE("
+                    "identificacao_ativo, '.', ''), '/', ''), '-', '') AS cnpj"
+                    " FROM dair_carteira WHERE identificacao_ativo IS NOT NULL")
+                if l["cnpj"] and len(l["cnpj"]) == 14}
+        registros = [dict(d, exercicio=ano, mes=mes)
+                     for cnpj, d in fechamento.items()
+                     if interesse is None or cnpj in interesse]
+        if not registros:
+            print("nenhum fundo da CVM casa com a carteira no banco",
+                  file=sys.stderr)
+            return 1
+        resolucao = fieldmap.resolver("CVM_FUNDO", registros[0].keys())
+        traduzidos = [fieldmap.aplicar(resolucao, r) for r in registros]
+        linhas = store.gravar("CVM_FUNDO", traduzidos,
+                              {"exercicio": ano, "mes": mes})
+        store.registrar_execucao("CVM_FUNDO", {"exercicio": ano, "mes": mes},
+                                 linhas, resolucao)
+    print("CVM {:04d}-{:02d}: {} fundos no informe · {} gravados (os que algum "
+          "RPPS declarou)".format(ano, mes, len(fechamento), linhas))
+    return 0
+
+
 def cmd_siconfi_dca(args) -> int:
     """Traz o Anexo I-AB da DCA — o balanço patrimonial — ente a ente.
 
@@ -734,6 +812,15 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--limite", type=int)
     p.add_argument("--pausa", type=float, default=1.0)
     p.set_defaults(func=cmd_dair_atrasados)
+
+    p = sub.add_parser("cvm",
+                       help="PL e número de cotistas oficiais dos fundos, da CVM")
+    p.add_argument("--ano", type=int)
+    p.add_argument("--mes", type=int,
+                   help="padrão: o mês anterior, que é o último fechado")
+    p.add_argument("--pausa", type=float, default=1.0)
+    p.add_argument("--fixtures")
+    p.set_defaults(func=cmd_cvm)
 
     p = sub.add_parser("siconfi-dca",
                        help="balanço patrimonial anual (DCA Anexo I-AB)")

@@ -1113,6 +1113,32 @@ def montar_dair_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
     }
 
 
+#: Acima disto o PL declarado pelo RPPS e o oficial da CVM são tratados como
+#: divergentes na tela. Cinco por cento é folga para a diferença de data — o
+#: DAIR é do fim da competência e o informe da CVM do último dia útil dela — e
+#: para arredondamento. Não é tolerância a erro: é o limiar a partir do qual a
+#: diferença deixa de ter explicação banal.
+DIVERGENCIA_DO_PL = 5.0
+
+
+def _fechamento_da_cvm(store: Store) -> Dict[str, Dict[str, Any]]:
+    """O PL e os cotistas oficiais de cada fundo, da competência mais recente.
+
+    Uma competência só: o informe da CVM é mensal e o painel mostra o
+    fechamento, não a série. Se o banco tiver dois meses, vale o mais novo.
+    """
+    if not store.tem_tabela("CVM_FUNDO"):
+        return {}
+    linhas = [dict(l) for l in store.consultar(
+        "SELECT cnpj_fundo, exercicio, mes, data, patrimonio_liquido,"
+        " cotistas, valor_cota FROM cvm_fundo")]
+    if not linhas:
+        return {}
+    recente = max((l["exercicio"] or 0, l["mes"] or 0) for l in linhas)
+    return {l["cnpj_fundo"]: l for l in linhas
+            if (l["exercicio"] or 0, l["mes"] or 0) == recente}
+
+
 def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                            fora: Optional[AbstractSet[str]] = None,
                            linhas_fora: Optional[AbstractSet[int]] = None,
@@ -1156,6 +1182,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         if cnpj not in recente or (ano, mes) > recente[cnpj]:
             recente[cnpj] = (ano, mes)
 
+    da_cvm = _fechamento_da_cvm(store)
     agregado: Dict[tuple, Dict[str, Any]] = {}
     competencias: Dict[str, int] = defaultdict(int)
     por_ente: Dict[str, float] = defaultdict(float)
@@ -1167,7 +1194,8 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         chave, dados = ativos.identidade(linha)
         dados = dict(dados, chave="{}:{}".format(*chave))
         alvo = agregado.setdefault(chave, dict(
-            dados, valor=0.0, entes=set(), pls=[], cotistas=defaultdict(float)))
+            dados, valor=0.0, entes=set(), pls=[], cotistas=defaultdict(float),
+            pl_por_ente=defaultdict(list)))
         valor = linha.get("valor_total") or 0.0
         alvo["valor"] += valor
         alvo["entes"].add(cnpj)
@@ -1183,6 +1211,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         pl = linha.get("pl_fundo")
         if pl is not None and pl >= qualidade.PISO_PL_CRIVEL:
             alvo["pls"].append((recente[cnpj], float(pl)))
+            alvo["pl_por_ente"][cnpj].append(float(pl))
         competencias["{:04d}-{:02d}".format(*recente[cnpj])] += 1
         por_ente[cnpj] += valor
 
@@ -1203,6 +1232,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         "rpps": len(a["entes"]),
         "maior_posicao": round(max(a["cotistas"].values()), 2) if a["cotistas"] else 0.0,
         **_pl_do_fundo(a["pls"]),
+        **_oficial_da_cvm(a, da_cvm),
     } for a in itens[:TETO_DA_LISTA_DE_ATIVOS]]
 
     por_identidade = defaultdict(lambda: {"ativos": 0, "valor": 0.0})
@@ -1225,6 +1255,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
             for chave, d in por_identidade.items()
         },
         "por_natureza": _carteira_por_natureza(por_ente, entes, fora),
+        "cvm": _resumo_da_cvm(publicados, da_cvm),
         "itens": publicados,
     }
     # Quem chamou pode querer a lista de cotistas, que vai em arquivo próprio.
@@ -1248,12 +1279,46 @@ def montar_cotistas_dos_ativos(nacional: Mapping[str, Any],
     dobraria o arquivo sem dizer nada novo.
     """
     saida: Dict[str, Any] = {}
+    oficial = {i["chave"]: i for i in (nacional.get("itens") or [])}
     for dados in agregado.values():
+        pl_cvm = (oficial.get(dados["chave"]) or {}).get("pl_cvm")
         cotistas = sorted(dados["cotistas"].items(), key=lambda kv: -kv[1])
         saida[dados["chave"]] = [
-            {"cnpj": cnpj, "valor": round(valor, 2)} for cnpj, valor in cotistas]
+            _um_cotista(cnpj, valor, dados["pl_por_ente"].get(cnpj), pl_cvm)
+            for cnpj, valor in cotistas]
     return {"disponivel": bool(saida), "pares": sum(len(v) for v in saida.values()),
-            "por_ativo": saida}
+            "limiar_divergencia": DIVERGENCIA_DO_PL, "por_ativo": saida}
+
+
+def _um_cotista(cnpj: str, valor: float, pls: Optional[Sequence[float]],
+                pl_cvm: Optional[float]) -> Dict[str, Any]:
+    """Um RPPS na lista de cotistas de um ativo.
+
+    Traz o PL que **ele** declarou para o fundo, ao lado do oficial da CVM. É
+    assim que a divergência deixa de ser uma estatística do fundo e passa a ter
+    nome: quando o administrador diz um número e um cotista declara outro, dá
+    para ver qual cotista.
+
+    Um ente pode declarar o mesmo fundo em mais de uma linha, com PL diferente em
+    cada. Vale a mediana das dele, pelo mesmo motivo de sempre — um erro de
+    vírgula numa das linhas não arrasta o número.
+    """
+    declarado = None
+    if pls:
+        ordenadas = sorted(pls)
+        meio = len(ordenadas) // 2
+        declarado = round(ordenadas[meio] if len(ordenadas) % 2
+                          else (ordenadas[meio - 1] + ordenadas[meio]) / 2, 2)
+    divergencia = (round((declarado - pl_cvm) / pl_cvm * 100, 1)
+                   if declarado and pl_cvm else None)
+    return {
+        "cnpj": cnpj,
+        "valor": round(valor, 2),
+        "pl_declarado": declarado,
+        "divergencia_pl": divergencia,
+        "pl_divergente": bool(divergencia is not None
+                              and abs(divergencia) > DIVERGENCIA_DO_PL),
+    }
 
 
 def _pl_do_fundo(declaracoes: Sequence[tuple]) -> Dict[str, Any]:
@@ -1317,6 +1382,83 @@ def _pl_do_fundo(declaracoes: Sequence[tuple]) -> Dict[str, Any]:
         # declararam o mesmo — e aí o número não precisa de ressalva.
         "pl_divergencia": (round((ordenadas[-1] - ordenadas[0]) / mediana * 100, 1)
                            if mediana else None),
+    }
+
+
+def _resumo_da_cvm(itens: Sequence[Mapping[str, Any]],
+                   da_cvm: Mapping[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Quanto da carteira a CVM alcança, e o que ela contradiz.
+
+    A cobertura precisa estar na tela antes dos números: uma coluna vazia em
+    quatro de cada cinco linhas, sem explicação, parece defeito do painel.
+    """
+    if not da_cvm:
+        return {"disponivel": False}
+    fundos = [i for i in itens if i["tipo_de_identidade"] == "cnpj"]
+    achados = [i for i in fundos if i.get("na_cvm")]
+    valor_fundos = sum(i["valor"] for i in fundos)
+    valor_achado = sum(i["valor"] for i in achados)
+    acima = [i for i in achados if i.get("acima_do_pl")]
+    divergentes = [i for i in achados if i.get("pl_divergente")]
+    return {
+        "disponivel": True,
+        "competencia": next((i["data_cvm"] for i in achados if i.get("data_cvm")),
+                            None),
+        "fundos_declarados": len(fundos),
+        "fundos_na_cvm": len(achados),
+        "perc_fundos": _pct(len(achados), len(fundos)),
+        "valor_na_cvm": round(valor_achado, 2),
+        "perc_valor": _pct(valor_achado, valor_fundos),
+        # Os dois achados que a fonte externa permite e a interna não permitia.
+        "acima_do_pl": len(acima),
+        "pl_divergente": len(divergentes),
+        "limiar_divergencia": DIVERGENCIA_DO_PL,
+    }
+
+
+def _oficial_da_cvm(ativo: Mapping[str, Any],
+                    da_cvm: Mapping[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """O PL e os cotistas que o administrador do fundo apurou.
+
+    Vale só para quem tem CNPJ: um título público não é fundo e não tem
+    cotistas, e a CVM não fala dele.
+
+    **A cobertura é parcial, e a tela diz quando não achou.** Dos 3.327 fundos
+    com CNPJ que os RPPS declaram, 655 aparecem no informe diário — 19,7% por
+    contagem e 95,5% do valor. Os que faltam são pequenos. Mostrar vazio sem
+    distinguir "não é fundo" de "é fundo e não achei" deixaria o leitor sem
+    saber se a ausência diz algo sobre o ativo ou sobre o painel.
+
+    A divergência contra o PL declarado pelos RPPS é publicada porque é
+    informação sobre o cadastro: quando o administrador diz um número e os
+    cotistas declaram outro, alguém está declarando errado, e saber quem é o
+    começo de corrigir.
+    """
+    if ativo["tipo_de_identidade"] != "cnpj":
+        return {"na_cvm": None}
+    oficial = da_cvm.get(ativo["identificacao"])
+    if not oficial:
+        return {"na_cvm": False}
+    pl = oficial.get("patrimonio_liquido")
+    declarado = _pl_do_fundo(ativo["pls"]).get("pl_fundo")
+    divergencia = None
+    if pl and declarado:
+        divergencia = round((declarado - pl) / pl * 100, 1)
+    return {
+        "na_cvm": True,
+        "pl_cvm": round(pl, 2) if pl is not None else None,
+        "cotistas_cvm": oficial.get("cotistas"),
+        "valor_cota_cvm": oficial.get("valor_cota"),
+        "data_cvm": oficial.get("data"),
+        "divergencia_pl": divergencia,
+        "pl_divergente": bool(divergencia is not None
+                              and abs(divergencia) > DIVERGENCIA_DO_PL),
+        # A soma das posições dos RPPS acima do PL oficial é impossível. A régua
+        # interna do painel já checa isso contra o maior PL que algum RPPS
+        # declarou — critério frouxo, porque o campo é ruidoso. Contra o número
+        # do administrador a checagem fica firme.
+        "acima_do_pl": bool(pl and ativo["valor"] > pl * 1.02),
+        "vezes_o_pl": (round(ativo["valor"] / pl, 2) if pl else None),
     }
 
 

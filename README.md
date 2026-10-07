@@ -45,6 +45,7 @@ python -m cadprev serve
 | `inspect` | baixa uma página e relata os campos que a API realmente devolve |
 | `ingest` | traz endpoints para o banco local (SQLite), paginando |
 | `dair-atrasados` | completa a carteira ente a ente: a última competência de quem a varredura nacional não alcançou |
+| `cvm` | PL e número de cotistas oficiais dos fundos, do informe diário da CVM |
 | `build` | pré-agrega tudo nos JSON que o painel lê |
 | `serve` | serve `web/` localmente |
 | `status` | o que já foi ingerido, quando e com quais filtros |
@@ -64,6 +65,7 @@ cadprev/        ingestão e agregação (Python, sem dependências)
   ativos.py       o nome do ativo, e o vencimento do título quando há um
   distribuicao.py mediana e quartis dos quadros consolidados
   gestoras.py     a unidade gestora de cada RPPS — não vem da API
+  cvm.py          cliente da terceira fonte: o PL e os cotistas oficiais
   siconfi.py      cliente da segunda fonte: o SICONFI, do Tesouro Nacional
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
@@ -758,6 +760,57 @@ O filtro casa no nome, no CNPJ (aceita colado com pontuação), na classe, no
 segmento e no vencimento, sem acento e sem caixa. Clicar na linha de subtotal
 de uma classe recolhe os ativos dela; o estado sobrevive a reordenar a tabela,
 porque a ordem e o que está visível são decisões independentes.
+
+### O PL e os cotistas oficiais, da CVM
+
+Terceira fonte do projeto, e a primeira que não fala de RPPS — fala de **fundos**.
+A carteira do DAIR traz o CNPJ do fundo em que cada RPPS aplicou, e a CVM
+publica, para esse mesmo CNPJ, o patrimônio líquido e o número de cotistas
+apurados pelo administrador.
+
+Isso resolve dois problemas que as outras fontes não resolviam:
+
+- **O PL declarado pelo RPPS é ruidoso** (ver a seção seguinte). A CVM tem um
+  número só, de quem administra o fundo.
+- **A régua de impossibilidade ganha fonte externa.** Uma posição maior que o
+  fundo inteiro é impossível, e o painel checava isso contra o maior PL que
+  algum RPPS declarou — critério frouxo de propósito, porque o campo é ruim.
+  Contra o PL oficial a checagem fica firme: em setembro de 2026, **29 fundos**
+  tinham a soma das posições dos RPPS acima do PL da CVM, o pior em 7,5 vezes.
+  E a CVM **confirma a linha envenenada**: o fundo em que os RPPS declaram
+  R$ 3,16 trilhões tem PL oficial de R$ 209,6 milhões.
+
+| | |
+| --- | ---: |
+| Fundos com CNPJ que os RPPS declaram | 3.327 |
+| Achados no informe diário da CVM | **655 (19,7%)** |
+| Valor coberto | **95,5%** |
+| Com PL declarado divergente (acima de 5%) | 376 |
+| Com posição somada acima do PL oficial | 29 |
+
+**A cobertura é parcial, e a assimetria importa:** um quinto dos fundos por
+contagem e quase todo o valor, porque os que faltam são pequenos — o maior tem
+R$ 3,3 bi. Duas causas prováveis: a Resolução CVM 175 partiu fundos em classes
+com CNPJ novo, e parte do que o RPPS declara com CNPJ não é fundo (emissor de
+CDB, banco). A tela distingue três estados — **não é fundo** (título público, e
+a CVM não fala dele), **é fundo e não achei**, e **achei** —, porque uma coluna
+vazia sem explicação parece defeito do painel.
+
+O limiar de divergência é de 5%, e está publicado ao lado do número: é folga
+para a diferença de data (o DAIR é do fim da competência, o informe da CVM do
+último dia útil dela) e para arredondamento. Não é tolerância a erro.
+
+O arquivo é mensal, com uma linha por fundo **por dia** — 54 MB de CSV para um
+mês. O cliente lê em fluxo e guarda só o **fechamento**: pegar o primeiro dia
+daria o PL de trinta dias antes, e a divergência contra o DAIR passaria a medir
+o movimento do fundo no mês em vez da diferença entre quem declarou o quê. Uma
+requisição por mês substitui três mil e trezentas consultas por CNPJ.
+
+Na relação de ativos, a coluna de RPPS mostra **investidores / total de cotistas
+do fundo**, e a de PL mostra o número da CVM. Abrindo a lista de quem investe, há
+o PL que **cada RPPS** declarou, com a divergência contra a CVM ao lado — é o
+que dá nome à divergência: quando o administrador diz um número e um cotista
+declara outro, dá para ver qual cotista.
 
 ### O PL do fundo, entre declarações que discordam
 

@@ -3735,7 +3735,8 @@
     perc: { numero: function (i) { return i.perc; } },
     rpps: { numero: function (i) { return i.rpps; } },
     maior: { numero: function (i) { return i.maior_posicao; } },
-    plfundo: { numero: function (i) { return i.pl_fundo; } }
+    plfundo: { numero: function (i) { return i.pl_fundo; } },
+    plcvm: { numero: function (i) { return i.na_cvm ? i.pl_cvm : null; } }
   };
 
   function ordenarPor(itens, regras, campo, desc) {
@@ -3787,18 +3788,14 @@
         render();
       }
     });
-    /* O PL do fundo é a mediana das declarações da competência mais recente, e
-     * os declarantes discordam muito. A nota diz sobre quantas declarações o
-     * número se apoia e de que mês — sem isso o leitor leria uma mediana de
-     * três como se fosse de duzentas. */
-    var notaPl = null;
-    if (i.pl_fundo) {
-      notaPl = "mediana de " + num(i.pl_declarantes, 0) +
-        (i.pl_declarantes === 1 ? " declaração" : " declarações") +
-        (i.pl_competencia ? " de " + (competencia(i.pl_competencia) || i.pl_competencia) : "") +
-        ((i.pl_divergencia || 0) > 20
-          ? " · declarantes divergem em " + pct(i.pl_divergencia, 0) : "");
-    }
+    /* O PL é o da CVM — número do administrador, não a mediana do que os
+     * cotistas declaram. Quando o fundo não está no informe, a célula fica
+     * vazia: a cobertura é de 19,7% dos fundos por contagem e 95,5% do valor, e
+     * o cartão diz isso para que a coluna vazia não pareça defeito do painel.
+     *
+     * O título público não entra nessa conta — não é fundo, não tem PL nem
+     * cotistas, e a CVM não fala dele. */
+    var plCvm = i.na_cvm ? i.pl_cvm : null;
     return [
       h("td", { class: "nome-ativo" }, [
         nome, h("div", { class: "nota", texto: sub })
@@ -3806,6 +3803,9 @@
       h("td", { texto: classeCurta(i.classe), title: i.classe || "" }),
       h("td", { class: "n", texto: reais(i.valor) }),
       h("td", { class: "n", texto: pct(i.perc, 2) }),
+      // RPPS investidores / total de cotistas do fundo na CVM. A razão entre os
+      // dois diz o quanto daquele fundo é RPPS — e quando a CVM não tem o
+      // fundo, só o primeiro número existe.
       h("td", { class: "n" }, [
         h("button", {
           class: "link limpar", texto: num(i.rpps, 0),
@@ -3814,13 +3814,19 @@
             estado.ativoAberto = aberto ? null : i.chave;
             render();
           }
-        })
+        }),
+        h("span", { texto: " / " + (i.cotistas_cvm === null ||
+                                    i.cotistas_cvm === undefined
+                                      ? "—" : num(i.cotistas_cvm, 0)) })
       ]),
       h("td", { class: "n", texto: reais(i.maior_posicao) }),
-      h("td", { class: "n" }, [
-        h("div", { texto: i.pl_fundo ? reais(i.pl_fundo) : "—" }),
-        notaPl ? h("div", { class: "nota", texto: notaPl }) : null
-      ].filter(Boolean))
+      h("td", {
+        class: "n" + (i.acima_do_pl ? " ruim" : ""),
+        title: i.acima_do_pl
+          ? "A soma das posições dos RPPS é " + num(i.vezes_o_pl, 2) +
+            " vezes o PL oficial — impossível"
+          : (i.na_cvm === false ? "Este CNPJ não está no informe diário da CVM" : "")
+      }, [h("div", { texto: plCvm ? reais(plCvm) : "—" })])
     ];
   }
 
@@ -3912,11 +3918,15 @@
 
   function tabelaDeCotistas(ativo, lista) {
     var total = lista.reduce(function (x, c) { return x + c.valor; }, 0);
-    return tabela([{ t: "RPPS" }, { t: "Posição", n: true },
-                   { t: "% do ativo", n: true },
-                   { t: "% do PL do fundo", n: true }],
+    var plOficial = ativo.na_cvm ? ativo.pl_cvm : null;
+    var comDeclarado = lista.filter(function (c) { return c.pl_declarado; });
+    var divergentes = lista.filter(function (c) { return c.pl_divergente; });
+    var nos = [tabela([{ t: "RPPS" }, { t: "Posição", n: true },
+                       { t: "% do ativo", n: true },
+                       { t: "% do PL (CVM)", n: true },
+                       { t: "PL declarado pelo RPPS", n: true }],
       lista.map(function (c) {
-        var noPl = ativo.pl_fundo ? c.valor / ativo.pl_fundo * 100 : null;
+        var noPl = plOficial ? c.valor / plOficial * 100 : null;
         return h("tr", {}, [
           h("td", {}, [h("button", {
             class: "link limpar", texto: nomeDoEnte(c.cnpj),
@@ -3924,14 +3934,71 @@
           })]),
           h("td", { class: "n", texto: reais(c.valor) }),
           h("td", { class: "n", texto: pct(total ? c.valor / total * 100 : 0, 2) }),
-          h("td", { class: "n " + ((noPl || 0) > 10 ? "alerta" : ""),
-                    texto: noPl === null ? "—" : pct(noPl, 2) })
+          h("td", { class: "n " + ((noPl || 0) > 100 ? "ruim"
+                                   : ((noPl || 0) > 10 ? "alerta" : "")),
+                    texto: noPl === null ? "—" : pct(noPl, 2) }),
+          /* O PL que este RPPS declarou, com a divergência contra a CVM ao
+           * lado. É o que dá nome à divergência: quando o administrador diz um
+           * número e um cotista declara outro, dá para ver qual cotista. */
+          h("td", { class: "n" + (c.pl_divergente ? " ruim" : "") }, [
+            h("div", { texto: c.pl_declarado ? reais(c.pl_declarado) : "—" }),
+            c.divergencia_pl === null || c.divergencia_pl === undefined
+              ? null
+              : h("div", { class: "nota", texto:
+                  (c.divergencia_pl >= 0 ? "+" : "\u2212") +
+                  pct(Math.abs(c.divergencia_pl), 1) + " vs CVM" })
+          ].filter(Boolean))
         ]);
       }).concat([
         linhaTotal(num(lista.length, 0) + " RPPS",
           [reais(total), pct(100, 2),
-           ativo.pl_fundo ? pct(total / ativo.pl_fundo * 100, 2) : "—"])
-      ]), true);
+           plOficial ? pct(total / plOficial * 100, 2) : "—", ""])
+      ]), true)];
+
+    if (plOficial && comDeclarado.length) {
+      nos.push(h("p", { class: "nota", texto:
+        "PL oficial da CVM em " + (data(ativo.data_cvm) || "—") + ": " +
+        reais(plOficial) +
+        (ativo.cotistas_cvm ? " · " + num(ativo.cotistas_cvm, 0) + " cotistas no fundo"
+                            : "") + ". " +
+        num(divergentes.length, 0) + " de " + num(comDeclarado.length, 0) +
+        " RPPS que declararam o PL divergem dele em mais de 5%." }));
+    } else if (ativo.na_cvm === false) {
+      nos.push(h("p", { class: "nota", texto:
+        "Este CNPJ não está no informe diário da CVM, então não há PL oficial " +
+        "para confrontar. Dos fundos que os RPPS declaram, a CVM alcança 19,7% " +
+        "por contagem e 95,5% do valor — os que faltam são pequenos." }));
+    }
+    return h("div", {}, nos);
+  }
+
+  /* O que a CVM acrescenta, e o que ela contradiz. A cobertura vem antes dos
+   * números porque uma coluna vazia em quatro de cada cinco linhas, sem
+   * explicação, parece defeito do painel. */
+  function cartaoDaCvm(c) {
+    if (!c || !c.disponivel) return null;
+    return cartao("Confronto com a CVM", "CVM · informe diário dos fundos",
+      "O PL e o número de cotistas apurados pelo administrador do fundo, " +
+      "contra o que os RPPS declaram" +
+      (c.competencia ? " · posição de " + (data(c.competencia) || c.competencia) : ""),
+      [h("div", { class: "kpis" }, [
+        kpi("Fundos achados na CVM", num(c.fundos_na_cvm, 0),
+          pct(c.perc_fundos, 1) + " dos " + num(c.fundos_declarados, 0) +
+          " com CNPJ · " + pct(c.perc_valor, 1) + " do valor"),
+        kpi("PL declarado divergente", num(c.pl_divergente, 0),
+          "acima de " + pct(c.limiar_divergencia, 0) + " de diferença",
+          c.pl_divergente ? "alerta" : "bom"),
+        kpi("Posição acima do PL oficial", num(c.acima_do_pl, 0),
+          "a soma dos RPPS excede o fundo inteiro — impossível",
+          c.acima_do_pl ? "ruim" : "bom")
+      ]),
+       h("p", { class: "nota", texto:
+         "A cobertura é parcial e a assimetria importa: a CVM alcança um quinto " +
+         "dos fundos por contagem e quase todo o valor, porque os que faltam são " +
+         "pequenos. Duas causas prováveis — a Resolução CVM 175 partiu fundos em " +
+         "classes com CNPJ novo, e parte do que o RPPS declara com CNPJ não é " +
+         "fundo (emissor de CDB, banco). O painel diz quando não achou, em vez " +
+         "de mostrar vazio sem explicação." })]);
   }
 
   function abaInvestimentos() {
@@ -4064,9 +4131,9 @@
       colunaNacional("Classe", "classe", false),
       colunaNacional("Valor investido", "valor", true),
       colunaNacional("% do total", "perc", true),
-      colunaNacional("RPPS", "rpps", true),
+      colunaNacional("RPPS / cotistas", "rpps", true),
       colunaNacional("Maior posição", "maior", true),
-      colunaNacional("PL do fundo", "plfundo", true)
+      colunaNacional("PL do fundo (CVM)", "plcvm", true)
     ];
 
     var linhas = [];
@@ -4143,6 +4210,7 @@
           "alerta")
       ]),
       cartaoPorNatureza(a.por_natureza),
+      cartaoDaCvm(a.cvm),
       cartao("Todos os ativos", "DAIR_CARTEIRA",
         num(a.ativos, 0) + " ativos" +
         (a.competencias.length > 1

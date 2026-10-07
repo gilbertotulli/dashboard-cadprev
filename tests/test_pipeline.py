@@ -48,6 +48,19 @@ class TestPipeline(unittest.TestCase):
         store.gravar("SICONFI_ENTE",
                      (fieldmap.aplicar(resolucao, b) for b in brutos))
 
+        # A CVM é a terceira fonte, e sem ela as colunas de PL oficial ficam
+        # vazias na saída — os testes que as guardam passariam por não ter o que
+        # conferir, que é o pior jeito de um teste passar.
+        from cadprev import cvm
+        fechamento = cvm.Cliente(fixtures=cls.fixtures).fechamento(
+            demo.ANO, demo.MES_CVM)
+        registros = [dict(d, exercicio=demo.ANO, mes=demo.MES_CVM)
+                     for d in fechamento.values()]
+        resolucao = fieldmap.resolver("CVM_FUNDO", registros[0].keys())
+        store.gravar("CVM_FUNDO",
+                     (fieldmap.aplicar(resolucao, r) for r in registros),
+                     {"exercicio": demo.ANO, "mes": demo.MES_CVM})
+
         rreo = siconfi.ClienteRREO(fixtures=cls.fixtures, pausa=0)
         do_anexo = []
         for alvo in store.consultar(
@@ -977,6 +990,125 @@ class TestPipeline(unittest.TestCase):
             # A maior posição publicada é a do maior cotista.
             self.assertAlmostEqual(max(x["valor"] for x in lista),
                                    i["maior_posicao"], delta=1.0, msg=i["nome"])
+
+    # ----------------------------------------- o confronto com a CVM
+
+    def test_cvm_so_fala_de_fundo(self):
+        """Um título público não é fundo: não tem PL nem cotistas, e a CVM não
+        fala dele. ``na_cvm`` fica indefinido — diferente de "é fundo e não
+        achei", que é informação sobre a cobertura."""
+        a = self._json("ativos-nacional.json")
+        for i in a["itens"]:
+            if i["tipo_de_identidade"] == "cnpj":
+                self.assertIn(i["na_cvm"], (True, False), i["nome"])
+            else:
+                self.assertIsNone(i["na_cvm"], i["nome"])
+                self.assertNotIn("pl_cvm", i)
+
+    def test_fundo_fora_da_cvm_e_distinguivel_de_fundo_sem_pl(self):
+        """A cobertura é parcial — 19,7% dos fundos por contagem na base real —
+        e uma coluna vazia sem explicação parece defeito do painel.
+
+        O demo precisa dos dois casos, senão a distinção não está provada.
+        """
+        a = self._json("ativos-nacional.json")
+        fundos = [i for i in a["itens"] if i["tipo_de_identidade"] == "cnpj"]
+        dentro = [i for i in fundos if i["na_cvm"]]
+        fora = [i for i in fundos if i["na_cvm"] is False]
+        self.assertTrue(dentro, "nenhum fundo achado na CVM")
+        self.assertTrue(fora, "o demo precisa de fundo que a CVM não traz")
+        for i in fora:
+            self.assertNotIn("pl_cvm", i)
+        for i in dentro:
+            self.assertIsNotNone(i["pl_cvm"], i["nome"])
+            self.assertIsNotNone(i["cotistas_cvm"], i["nome"])
+            self.assertTrue(i["data_cvm"], i["nome"])
+
+        resumo = a["cvm"]
+        self.assertTrue(resumo["disponivel"])
+        self.assertEqual(resumo["fundos_na_cvm"], len(dentro))
+        self.assertEqual(resumo["fundos_declarados"], len(fundos))
+
+    def test_cvm_usa_o_fechamento_do_mes(self):
+        """O informe traz uma linha por fundo **por dia**, e o painel mostra o
+        fechamento.
+
+        Pegar o primeiro dia daria o PL de trinta dias antes, e a divergência
+        contra o DAIR passaria a medir o movimento do fundo no mês em vez da
+        diferença entre quem declarou o quê.
+        """
+        from cadprev import cvm, demo as amostra
+        fechamento = cvm.Cliente(fixtures=self.fixtures).fechamento(
+            amostra.ANO, amostra.MES_CVM)
+        self.assertTrue(fechamento)
+        ultimo = "{}-{:02d}-{:02d}".format(
+            amostra.ANO, amostra.MES_CVM, amostra._ULTIMO_DIA[amostra.MES_CVM])
+        for cnpj, dados in fechamento.items():
+            self.assertEqual(dados["data"], ultimo, cnpj)
+        # E é esse valor que chega à tela.
+        a = self._json("ativos-nacional.json")
+        for i in a["itens"]:
+            if i.get("na_cvm"):
+                self.assertEqual(i["data_cvm"], ultimo, i["nome"])
+
+    def test_posicao_acima_do_pl_oficial_e_achado(self):
+        """A régua interna usa o maior PL que algum RPPS declarou, e é frouxa de
+        propósito porque o campo é ruidoso. Contra o número do administrador a
+        impossibilidade fica firme: eram 29 fundos em setembro de 2026."""
+        a = self._json("ativos-nacional.json")
+        acima = [i for i in a["itens"] if i.get("acima_do_pl")]
+        self.assertTrue(acima, "o demo precisa de fundo com posição acima do PL")
+        for i in acima:
+            self.assertGreater(i["valor"], i["pl_cvm"])
+            self.assertGreater(i["vezes_o_pl"], 1.0)
+        self.assertEqual(a["cvm"]["acima_do_pl"], len(acima))
+
+    def test_divergencia_do_pl_tem_limiar_declarado(self):
+        """Cinco por cento é folga para a diferença de data — o DAIR é do fim da
+        competência e o informe da CVM do último dia útil dela — e para
+        arredondamento. Não é tolerância a erro, e o limiar fica publicado."""
+        from cadprev import build as b
+        a = self._json("ativos-nacional.json")
+        self.assertEqual(a["cvm"]["limiar_divergencia"], b.DIVERGENCIA_DO_PL)
+        divergentes = [i for i in a["itens"] if i.get("pl_divergente")]
+        self.assertTrue(divergentes, "o demo precisa de PL declarado divergente")
+        for i in a["itens"]:
+            if i.get("divergencia_pl") is None:
+                continue
+            self.assertEqual(i["pl_divergente"],
+                             abs(i["divergencia_pl"]) > b.DIVERGENCIA_DO_PL,
+                             i["nome"])
+
+    def test_cotista_traz_o_pl_que_ele_mesmo_declarou(self):
+        """É o que dá nome à divergência: quando o administrador diz um número e
+        um cotista declara outro, dá para ver qual cotista."""
+        from cadprev import build as b
+        a = self._json("ativos-nacional.json")
+        c = self._json("ativos-cotistas.json")
+        self.assertEqual(c["limiar_divergencia"], b.DIVERGENCIA_DO_PL)
+        achou_declarado = achou_divergente = False
+        por_chave = {i["chave"]: i for i in a["itens"]}
+        for chave, lista in c["por_ativo"].items():
+            ativo = por_chave[chave]
+            for cotista in lista:
+                if cotista["pl_declarado"] is None:
+                    self.assertIsNone(cotista["divergencia_pl"])
+                    continue
+                achou_declarado = True
+                if not ativo.get("pl_cvm"):
+                    # Sem PL oficial não há divergência a calcular.
+                    self.assertIsNone(cotista["divergencia_pl"])
+                    continue
+                esperado = round((cotista["pl_declarado"] - ativo["pl_cvm"])
+                                 / ativo["pl_cvm"] * 100, 1)
+                self.assertAlmostEqual(cotista["divergencia_pl"], esperado,
+                                       places=1)
+                if cotista["pl_divergente"]:
+                    achou_divergente = True
+        self.assertTrue(achou_declarado, "nenhum cotista com PL declarado")
+        self.assertTrue(achou_divergente,
+                        "nenhum cotista divergindo do PL oficial — o caso que a "
+                        "coluna existe para mostrar")
 
     def test_norma_dos_investimentos_vem_de_um_lugar_so(self):
         """O painel não mantém tabela de limites — quem declara o teto de cada
