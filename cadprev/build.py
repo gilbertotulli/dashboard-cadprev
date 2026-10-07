@@ -26,7 +26,7 @@ from datetime import date, datetime, timezone
 from typing import AbstractSet, Any, Dict, List, Mapping, Optional, Sequence
 
 from . import (ativos, benchmark, codigos, competencia as competencia_mod,
-               distribuicao, fundos, grupos, massas, qualidade)
+               distribuicao, fundos, gestoras, grupos, massas, qualidade)
 from .store import Store
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -107,6 +107,15 @@ def montar_entes(store: Store) -> Dict[str, Dict[str, Any]]:
             registro["regime"] = regime
             registro["tem_rpps"] = (
                 regime in _REGIMES_COM_RPPS if regime else cnpj in com_carteira)
+            # A unidade gestora não vem da API: o CADPREV identifica tudo pelo
+            # CNPJ do ente, e quem administra os recursos quase sempre é pessoa
+            # jurídica própria. É o CNPJ da UG que aparece como cotista no
+            # extrato do administrador do fundo.
+            ug = gestoras.da(cnpj)
+            if ug:
+                registro["ug_cnpj"] = ug["cnpj"]
+                registro["ug_nome"] = ug["nome"]
+                registro["ug_natureza"] = ug["natureza"]
             entes[cnpj] = registro
     return entes
 
@@ -1148,6 +1157,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
 
     agregado: Dict[tuple, Dict[str, Any]] = {}
     competencias: Dict[str, int] = defaultdict(int)
+    por_ente: Dict[str, float] = defaultdict(float)
     for linha in linhas:
         cnpj = linha["cnpj_ente"]
         if (cnpj in fora or linha["rowid"] in linhas_fora
@@ -1161,6 +1171,7 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
         alvo["entes"].add(cnpj)
         alvo["maior_posicao"] = max(alvo["maior_posicao"], valor)
         competencias["{:04d}-{:02d}".format(*recente[cnpj])] += 1
+        por_ente[cnpj] += valor
 
     if not agregado:
         return {"disponivel": False}
@@ -1198,8 +1209,39 @@ def montar_ativos_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],
                     "perc": _pct(d["valor"], total)}
             for chave, d in por_identidade.items()
         },
+        "por_natureza": _carteira_por_natureza(por_ente, entes, fora),
         "itens": publicados,
     }
+
+
+def _carteira_por_natureza(por_ente: Mapping[str, float],
+                           entes: Mapping[str, Dict[str, Any]],
+                           fora: AbstractSet[str]) -> List[Dict[str, Any]]:
+    """A carteira por natureza jurídica da unidade gestora.
+
+    Autarquia, administração direta, fundação. É um corte de governança — quem
+    administra os recursos é pessoa jurídica própria ou um setor da prefeitura —
+    e vem do cadastro da SPREV, não da API: o CADPREV identifica tudo pelo CNPJ
+    do ente e não diz nada sobre a natureza da gestora.
+
+    A **mediana** lidera, pela razão de sempre: alguns RPPS estaduais grandes
+    são autarquias, e a média da autarquia descreveria eles. O total também
+    aparece, porque a pergunta "quanto do dinheiro do país está sob cada arranjo"
+    é legítima e só o total responde.
+    """
+    grupos_de_valor: Dict[str, List[float]] = defaultdict(list)
+    for cnpj, valor in por_ente.items():
+        if cnpj in fora:
+            continue
+        natureza = ((entes.get(cnpj) or {}).get("ug_natureza")
+                    or "Não consta no cadastro")
+        grupos_de_valor[natureza].append(valor)
+    saida = []
+    for natureza, valores in grupos_de_valor.items():
+        saida.append(dict(distribuicao.resumir(valores),
+                          rotulo=natureza, rpps=len(valores),
+                          total=round(sum(valores), 2)))
+    return sorted(saida, key=lambda d: -d["total"])
 
 
 def montar_militar_nacional(store: Store, entes: Mapping[str, Dict[str, Any]],

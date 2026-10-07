@@ -63,11 +63,12 @@ cadprev/        ingestão e agregação (Python, sem dependências)
   competencia.py  qual competência do DAIR já fechou, e a última de cada ente
   ativos.py       o nome do ativo, e o vencimento do título quando há um
   distribuicao.py mediana e quartis dos quadros consolidados
+  gestoras.py     a unidade gestora de cada RPPS — não vem da API
   siconfi.py      cliente da segunda fonte: o SICONFI, do Tesouro Nacional
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
 web/            painel estático (HTML, CSS e JS, sem build)
-data/           tabelas auxiliares que não vêm da API
+data/           tabelas auxiliares que não vêm da API (capitais, unidade gestora)
 fixtures/demo/  amostras sintéticas, no formato da API
 docs/           levantamento da API e anteprojeto do painel
 ```
@@ -755,6 +756,43 @@ classe com subtotais, ou lista única, colunas ordenáveis — mais um **filtro 
 texto**, porque quatro mil linhas não se navegam rolando. O filtro casa no
 nome, no CNPJ (aceita colado com pontuação), na classe, no segmento e no
 vencimento, sem acento e sem caixa.
+
+## A unidade gestora, e por que ela não vem da API
+
+O CADPREV identifica tudo pelo CNPJ do **ente federativo**. Quem administra os
+recursos é a **unidade gestora**, e em 2.819 das 3.976 linhas do cadastro da
+SPREV ela tem CNPJ próprio — autarquia, fundo ou instituto.
+
+A distinção importa fora do painel: o CNPJ que aparece como cotista no extrato
+do administrador do fundo é o da UG, não o do ente. Sem o mapeamento não se
+reconcilia o que o painel mostra com o que o custodiante manda.
+
+A fonte é o arquivo `cnpj-ente-cpnj-ug` do Portal da Previdência, atualizado até
+31/07/2025, convertido para `data/unidade-gestora.csv`. **Só as linhas com CNPJ
+vigente entram**: o cadastro guarda o histórico, e 960 das linhas de RPPS são de
+CNPJ inativo — uma UG que mudou de CNPJ aparece duas vezes. Entre as vigentes
+não há ambiguidade, nenhum ente tem duas. Cinco dos 2.131 RPPS não têm nenhuma
+UG vigente, e para eles a consulta devolve ausência.
+
+A natureza jurídica da gestora vira um corte de governança sobre a carteira, com
+a mediana à frente: vários RPPS estaduais grandes são autarquias, e a média da
+autarquia descreveria eles em vez do RPPS típico.
+
+| Natureza jurídica da UG | RPPS |
+| --- | ---: |
+| Autarquia | 1.450 |
+| Administração direta | 516 |
+| Fundação de direito público | 81 |
+| Outros | 79 |
+
+### O cadastro confirma o universo do painel
+
+Fonte independente para um número que o painel já publicava. O arquivo da SPREV
+traz **2.131** entes com `REGIME = RPPS`; o painel conta **2.169**. A diferença
+são 38 entes em **extinção**, que o painel conta como tendo RPPS de propósito —
+têm massa, patrimônio e obrigação de declarar, só não admitem novos segurados —
+e que o cadastro classifica numa categoria à parte. Tirados esses, os dois
+chegam a 2.131 e 2.132: um ente de diferença em dois mil e cento e trinta.
 
 ## Certificação de quem responde pelos recursos
 

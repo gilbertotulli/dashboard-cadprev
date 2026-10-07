@@ -916,6 +916,7 @@
           campo("Segregação da massa", seg.segregacao || "—"),
           campo("Exercício do DRAA", est.exercicio || "—")
         ]),
+        cartaoDaGestora(e),
         alertaDeCertificacao(e.governanca),
         h("div", { class: "grade duas" }, [
           cartao("Alíquotas vigentes", "RPPS_ALIQUOTA",
@@ -940,6 +941,23 @@
         ])
       ];
     });
+  }
+
+  /* A unidade gestora. Não vem da API — o CADPREV identifica tudo pelo CNPJ do
+   * ente, e quem administra os recursos quase sempre é pessoa jurídica própria.
+   * É o CNPJ da UG que aparece como cotista no extrato do administrador do
+   * fundo, e sem ele não se reconcilia o painel com o que o custodiante manda. */
+  function cartaoDaGestora(e) {
+    if (!e.ug_cnpj && !e.ug_nome) return null;
+    return cartao("Unidade gestora dos recursos",
+      "SPREV · cadastro CNPJ ente × CNPJ UG",
+      "Não vem da API: o CADPREV identifica tudo pelo CNPJ do ente federativo",
+      h("div", { class: "campos" }, [
+        campo("Unidade gestora", e.ug_nome || "—"),
+        campo("CNPJ da unidade gestora", formatarCnpj(e.ug_cnpj)),
+        campo("CNPJ do ente", formatarCnpj(e.cnpj)),
+        campo("Natureza jurídica", e.ug_natureza || "não informada")
+      ]));
   }
 
   function tabelaComposicao(itens) {
@@ -3698,6 +3716,40 @@
            "/" + s.slice(8, 12) + "-" + s.slice(12);
   }
 
+  /* Quanto do dinheiro está sob cada arranjo de gestão. A mediana lidera, pela
+   * razão de sempre: vários RPPS estaduais grandes são autarquias, e a média da
+   * autarquia descreveria eles. O total também aparece, porque "quanto do
+   * dinheiro do país está sob cada arranjo" é pergunta legítima. */
+  function cartaoPorNatureza(linhas) {
+    if (!linhas || !linhas.length) return null;
+    var total = linhas.reduce(function (x, n) { return x + n.total; }, 0);
+    return cartao("Carteira por natureza jurídica da gestora",
+      "DAIR_CARTEIRA · SPREV (cadastro de UG)",
+      "Autarquia, administração direta ou fundação — um corte de governança " +
+      "que não vem da API",
+      tabela([{ t: "Natureza jurídica da UG" }, { t: "RPPS", n: true },
+              { t: "Carteira somada", n: true }, { t: "% do total", n: true },
+              { t: "Mediana por RPPS", n: true }],
+        linhas.map(function (n) {
+          return h("tr", {}, [
+            h("td", {}, [
+              h("div", { texto: n.rotulo }),
+              n.disponivel ? h("div", { class: "nota", texto:
+                "metade do meio de " + reais(n.p25) + " a " + reais(n.p75) }) : null
+            ].filter(Boolean)),
+            h("td", { class: "n", texto: num(n.rpps, 0) }),
+            h("td", { class: "n", texto: reais(n.total) }),
+            h("td", { class: "n", texto: pct(total ? n.total / total * 100 : 0, 1) }),
+            h("td", { class: "n", texto: n.disponivel ? reais(n.mediana)
+              : "menos de 3 RPPS" })
+          ]);
+        }).concat([
+          linhaTotal("Total", [
+            num(linhas.reduce(function (x, n) { return x + n.rpps; }, 0), 0),
+            reais(total), pct(100, 1), ""])
+        ]), true));
+  }
+
   function abaInvestimentos() {
     return Promise.all([
       buscar("ativos-nacional.json"),
@@ -3909,6 +3961,7 @@
           pct((ident.nome || {}).perc, 1) + " do valor · sem CNPJ na fonte",
           "alerta")
       ]),
+      cartaoPorNatureza(a.por_natureza),
       cartao("Todos os ativos", "DAIR_CARTEIRA",
         num(a.ativos, 0) + " ativos" +
         (a.competencias.length > 1
