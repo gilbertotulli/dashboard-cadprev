@@ -611,7 +611,9 @@
     return h("div", { class: "ficha-topo" }, [
       h("div", {}, [
         h("div", { class: "nm" },
-          [e.ente || "—"].concat(marcasDoEnte(e.cnpj))),
+          [e.ente || "\u2014"].concat(seloDoProGestao(e))
+                              .concat(seloDoIsp(e))
+                              .concat(marcasDoEnte(e.cnpj))),
         h("div", {
           class: "id", texto: "CNPJ " + cnpjFormatado(e.cnpj) + " · " + (e.uf || "—") +
             " · " + rotuloEsfera(e.esfera) + " · " + (e.regiao || "—")
@@ -619,6 +621,73 @@
       ]),
       selo
     ]);
+  }
+
+  /* O nível do Pró-Gestão ao lado do nome. Fica aqui, e não numa aba, porque
+   * é o que diz se aquela carteira podia ser aquela carteira: a Resolução CMN
+   * 5.272/2025, em vigor desde 02/02/2026, condiciona ao nível de adesão quais
+   * ativos o RPPS pode ter e em que limite (art. 6º, § 3º).
+   *
+   * O painel mostra o nível e não julga a carteira. O rol por nível está na
+   * resolução, o limite de cada classe já vem declarado no próprio DAIR, e
+   * inventar aqui um "podia ou não podia" seria pôr juízo derivado no lugar do
+   * que a fonte afirma.
+   *
+   * Aderir não é certificar: 385 dos 709 entes da relação assinaram o termo e
+   * não têm nível. Para esses o selo diz "aderiu", que é diferente de não
+   * aparecer e muito diferente de nível zero. */
+  var NIVEIS_PRO_GESTAO = ["Acesso", "I", "II", "III", "IV"];
+
+  function registroDoEnte(cnpj) {
+    for (var i = 0; i < (estado.entes || []).length; i++) {
+      if (estado.entes[i].cnpj === cnpj) return estado.entes[i];
+    }
+    return null;
+  }
+
+  function seloDoProGestao(e) {
+    // A ficha traz o registro inteiro; o índice, só o nível. Vale o que houver,
+    // para o selo aparecer igual na ficha e em qualquer tela que só tenha o
+    // índice carregado.
+    var pg = e.pro_gestao;
+    var nivel = pg && typeof pg === "object" ? pg.nivel : pg;
+    if (!nivel) {
+      var r = pg && typeof pg === "object" ? pg : registroDoEnte(e.cnpj);
+      var aderiu = r && r.aderiu;
+      if (!aderiu) return [];
+      return [h("span", { class: "selo-nivel aderiu",
+                          title: "Aderiu ao Pró-Gestão em " + data(aderiu) +
+                                 " e ainda não tem certificação" },
+        [document.createTextNode("Pró-Gestão: aderiu")])];
+    }
+    var forte = NIVEIS_PRO_GESTAO.indexOf(nivel) >= 2;
+    var desde = pg && typeof pg === "object" ? pg.desde : null;
+    return [h("span", {
+      class: "selo-nivel" + (forte ? " alto" : "") +
+             (NIVEIS_PRO_GESTAO.indexOf(nivel) < 0 ? " indefinido" : ""),
+      title: "Pró-Gestão nível " + nivel +
+             (desde ? ", desde " + data(desde) : "") +
+             " · a Resolução CMN 5.272/2025 condiciona ao nível quais ativos " +
+             "o RPPS pode ter e em que limite"
+    }, [document.createTextNode("Pró-Gestão " + nivel)])];
+  }
+
+  /* A nota do ISP, que é anual e de outro ano-base que o resto do painel. A
+   * data vai no título justamente para que ninguém a leia como "hoje". */
+  function seloDoIsp(e) {
+    var i = e.isp;
+    var nota = i && typeof i === "object" ? i.nota : i;
+    if (!nota) return [];
+    var eixos = i && typeof i === "object"
+      ? " · gestão " + (i.gestao || "—") + ", finanças " + (i.financas || "—") +
+        ", atuária " + (i.atuaria || "—")
+      : "";
+    return [h("span", {
+      class: "selo-nivel isp nota-" + String(nota).toLowerCase(),
+      title: "Índice de Situação Previdenciária" +
+             (i && i.exercicio ? " " + i.exercicio : "") + ": nota " + nota +
+             eixos
+    }, [document.createTextNode("ISP " + nota)])];
   }
 
   /* Rótulos curtos para as marcas de qualidade deste ente. Ficam ao lado do

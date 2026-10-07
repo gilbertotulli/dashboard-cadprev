@@ -181,6 +181,11 @@ _ESTADOS_COM_FUNDO_MILITAR = frozenset({4})
 #: O ente que estoura um teto de verdade: BDR bem acima dos 10% da classe.
 _ENTE_EXCEDE_CLASSE = 8
 
+#: O ente cuja certificação do Pró-Gestão caducou. A planilha da SPREV escreve
+#: "vencida" no lugar do nível, e isso não é um nível: o painel tem de mostrar
+#: a palavra da fonte em vez de inventar um nível zero ou esconder a linha.
+_ENTE_PRO_GESTAO_VENCIDA = 24
+
 #: O ente cujo segmento Renda Fixa passa de 80% com todas as classes dentro dos
 #: próprios tetos. Pela regra antiga — segmento contra um teto qualquer do
 #: segmento — ele era acusado de ilegalidade; pela regra correta, está em ordem.
@@ -1268,6 +1273,87 @@ def _escrever_cvm(destino: str, itens: List[Dict[str, Any]]) -> None:
         z.writestr(nome + ".csv", buffer.getvalue().encode("latin-1"))
 
 
+#: Pró-Gestão e ISP no conjunto de demonstração. Não vêm da API nem do gerador
+#: de tabelas: são duas planilhas da SPREV, e o demo reproduz o CSV convertido,
+#: que é o formato que ``certificacao`` lê de verdade.
+#:
+#: Os casos que precisam existir, porque cada um quebra uma regra diferente:
+#: entes certificados nos quatro níveis e no de acesso; um que aderiu e não
+#: certificou, que é estado distinto de não estar na lista; um com a palavra
+#: "vencida" no lugar do nível, que é o que a SPREV escreve quando a
+#: certificação caduca; e a maioria fora das duas listas, como no país.
+_PRO_GESTAO = {
+    0: "IV", 1: "III", 2: "II", 4: "I", 6: "Acesso",
+    9: "II", 12: "III", 15: "I", 18: "IV",
+    _ENTE_PRO_GESTAO_VENCIDA: "vencida",
+}
+#: Aderiu ao termo e ainda não certificou — 385 dos 709 entes da relação real.
+_SO_ADERIU = frozenset({3, 7, 11, 20, 25})
+
+#: A nota do ISP de cada ente, ciclando pelas quatro para que todas apareçam.
+_NOTAS_DO_ISP = ("A", "B", "C", "D")
+#: Entes fora do ISP: a planilha alcança 2.133 dos 2.169 RPPS, não todos.
+_ENTES_SEM_ISP = frozenset({5, 13, 26})
+
+ANO_DO_ISP = ANO - 1
+DATA_DAS_PLANILHAS = {"pro_gestao": "{}-09-24".format(ANO),
+                      "isp": "{}-12-04".format(ANO_DO_ISP)}
+
+
+def certificacao_dos_entes() -> Dict[str, List[Dict[str, str]]]:
+    """As duas tabelas da SPREV, no formato dos CSV de ``data/``."""
+    pro_gestao, isp = [], []
+    # O universo é o mesmo de ``gerar``: os estados de ``_ENTES`` mais os
+    # municípios. Percorrer só ``_ENTES`` daria certificação a dezesseis
+    # estados e a nenhum município, e o corte por porte do painel passaria a
+    # dizer que só RPPS estadual se certifica.
+    todos = [(uf, nome) for uf, nome, _ in _ENTES] + list(_MUNICIPIOS)
+    for i, (uf, nome) in enumerate(todos):
+        cnpj = _cnpj(i)
+        nivel = _PRO_GESTAO.get(i)
+        if nivel or i in _SO_ADERIU:
+            # A adesão vem antes da certificação, sempre: certificar sem ter
+            # aderido não existe, e um demo que permitisse isso deixaria passar
+            # um painel que mostra "certificado" sem data de adesão.
+            pro_gestao.append({
+                "cnpj_ente": cnpj, "ente": nome, "uf": uf,
+                "adesao": "{}-03-11".format(ANO - 3),
+                "certificacao": "{}-08-20".format(ANO - 2) if nivel else "",
+                "nivel_inicial": nivel if nivel in ("I", "II") else "",
+                "renovacao": "{}-05-06".format(ANO - 1) if nivel else "",
+                "nivel": nivel or "",
+                "certificadora": "ICQ BRASIL" if nivel else "",
+            })
+        if i not in _ENTES_SEM_ISP:
+            isp.append({
+                "cnpj_ente": cnpj, "ente": "{} - {}".format(nome.upper(), uf),
+                "uf": uf, "exercicio": str(ANO_DO_ISP),
+                "grupo": "GRANDE PORTE" if i < 8 else "MÉDIO PORTE",
+                "subgrupo": "MAIOR MATURIDADE" if i % 2 else "MENOR MATURIDADE",
+                "gestao": _NOTAS_DO_ISP[(i + 1) % 4],
+                "financas": _NOTAS_DO_ISP[(i + 2) % 4],
+                "atuaria": _NOTAS_DO_ISP[(i + 3) % 4],
+                "isp": _NOTAS_DO_ISP[i % 4],
+            })
+    return {"pro_gestao": pro_gestao, "isp": isp}
+
+
+def _escrever_certificacao(destino: str) -> None:
+    """Grava os dois CSV e o JSON de procedência, como o comando real faz."""
+    from cadprev import planilhas
+    tabelas = certificacao_dos_entes()
+    planilhas.gravar(os.path.join(destino, "pro-gestao.csv"),
+                     planilhas.CAMPOS_PROGESTAO, iter(tabelas["pro_gestao"]))
+    planilhas.gravar(os.path.join(destino, "isp.csv"),
+                     planilhas.CAMPOS_ISP, iter(tabelas["isp"]))
+    with open(os.path.join(destino, "certificacao-fonte.json"), "w",
+              encoding="utf-8") as fh:
+        json.dump({qual: {"data": quando, "arquivo": "demonstração",
+                          "url": "", "linhas": len(tabelas[qual])}
+                   for qual, quando in DATA_DAS_PLANILHAS.items()},
+                  fh, ensure_ascii=False, indent=2, sort_keys=True)
+
+
 def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     """Grava as amostras no formato de página da API."""
     os.makedirs(destino, exist_ok=True)
@@ -1288,6 +1374,7 @@ def escrever(destino: str = DIR_DEMO, nivel_a: bool = False) -> Dict[str, int]:
     # ponto-e-vírgula. A amostra reproduz o formato, não um atalho — o cliente
     # tem de ser exercitado pelo caminho que ele usa de verdade.
     _escrever_cvm(destino, cvm_dos_fundos(tabelas))
+    _escrever_certificacao(destino)
     contagem = {}
     for nome, registros in tabelas.items():
         caminho = os.path.join(destino, nome + ".json")

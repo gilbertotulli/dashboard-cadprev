@@ -46,6 +46,7 @@ python -m cadprev serve
 | `ingest` | traz endpoints para o banco local (SQLite), paginando |
 | `dair-atrasados` | completa a carteira ente a ente: a última competência de quem a varredura nacional não alcançou |
 | `cvm` | PL e número de cotistas oficiais dos fundos, do informe diário da CVM |
+| `certificacao` | nível do Pró-Gestão e nota do ISP, das planilhas da SPREV |
 | `build` | pré-agrega tudo nos JSON que o painel lê |
 | `serve` | serve `web/` localmente |
 | `status` | o que já foi ingerido, quando e com quais filtros |
@@ -65,12 +66,15 @@ cadprev/        ingestão e agregação (Python, sem dependências)
   ativos.py       o nome do ativo, e o vencimento do título quando há um
   distribuicao.py mediana e quartis dos quadros consolidados
   gestoras.py     a unidade gestora de cada RPPS — não vem da API
+  certificacao.py nível do Pró-Gestão e nota do ISP — não vêm da API
+  planilhas.py    baixa e converte as planilhas que a SPREV publica em HTML
   cvm.py          cliente da terceira fonte: o PL e os cotistas oficiais
   siconfi.py      cliente da segunda fonte: o SICONFI, do Tesouro Nacional
   grupos.py       esfera, região e capitais
   build.py        agregação para os JSON do painel
 web/            painel estático (HTML, CSS e JS, sem build)
-data/           tabelas auxiliares que não vêm da API (capitais, unidade gestora)
+data/           tabelas auxiliares que não vêm da API (capitais, unidade
+                gestora, Pró-Gestão, ISP)
 fixtures/demo/  amostras sintéticas, no formato da API
 docs/           levantamento da API e anteprojeto do painel
 ```
@@ -125,10 +129,15 @@ isso, e o número resultante sairia daqui para dentro de um ofício.
 
 ## O que não vem pela API
 
-ISP (Indicador de Situação Previdenciária), MSC (Matriz de Saldos Contábeis), acordos de
-parcelamento de débitos e o enquadramento de fundos existem como planilha em dados
-abertos, não como endpoint. A marcação de capitais também não vem da API: depende de
-[`data/capitais.csv`](data/capitais.csv), mantido aqui.
+MSC (Matriz de Saldos Contábeis), acordos de parcelamento de débitos e o enquadramento
+de fundos existem como planilha em dados abertos, não como endpoint. A marcação de
+capitais também não vem da API: depende de [`data/capitais.csv`](data/capitais.csv),
+mantido aqui.
+
+O **Pró-Gestão** e o **ISP** estavam nessa lista e saíram dela: as duas planilhas
+são convertidas para CSV por `python -m cadprev certificacao` e versionadas em
+[`data/pro-gestao.csv`](data/pro-gestao.csv) e [`data/isp.csv`](data/isp.csv). Ver
+[o nível do Pró-Gestão, ao lado do nome](#o-nível-do-pró-gestão-ao-lado-do-nome).
 
 ## Publicar para outros RPPS
 
@@ -941,6 +950,78 @@ são 38 entes em **extinção**, que o painel conta como tendo RPPS de propósit
 têm massa, patrimônio e obrigação de declarar, só não admitem novos segurados —
 e que o cadastro classifica numa categoria à parte. Tirados esses, os dois
 chegam a 2.131 e 2.132: um ente de diferença em dois mil e cento e trinta.
+
+## O nível do Pró-Gestão, ao lado do nome
+
+O Pró-Gestão é a certificação institucional do RPPS, em níveis crescentes —
+Acesso, I, II, III e IV. Ele estava fora do painel e entrou por um motivo de
+investimentos: a **Resolução CMN 5.272/2025**, que desde 02/02/2026 substitui a
+4.963/2021, condiciona ao nível de adesão quais ativos o RPPS pode ter e em que
+limite (art. 6º, § 3º). Sem o nível à vista, olhar uma carteira não responde se
+ela podia ser aquela carteira.
+
+Por isso o selo fica **ao lado do nome do ente**, e não numa aba própria: ele é
+pré-requisito de leitura da carteira, como as marcas de qualidade. O painel
+mostra o nível e não julga a carteira — o rol por nível está na resolução, o
+limite de cada classe já vem declarado no próprio DAIR, e um "podia ou não
+podia" calculado aqui seria juízo derivado no lugar do que a fonte afirma.
+
+**Aderir não é certificar.** Dos 709 entes da relação, 332 têm certificação em
+vigor e 385 só assinaram o termo de adesão. São três estados, não dois, e o
+painel mostra os três: certificado com nível, "aderiu" sem nível, e fora da
+relação. Colapsar os dois últimos em "sem Pró-Gestão" perderia quem está no meio
+do caminho.
+
+Três armadilhas na planilha, todas verificadas:
+
+- **A coluna que vale é "nível atual".** A de "nível inicial" guarda o histórico
+  numa string só — `I-II-II` são três certificações sucessivas —, e lê-la como
+  nível daria `I-II-II` a um RPPS que hoje é nível II.
+- **`vencida` não é um nível.** É o que a SPREV escreve no lugar do nível de quem
+  perdeu a certificação. Aparece como a fonte escreveu, fora da escala.
+- **Sete CNPJ vêm repetidos**, 717 linhas para 709 entes, e numa das repetições a
+  linha nova é uma adesão sem certificação. Deixar a última ganhar, que é o que
+  um `dict` faz sozinho, tiraria a certificação de quem a tem — fica a linha que
+  afirma mais. Numa delas a SPREV também errou o nome: o CNPJ 46.634.218/0001-07
+  aparece como "Taquaritinga" e como "Taquarituba", e o cadastro do CADPREV diz
+  que é de Taquarituba. A chave é o CNPJ, e o nome da planilha não é usado.
+
+| | |
+| --- | --- |
+| Entes na relação | 709 |
+| Com certificação em vigor | 332 — Acesso 1, I 129, II 140, III 35, IV 26 |
+| Só aderiram | 385 |
+| Casam com o índice do painel | 708 |
+
+### O ISP, que é de outro ano
+
+O Índice de Situação Previdenciária é anual e classifica o ente em A, B, C ou D,
+com três eixos por trás: gestão e transparência, finanças e liquidez, atuária.
+A edição de 2025 usa dados de **2024** — então a nota não descreve o mês que o
+resto do painel descreve, e a data vai junto do selo por isso.
+
+Um dos indicadores do eixo de gestão é derivado do próprio Pró-Gestão: os dois
+selos não são independentes, e ler a nota como confirmação do nível seria ler o
+mesmo fato duas vezes.
+
+| | |
+| --- | --- |
+| Entes com nota (ISP 2025, ano-base 2024) | 2.133 |
+| Notas | A 32, B 459, C 756, D 886 |
+| Casam com o índice do painel | 2.133 |
+
+### De onde vêm, e como se atualizam
+
+As duas são planilhas publicadas em páginas do gov.br, não endpoints. O endereço
+do arquivo carrega a data no próprio nome e muda a cada republicação, então ele
+não está fixo no código: `cadprev/planilhas.py` lê a página de listagem e escolhe
+o `.xlsx` de **data mais alta**, descartando o resultado preliminar do ISP, que
+o final substitui. Escolher por posição pegou o ISP de 2018 na primeira
+tentativa — a página do ISP guarda todas as edições desde 2017.
+
+`data/certificacao-fonte.json` guarda de que arquivo cada CSV saiu e de quando
+ele é. Sem isso a tela só poderia dizer "SPREV", e "SPREV" não distingue uma
+relação de setembro de uma de três anos atrás.
 
 ## Certificação de quem responde pelos recursos
 

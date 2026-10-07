@@ -25,8 +25,9 @@ from collections import defaultdict
 from datetime import date, datetime, timezone
 from typing import AbstractSet, Any, Dict, List, Mapping, Optional, Sequence
 
-from . import (ativos, benchmark, codigos, competencia as competencia_mod,
-               distribuicao, fundos, gestoras, grupos, massas, qualidade)
+from . import (ativos, benchmark, certificacao, codigos,
+               competencia as competencia_mod, distribuicao, fundos, gestoras,
+               grupos, massas, qualidade)
 from .store import Store
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -116,6 +117,18 @@ def montar_entes(store: Store) -> Dict[str, Dict[str, Any]]:
                 registro["ug_cnpj"] = ug["cnpj"]
                 registro["ug_nome"] = ug["nome"]
                 registro["ug_natureza"] = ug["natureza"]
+            # Pró-Gestão e ISP também não vêm da API: são duas planilhas da
+            # SPREV, convertidas para CSV em data/. Entram na identificação do
+            # ente porque é lá que servem — o nível do Pró-Gestão condiciona
+            # que ativos o RPPS pode ter (Resolução CMN 5.272/2025, art. 6º,
+            # § 3º), então precisa estar à vista junto com o nome, e não numa
+            # aba separada que ninguém abre ao olhar uma carteira.
+            pg = certificacao.pro_gestao(cnpj)
+            if pg:
+                registro["pro_gestao"] = pg
+            nota = certificacao.isp(cnpj)
+            if nota:
+                registro["isp"] = nota
             entes[cnpj] = registro
     return entes
 
@@ -3695,6 +3708,11 @@ def construir(store: Store, dir_saida: str = DIR_SAIDA,
           "esfera": dados["esfera"], "regiao": dados["regiao"],
           "tem_rpps": bool(dados.get("tem_rpps")),
           "populacao": dados.get("populacao"),
+          # Só o nível e a nota entram no índice, não o registro inteiro: o
+          # índice é carregado em toda tela e são 5.596 entes. O resto (datas,
+          # certificadora, eixos do ISP) fica na ficha, que é por ente.
+          "pro_gestao": (dados.get("pro_gestao") or {}).get("nivel"),
+          "isp": (dados.get("isp") or {}).get("nota"),
           "marcas": sorted(marcas.get(dados["cnpj"], {}))}
          for dados in entes.values()),
         key=lambda d: (d["uf"] or "", d["ente"] or ""))

@@ -364,6 +364,30 @@ table.dados td.n.ruim{color:var(--crit);font-weight:500}
   margin-left:8px;vertical-align:middle;
 }
 .marca-ente.grave{border-color:var(--crit);color:var(--crit)}
+
+/* O selo do Pró-Gestão e o do ISP, ao lado do nome do RPPS. Mesma forma das
+   marcas de qualidade, porque são a mesma coisa: um atributo do ente que quem
+   abre a ficha precisa saber antes de ler os números. Mas em tipografia
+   monoespaçada e um pouco menores, para lerem como código de classificação e
+   não como alerta — o nível não é problema nem elogio, é um fato cadastral.
+
+   Cor só no que é inequívoco. "Alto" marca os níveis III e IV, que são os que
+   a Resolução CMN 5.272/2025 exige para as classes mais restritas; o resto
+   fica neutro. Pintar o nível I de vermelho diria que ele é irregular, e não
+   é: é o nível que aquele RPPS tem. */
+.selo-nivel{
+  display:inline-block;font-family:"IBM Plex Mono",monospace;font-size:.64rem;
+  letter-spacing:.05em;padding:3px 8px;border-radius:4px;vertical-align:middle;
+  background:var(--surface-2);border:1px solid var(--rule-strong);color:var(--ink-2);
+  margin-left:8px;position:relative;top:-2px;cursor:help;white-space:nowrap;
+}
+.selo-nivel.alto{border-color:var(--accent);color:var(--accent-ink);
+  background:var(--accent-soft)}
+/* "vencida" é o que a SPREV escreve no lugar do nível de quem perdeu a
+   certificação. Não é um nível, e o selo não o apresenta como se fosse. */
+.selo-nivel.indefinido{border-style:dashed;color:var(--muted)}
+.selo-nivel.aderiu{color:var(--muted);border-style:dashed}
+.selo-nivel.isp{font-weight:600}
 @media (max-width:520px){
   .achado dl{grid-template-columns:1fr}
   .achado dt{margin-top:6px}

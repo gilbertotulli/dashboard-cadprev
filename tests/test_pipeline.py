@@ -32,7 +32,16 @@ class TestPipeline(unittest.TestCase):
                 "DRAA_HIPOTESE_ATUARIAL", "DRAA_PLANO_CUSTEIO"])
             cls._siconfi(store)
             cls.saida = os.path.join(cls.dir, "data")
-            build.construir(store, dir_saida=cls.saida, origem="demonstracao")
+            # Pró-Gestão e ISP não passam pelo banco: vêm de CSV, e os
+            # sintéticos foram escritos junto das amostras. Sem apontar o
+            # módulo para lá, o build leria a relação real da SPREV, que não
+            # conhece nenhum CNPJ do demo.
+            from cadprev import certificacao
+            certificacao.recarregar(cls.fixtures)
+            try:
+                build.construir(store, dir_saida=cls.saida, origem="demonstracao")
+            finally:
+                certificacao.recarregar()
 
     @classmethod
     def _siconfi(cls, store):
@@ -83,6 +92,59 @@ class TestPipeline(unittest.TestCase):
     def _json(self, nome):
         with open(os.path.join(self.saida, nome), encoding="utf-8") as fh:
             return json.load(fh)
+
+    def test_o_indice_carrega_o_nivel_do_pro_gestao_e_a_nota_do_isp(self):
+        """Vão no índice, que toda tela carrega, porque o selo aparece ao lado
+        do nome em qualquer aba — e não só na ficha."""
+        indice = self._json("entes.json")
+        com_nivel = [e for e in indice if e.get("pro_gestao")]
+        com_nota = [e for e in indice if e.get("isp")]
+        self.assertTrue(com_nivel)
+        self.assertTrue(com_nota)
+        # E nem todo ente tem: a relação do Pró-Gestão alcança 709 dos 5.596
+        # entes, e o ISP 2.133. Um índice em que todos têm nível significaria
+        # que o casamento por CNPJ está pegando qualquer linha.
+        self.assertLess(len(com_nivel), len(indice))
+        self.assertLess(len(com_nota), len(indice))
+
+    def test_a_certificacao_vencida_aparece_como_a_fonte_escreveu(self):
+        """A SPREV escreve "vencida" no lugar do nível. Traduzir isso para um
+        nível, ou para nada, inventaria ou esconderia um fato da fonte."""
+        indice = self._json("entes.json")
+        vencidas = [e for e in indice if e.get("pro_gestao") == "vencida"]
+        self.assertEqual(len(vencidas), 1, "o demo tem um caso")
+        ficha = self._json(os.path.join("ente", vencidas[0]["cnpj"] + ".json"))
+        self.assertEqual(ficha["pro_gestao"]["nivel"], "vencida")
+        # E não entra na escala: certificação vencida não é certificação.
+        self.assertFalse(ficha["pro_gestao"]["certificado"])
+        self.assertIsNone(ficha["pro_gestao"]["ordem"])
+
+    def test_quem_aderiu_sem_certificar_tem_registro_e_nao_tem_nivel(self):
+        """Três estados distintos, e o painel precisa dos três: certificado,
+        aderiu sem certificar, e fora da relação. Colapsar os dois últimos em
+        "sem Pró-Gestão" perderia quem está no meio do caminho."""
+        indice = self._json("entes.json")
+        for e in indice:
+            ficha = self._json(os.path.join("ente", e["cnpj"] + ".json"))
+            pg = ficha.get("pro_gestao")
+            if pg and not pg["nivel"]:
+                self.assertTrue(pg["aderiu"], e["cnpj"])
+                self.assertFalse(pg["certificado"])
+                self.assertIsNone(e["pro_gestao"])
+                break
+        else:
+            self.fail("o demo precisa de um ente que aderiu e não certificou")
+
+    def test_a_ficha_traz_os_eixos_do_isp_e_o_indice_so_a_nota(self):
+        """O índice é carregado em toda tela e são 5.596 entes; os três eixos
+        e as datas ficam na ficha, que é por ente."""
+        indice = self._json("entes.json")
+        com_nota = [e for e in indice if e.get("isp")][0]
+        self.assertIsInstance(com_nota["isp"], str)
+        ficha = self._json(os.path.join("ente", com_nota["cnpj"] + ".json"))
+        for eixo in ("gestao", "financas", "atuaria"):
+            self.assertIn(ficha["isp"][eixo], ("A", "B", "C", "D"), eixo)
+        self.assertEqual(ficha["isp"]["nota"], com_nota["isp"])
 
     def _nacional(self, nome, mascara=None):
         """O agregado nacional na combinação de chaves que abre por padrão.

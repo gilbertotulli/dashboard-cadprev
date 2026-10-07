@@ -121,6 +121,12 @@ def cmd_demo(args) -> int:
     contagem = demo.escrever(nivel_a=args.nivel_a)
     print("  amostras geradas: {} registros em {} endpoints".format(
         sum(contagem.values()), len(contagem)))
+    # Pró-Gestão e ISP não passam pelo banco: são lidos de CSV. No demo os CSV
+    # sintéticos ficam junto das outras amostras, e o módulo é apontado para
+    # lá — senão o selo do Pró-Gestão nunca apareceria numa demonstração, que
+    # é justamente onde ele precisa ser visto antes de ir para o ar.
+    from cadprev import certificacao
+    certificacao.recarregar(demo.DIR_DEMO)
 
     banco = args.banco
     if os.path.exists(banco):
@@ -532,6 +538,54 @@ def cmd_siconfi_rreo(args) -> int:
     return 0
 
 
+def cmd_certificacao(args) -> int:
+    """Regera ``data/pro-gestao.csv`` e ``data/isp.csv`` das planilhas da SPREV.
+
+    Não escreve no banco: as duas tabelas são pequenas, mudam uma ou duas vezes
+    por ano e são parte da identificação do RPPS, não de uma carga. Ficam no
+    repositório, versionadas, onde dá para ver num diff o que mudou de uma
+    republicação para a outra.
+    """
+    from cadprev import certificacao, planilhas
+
+    alvos = []
+    if args.o_que in ("tudo", "pro-gestao"):
+        alvos.append("pro-gestao")
+    if args.o_que in ("tudo", "isp"):
+        alvos.append("isp")
+
+    falhou = False
+    for alvo in alvos:
+        try:
+            if alvo == "pro-gestao":
+                endereco = args.url or planilhas.endereco_da_planilha(
+                    planilhas.PAGINA_PROGESTAO)
+                linhas, repetidos = planilhas.consolidar_pro_gestao(
+                    planilhas.ler_pro_gestao(endereco))
+                n = planilhas.gravar(certificacao.ARQUIVO_PROGESTAO,
+                                     planilhas.CAMPOS_PROGESTAO, iter(linhas))
+                if repetidos:
+                    print("  {0} CNPJ repetidos na planilha, consolidados: {1}"
+                          .format(len(repetidos), ", ".join(repetidos)))
+                planilhas.registrar_origem(certificacao.ARQUIVO_ORIGEM,
+                                           "pro_gestao", endereco, n)
+            else:
+                endereco = args.url or planilhas.endereco_da_planilha(
+                    planilhas.PAGINA_ISP, evitar=planilhas._PRELIMINAR)
+                n = planilhas.gravar(certificacao.ARQUIVO_ISP,
+                                     planilhas.CAMPOS_ISP,
+                                     planilhas.ler_isp(
+                                         endereco,
+                                         planilhas.ano_do_endereco(endereco)))
+                planilhas.registrar_origem(certificacao.ARQUIVO_ORIGEM,
+                                           "isp", endereco, n)
+            print("{0}: {1} linhas de {2}".format(alvo, n, endereco))
+        except planilhas.ErroDaPlanilha as erro:
+            print("{0}: {1}".format(alvo, erro), file=sys.stderr)
+            falhou = True
+    return 1 if falhou else 0
+
+
 def cmd_cvm(args) -> int:
     """Traz o PL e o número de cotistas oficiais dos fundos, da CVM.
 
@@ -821,6 +875,13 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--pausa", type=float, default=1.0)
     p.add_argument("--fixtures")
     p.set_defaults(func=cmd_cvm)
+
+    p = sub.add_parser("certificacao",
+                       help="Pró-Gestão e ISP, das planilhas da SPREV")
+    p.add_argument("o_que", nargs="?", default="tudo",
+                   choices=("tudo", "pro-gestao", "isp"))
+    p.add_argument("--url", help="endereço do .xlsx, se a página mudar de forma")
+    p.set_defaults(func=cmd_certificacao)
 
     p = sub.add_parser("siconfi-dca",
                        help="balanço patrimonial anual (DCA Anexo I-AB)")

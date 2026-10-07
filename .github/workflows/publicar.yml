@@ -250,6 +250,18 @@ jobs:
           # que o fundo fechou o mês no dia 3.
           python -m cadprev cvm 2>&1 | tee -a ingest.log || true
 
+          # Pró-Gestão e ISP, as duas planilhas da SPREV. Não entram no banco:
+          # são CSV versionados em data/, e o repositório já traz uma cópia. O
+          # comando aqui só busca uma mais nova — o Pró-Gestão é republicado a
+          # cada poucos meses, e o painel publicado deve mostrar o nível de
+          # hoje, não o do dia em que o CSV foi commitado.
+          #
+          # `|| true` porque a cópia do repositório é suficiente: se o gov.br
+          # estiver fora, o painel sai com a relação anterior e a data que o
+          # rodapé mostra continua sendo a da fonte, não a de hoje.
+          pip install --quiet openpyxl
+          python -m cadprev certificacao 2>&1 | tee -a ingest.log || true
+
           # O balanço patrimonial anual, de onde sai a provisão matemática que
           # a contabilidade do ente reconhece. Também uma requisição por ente.
           #
