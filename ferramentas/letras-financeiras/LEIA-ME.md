@@ -71,6 +71,49 @@ fundo. A aba mede exposição, não autoria.
 do ar desde 22/09/2026. Para um cruzamento de datas casadas, rodar com a CDA da
 mesma competência do DAIR.
 
+## Triagem das compras diretas, e o que ela não pode fazer
+
+A aba "Triagem - LF direta" nasceu de uma pergunta de fiscalização: alguma LF
+foi comprada a preço ou taxa fora do mercado? **Não dá para responder**, por
+dois motivos medidos, e a ferramenta diz isso em vez de entregar um palpite.
+
+**O DAIR não tem taxa.** Dezesseis campos, nenhum de remuneração: nome do ativo
+em texto livre, quantidade, valor unitário de hoje, valor total, patrimônio,
+percentuais e o teto da classe. Nem taxa, nem data de compra, nem data de
+emissão, nem CNPJ do emissor.
+
+**A CDA tem taxa, mas não serve de referência para um papel.** Ela não publica
+ISIN nem código do papel das LF, e não distingue sênior de subordinada. O
+agrupamento mais fino possível é emissor × vencimento, e nele:
+
+| | |
+| --- | --- |
+| Grupos com 8+ observações | 1.056 |
+| Onde o maior cupom é 2× o menor | 316 (30%) |
+| Onde é 5× o menor | 67 (6%) |
+| Exemplo: Bradesco, venc. 2027-09-17 | 234 obs., de 0,41% a 1,40% sobre o DI |
+| Exemplo: BTG, venc. 2031-11-17 | 167 obs., de 2,30% a 13,54% |
+
+A data 2050-12-31 aparece 637 vezes, marcando papel perpétuo. São papéis
+diferentes sob o mesmo rótulo. Apontar "fora da média" aí produziria acusação a
+partir de ruído — e o alvo seriam municípios nomeados.
+
+**O que a triagem mede**, sem depender de taxa:
+
+| Sinal | Base |
+| --- | --- |
+| Classe acima do teto | a própria fonte marca; nesta safra, **nenhum RPPS** |
+| Um papel com 5%+ da carteira | concentração; a norma limita a classe, não o papel |
+| Declaração truncada | o nome começa no meio da palavra |
+| Texto não nomeia o emissor | 44 das 95 declarações, R$ 235 milhões |
+
+O último é o achado que mais importa para fiscalização: **não se confere o que
+não se identifica**. Onde o emissor aparece, são instituições grandes — BTG,
+Caixa, Bradesco, Daycoval, Santander, Safra, Itaú, XP. O caminho para destravar
+a análise de preço não é estatístico, é cadastral: exigir o CNPJ do emissor no
+DAIR, ou buscar o APR (`DAIR_APLICACOES_RESGATE`), que registra operação a
+operação e pode trazer o que a posição não traz.
+
 ## Uma aspa solta no bloco 2
 
 O `cda_fi_BLC_2_202405.csv` tem uma aspa que o parser padrão do `csv` lê como

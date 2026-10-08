@@ -398,8 +398,17 @@ def main():
         aba_rpps(wb, agregado, COMPETENCIA, (dados["nacional"]["competencias"] or ["?"])[-1])
         print("  exposição de RPPS: %d LF, R$ %.0f, %d RPPS alcançados" % (
             len(agregado), sum(r["exposicao"] for r in agregado), quantos_rpps))
-    except Exception as erro:
-        print("  aba de RPPS não gerada: %s" % erro)
+        from triagem import levantar
+        pontos = levantar(BASE + "/painel")
+        aba_triagem(wb, pontos)
+        print("  triagem de LF direta: %d linhas, %d com algum ponto a verificar"
+              % (len(pontos), sum(1 for p in pontos if p["sinais"])))
+    except (ImportError, OSError, KeyError) as erro:
+        # Só o que significa "faltou insumo": módulo ausente, arquivo que não
+        # baixou, chave que o painel não publicou. Um `except Exception` aqui
+        # engoliu um NameError e a planilha saiu sem a aba, dizendo que os
+        # dados é que faltavam.
+        print("  abas de RPPS não geradas, faltou insumo: %s" % erro)
 
     aq = sum(1 for r in regs if r["evidencia"] == "Aquisição declarada pelo fundo")
     novas = sum(1 for r in regs if r["evidencia"] == "Posição nova (não existia em 30/04)")
@@ -517,6 +526,95 @@ def aba_rpps(wb, agregado, competencia_cda, competencia_dair):
         "e o arquivo de patrimônio líquido. Carteiras dos RPPS: painel CADPREV, "
         "ativos-nacional.json e ativos-cotistas.json, DAIR %s."
         % (competencia_cda, competencia_dair))
+    ).font = Font(name=FONTE, size=8, italic=True)
+    return ws
+
+
+
+
+COLUNAS_TRIAGEM = [
+    ("Pontos_a_Verificar", "sinais", "int", 10),
+    ("O_Que_Olhar", "o_que_olhar", "texto", 46),
+    ("RPPS", "rpps", "texto", 30),
+    ("RPPS_CNPJ", "rpps_cnpj", "cnpj", 19),
+    ("Declarado_no_DAIR", "declarado_no_dair", "texto", 44),
+    ("Valor_RS", "valor", "din", 18),
+    ("Perc_da_Carteira", "perc_da_carteira", "pct2", 12),
+    ("Carteira_do_RPPS_RS", "carteira_do_rpps", "din", 19),
+    ("Total_em_LF_Direta_RS", "total_em_lf_direta", "din", 19),
+    ("Perc_da_Carteira_em_LF_Direta", "perc_em_lf_direta", "pct2", 14),
+    ("Classe_no_DAIR", "classe_no_dair", "texto", 40),
+    ("Perc_da_Classe", "perc_da_classe", "pct2", 12),
+    ("Teto_da_Classe", "teto_da_classe", "pct2", 12),
+    ("Excede_o_Teto", "excede_o_teto", "texto", 11),
+    ("Folga_ate_o_Teto", "folga_ate_o_teto", "pct2", 12),
+    ("Competencia_DAIR", "competencia", "texto", 13),
+]
+
+PCT2 = '0.00"%";(0.00"%");"-"'
+
+
+def aba_triagem(wb, linhas):
+    """Pontos a verificar nas LF que os RPPS compraram direto.
+
+    O aviso ocupa seis linhas no topo e não é decoração: uma planilha que lista
+    municípios sob o título de irregularidade, sem dizer o que ela não pode
+    medir, vira acusação por omissão.
+    """
+    ws = wb.create_sheet("Triagem - LF direta")
+    texto = (
+        "ESTA ABA NÃO APONTA IRREGULARIDADE. Ela lista o que, nos dados "
+        "públicos, justifica olhar um papel de perto — e só isso.\n\n"
+        "O que NÃO dá para verificar, e por quê: (1) a taxa da compra, porque o "
+        "DAIR tem dezesseis campos e nenhum é remuneração; (2) se a taxa fugiu "
+        "do mercado, porque a CDA não publica ISIN das LF nem separa sênior de "
+        "subordinada — agrupando por emissor e vencimento, em 30% dos grupos o "
+        "maior cupom é o dobro do menor, então \"fora da média\" ali seria "
+        "ruído, não achado.\n\n"
+        "O que dá: concentração medida contra o teto que a própria fonte "
+        "declara, e qualidade da declaração. Nenhum RPPS desta lista excede o "
+        "teto da classe.")
+    c = ws.cell(row=1, column=1, value=texto)
+    c.font = Font(name=FONTE, size=9, color="7F4F00")
+    c.fill = NOTA
+    c.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=1, start_column=1, end_row=7, end_column=10)
+
+    titulos = [t[0] for t in COLUNAS_TRIAGEM]
+    for i, t in enumerate(titulos, start=1):
+        cel = ws.cell(row=9, column=i, value=t)
+        cel.font = Font(name=FONTE, size=9, bold=True, color="FFFFFF")
+        cel.fill = CAB
+        cel.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = COLUNAS_TRIAGEM[i - 1][3]
+    ws.row_dimensions[9].height = 30
+    ws.freeze_panes = "A10"
+    ws.auto_filter.ref = "A9:%s9" % get_column_letter(len(titulos))
+
+    formatos = {"din": DIN, "pct2": PCT2, "int": "#,##0"}
+    for n, r in enumerate(linhas, start=10):
+        for i, (_t, campo, tipo, _l) in enumerate(COLUNAS_TRIAGEM, start=1):
+            v = r.get(campo)
+            if v is None or v == "":
+                continue
+            if tipo == "cnpj":
+                v = cnpj(v)
+            cel = ws.cell(row=n, column=i, value=v)
+            if tipo in formatos:
+                cel.number_format = formatos[tipo]
+
+    fim = len(linhas) + 9
+    ws.cell(row=fim + 2, column=1, value=(
+        "Os quatro sinais. \"Classe acima do teto da norma\": a própria fonte "
+        "marca o excesso — nesta safra, ninguém. \"Um papel com X% da "
+        "carteira\": 5% ou mais num único papel; a norma limita a classe, não o "
+        "papel, então isto é atenção, não infração. \"Declaração truncada\": o "
+        "nome começa no meio da palavra (\"nvest em Letra Financeira\", "
+        "\"quisiçao LF SENIOR\"). \"Texto não nomeia o emissor\": 44 das 95 "
+        "declarações, R$ 235 milhões, não dizem de que banco é o papel — e o "
+        "DAIR não tem campo de CNPJ do emissor. Esse é o ponto que mais "
+        "atrapalha qualquer verificação: não se confere o que não se "
+        "identifica.")
     ).font = Font(name=FONTE, size=8, italic=True)
     return ws
 

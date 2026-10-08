@@ -10,6 +10,7 @@ um pode ser refeito da fonte pelos scripts em `ferramentas/`.
 | `letras_financeiras_maio_2024.xlsx` | quatro abas: movimento do mês, posições completas, resumo por emissor, e as fontes com seus limites |
 | `lf-negociadas-maio-2024.csv` | só as 3.130 linhas com movimento, separador `;`, UTF-8 com BOM — o GitHub mostra como tabela, sem baixar nada |
 | `lf-rpps-exposicao-maio-2024.csv` | as 2.669 LF que algum RPPS alcança, direta ou indiretamente |
+| `lf-triagem-direta.csv` | as 95 LF compradas direto por RPPS, com os pontos que justificam verificação |
 
 Fonte: CVM, Dados Abertos, CDA (Composição e Diversificação das Aplicações),
 bloco 5, competências 2024-05 e 2024-04. Gestor e administrador: o registro de
@@ -41,6 +42,23 @@ Dois avisos que mudam a leitura, e que a própria aba repete no topo:
 2. **Exposição não é compra.** O RPPS comprou cotas de um fundo que tinha
    aquela LF; quem decidiu comprar a LF foi o gestor do fundo. O valor é
    rateado pelo patrimônio, nunca somado.
+
+## Triagem das compras diretas
+
+A aba "Triagem - LF direta" **não aponta irregularidade**. Lista o que, nos
+dados públicos, justifica olhar um papel de perto. A comparação de taxa contra
+o mercado — que seria o teste natural — não é possível: o DAIR não tem campo de
+taxa, e a CDA não identifica o papel a ponto de servir de referência. O
+LEIA-ME da ferramenta traz a medição que sustenta essa conclusão.
+
+O que a triagem encontrou nas 95 declarações diretas:
+
+| | |
+| --- | --- |
+| RPPS acima do teto da classe | **nenhum** |
+| Com um papel somando 5%+ da carteira | 12 |
+| Com declaração truncada | 9 |
+| Sem nomear o emissor | 44 declarações, R$ 235 milhões |
 
 Refazer para outro mês:
 
