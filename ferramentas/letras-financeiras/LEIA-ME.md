@@ -114,6 +114,21 @@ a análise de preço não é estatístico, é cadastral: exigir o CNPJ do emisso
 DAIR, ou buscar o APR (`DAIR_APLICACOES_RESGATE`), que registra operação a
 operação e pode trazer o que a posição não traz.
 
+## As abas que vão para a SPREV
+
+`relatorio.py` guarda o texto do resumo, as doze sugestões de campo e a regra
+que monta os casos. É texto, não cálculo — mas os casos são calculados a partir
+da triagem, então rodar noutra competência refaz a lista sozinho. Os números
+citados no resumo, esses sim, estão transcritos e precisam de revisão quando a
+competência mudar; cada bloco nomeia a competência de que fala.
+
+A aba "Melhorias no DAIR" é a parte com mais valor prático. Sete dos doze
+campos sugeridos já são coletados pela CVM dos fundos, com nome de campo
+definido, sobre o mesmo ativo — o pedido é de paridade, não de exigência nova.
+Os cinco restantes não existem em fonte pública nenhuma, e três deles
+(contraparte da operação, mercado primário/secundário e a publicação da APR)
+são os que decidiriam uma apuração de direcionamento.
+
 ## Uma aspa solta no bloco 2
 
 O `cda_fi_BLC_2_202405.csv` tem uma aspa que o parser padrão do `csv` lê como

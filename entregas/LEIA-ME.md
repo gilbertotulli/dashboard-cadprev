@@ -11,6 +11,7 @@ um pode ser refeito da fonte pelos scripts em `ferramentas/`.
 | `lf-negociadas-maio-2024.csv` | só as 3.130 linhas com movimento, separador `;`, UTF-8 com BOM — o GitHub mostra como tabela, sem baixar nada |
 | `lf-rpps-exposicao-maio-2024.csv` | as 2.669 LF que algum RPPS alcança, direta ou indiretamente |
 | `lf-triagem-direta.csv` | as 95 LF compradas direto por RPPS, com os pontos que justificam verificação |
+| `lf-casos-para-verificacao.csv` | os 29 casos que justificariam uma pergunta, por prioridade |
 
 Fonte: CVM, Dados Abertos, CDA (Composição e Diversificação das Aplicações),
 bloco 5, competências 2024-05 e 2024-04. Gestor e administrador: o registro de
@@ -42,6 +43,24 @@ Dois avisos que mudam a leitura, e que a própria aba repete no topo:
 2. **Exposição não é compra.** O RPPS comprou cotas de um fundo que tinha
    aquela LF; quem decidiu comprar a LF foi o gestor do fundo. O valor é
    rateado pelo patrimônio, nunca somado.
+
+## Para quem recebe este arquivo
+
+As cinco primeiras abas são o estudo; as quatro últimas, os dados que o
+sustentam. A ordem é a da leitura:
+
+| Aba | O quê |
+| --- | --- |
+| **Resumo para a SPREV** | o que é, o que foi medido, o que não deu para verificar e por quê |
+| **Melhorias no DAIR** | doze campos que destravariam a análise — sete já coletados pela CVM dos fundos |
+| **Casos para verificacao** | 29 casos que justificariam uma pergunta, por prioridade |
+| Triagem - LF direta | as 95 declarações diretas, com os sinais objetivos |
+| Fontes e limites | coluna a coluna: fonte ou razão da ausência |
+
+**Nenhum achado representa, por si, irregularidade.** O estudo é preliminar, e
+sua conclusão principal é negativa: a pergunta que o motivou — se alguma LF foi
+comprada a taxa fora do mercado — não pode ser respondida com os dados públicos
+de hoje, por falta de campos de coleta, não por falta de método.
 
 ## Triagem das compras diretas
 

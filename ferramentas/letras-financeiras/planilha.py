@@ -399,10 +399,16 @@ def main():
         print("  exposição de RPPS: %d LF, R$ %.0f, %d RPPS alcançados" % (
             len(agregado), sum(r["exposicao"] for r in agregado), quantos_rpps))
         from triagem import levantar
+        import relatorio as rel
         pontos = levantar(BASE + "/painel")
         aba_triagem(wb, pontos)
+        os_casos = rel.casos(pontos)
+        aba_casos(wb, os_casos, rel)
+        aba_melhorias(wb, rel)
+        aba_resumo(wb, rel, len(os_casos))
         print("  triagem de LF direta: %d linhas, %d com algum ponto a verificar"
               % (len(pontos), sum(1 for p in pontos if p["sinais"])))
+        print("  casos para verificação: %d" % len(os_casos))
     except (ImportError, OSError, KeyError) as erro:
         # Só o que significa "faltou insumo": módulo ausente, arquivo que não
         # baixou, chave que o painel não publicou. Um `except Exception` aqui
@@ -430,8 +436,13 @@ def main():
     # Primeira aba, sempre: quem abre o arquivo lê os limites antes dos
     # números. O deslocamento tem de ser calculado, não fixo — ele quebrou
     # em silêncio quando a quinta aba entrou.
-    wb.move_sheet("Fontes e limites",
-                  offset=-wb.sheetnames.index("Fontes e limites"))
+    # A ordem é a da leitura: resumo, encaminhamento, depois os dados e, no
+    # fim, os limites das fontes. Quem recebe isto abre na primeira aba.
+    for nome in reversed(["Resumo para a SPREV", "Melhorias no DAIR",
+                          "Casos para verificacao", "Triagem - LF direta",
+                          "Fontes e limites"]):
+        if nome in wb.sheetnames:
+            wb.move_sheet(nome, offset=-wb.sheetnames.index(nome))
     wb.save(SAIDA)
     print("gravado:", SAIDA)
     print("  movimento:", len(mov), "· posições:", len(regs))
@@ -619,5 +630,197 @@ def aba_triagem(wb, linhas):
     return ws
 
 
+
+
+def _titulo(ws, linha, texto, tamanho=13):
+    c = ws.cell(row=linha, column=2, value=texto)
+    c.font = Font(name=FONTE, size=tamanho, bold=True, color=TINTA)
+    return linha + 1
+
+
+def _paragrafo(ws, linha, texto, largura=4, destaque=False, altura=14):
+    """Um bloco de texto que cabe lendo, não espremido numa célula só."""
+    c = ws.cell(row=linha, column=2, value=texto)
+    c.font = Font(name=FONTE, size=9,
+                  color="7F4F00" if destaque else "000000")
+    c.alignment = Alignment(wrap_text=True, vertical="top")
+    if destaque:
+        c.fill = NOTA
+    alturas = max(2, 1 + len(texto) // 110)
+    ws.merge_cells(start_row=linha, start_column=2,
+                   end_row=linha + alturas - 1, end_column=1 + largura)
+    for n in range(linha, linha + alturas):
+        ws.row_dimensions[n].height = altura
+    return linha + alturas + 1
+
+
+def aba_resumo(wb, relatorio, casos_n):
+    """O sumário que vai para a SPREV, antes de qualquer tabela."""
+    ws = wb.create_sheet("Resumo para a SPREV")
+    ws.column_dimensions["A"].width = 2
+    ws.column_dimensions["B"].width = 34
+    for col in ("C", "D", "E"):
+        ws.column_dimensions[col].width = 30
+
+    n = 2
+    c = ws.cell(row=n, column=2, value="Letras Financeiras e os RPPS — estudo preliminar")
+    c.font = Font(name=FONTE, size=16, bold=True, color=TINTA)
+    n += 1
+    c = ws.cell(row=n, column=2, value=(
+        "Dados públicos da CVM e do painel do CADPREV · CDA %s · DAIR %s"
+        % (relatorio.COMPETENCIA_CDA, relatorio.COMPETENCIA_DAIR)))
+    c.font = Font(name=FONTE, size=10, italic=True, color="595959")
+    n += 2
+
+    for titulo, texto in relatorio.ABERTURA:
+        n = _titulo(ws, n, titulo, 11)
+        n = _paragrafo(ws, n, texto, destaque=(titulo.startswith("O que é")))
+
+    n = _titulo(ws, n, "Os números", 11)
+    for rotulo, valor in relatorio.NUMEROS:
+        if not rotulo:
+            n += 1
+            continue
+        ws.cell(row=n, column=2, value=rotulo).font = Font(name=FONTE, size=9)
+        c = ws.cell(row=n, column=3, value=valor)
+        c.font = Font(name=FONTE, size=9, bold=True)
+        c.alignment = Alignment(horizontal="left")
+        n += 1
+    n += 1
+
+    for cabecalho, blocos in (
+            ("O que NÃO foi possível verificar, e por quê", relatorio.NAO_DA),
+            ("O que foi testado e NÃO se confirmou", relatorio.NEGATIVOS),
+            ("O que merece atenção", relatorio.ATENCAO)):
+        n = _titulo(ws, n, cabecalho, 11)
+        for titulo, texto in blocos:
+            c = ws.cell(row=n, column=2, value="• " + titulo)
+            c.font = Font(name=FONTE, size=9, bold=True)
+            n += 1
+            n = _paragrafo(ws, n, texto)
+        n += 1
+
+    n = _titulo(ws, n, "Conclusão", 11)
+    n = _paragrafo(ws, n, relatorio.CONCLUSAO, destaque=True)
+    n = _paragrafo(ws, n, (
+        "As abas \"Melhorias no DAIR\" e \"Casos para verificacao\" dão o "
+        "encaminhamento: doze campos que destravariam a análise, e %d casos "
+        "que, pelos critérios objetivos disponíveis, justificariam uma "
+        "pergunta." % casos_n))
+    return ws
+
+
+def aba_melhorias(wb, relatorio):
+    """Os campos que destravariam a verificação — a parte em destaque."""
+    ws = wb.create_sheet("Melhorias no DAIR")
+    larguras = (2, 4, 34, 22, 36, 72, 11)
+    for i, w in enumerate(larguras, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    c = ws.cell(row=2, column=2, value="Campos a acrescentar ao DAIR e à APR")
+    c.font = Font(name=FONTE, size=16, bold=True, color=TINTA)
+    c = ws.cell(row=3, column=2, value=(
+        "O que falta coletar para que indícios de irregularidade possam ser "
+        "verificados em dados"))
+    c.font = Font(name=FONTE, size=10, italic=True, color="595959")
+
+    linha = _paragrafo(ws, 5, relatorio.NOTA_MELHORIAS, largura=5, destaque=True)
+
+    titulos = ("#", "Campo sugerido", "Onde", "Já existe em",
+               "O que destrava", "Prioridade")
+    for i, t in enumerate(titulos, start=2):
+        c = ws.cell(row=linha, column=i, value=t)
+        c.font = Font(name=FONTE, size=9, bold=True, color="FFFFFF")
+        c.fill = CAB
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+    ws.row_dimensions[linha].height = 24
+    ws.freeze_panes = ws.cell(row=linha + 1, column=1)
+    linha += 1
+
+    for num, campo, onde, existe, destrava, prioridade in relatorio.MELHORIAS:
+        for i, v in enumerate((num, campo, onde, existe, destrava, prioridade),
+                              start=2):
+            c = ws.cell(row=linha, column=i, value=v)
+            c.font = Font(name=FONTE, size=9,
+                          bold=(i == 3 or (i == 7 and v == "Alta")))
+            c.alignment = Alignment(wrap_text=True, vertical="top")
+            c.border = BORDA
+            if i == 7 and v == "Alta":
+                c.fill = NOTA
+        ws.row_dimensions[linha].height = 14 * max(3, 1 + len(destrava) // 70)
+        linha += 1
+
+    linha += 1
+    c = ws.cell(row=linha, column=2, value=(
+        "Referências de campo citadas: CDA — Composição e Diversificação das "
+        "Aplicações, da CVM, arquivo cda_fi_BLC_5_AAAAMM.csv (ativos de renda "
+        "fixa de instituição financeira, onde a Letra Financeira é declarada) e "
+        "cda_fi_BLC_4_AAAAMM.csv (títulos privados, onde estão CD_ATIVO e "
+        "CD_ISIN). Disponíveis em dados.cvm.gov.br/dados/FI/DOC/CDA/."))
+    c.font = Font(name=FONTE, size=8, italic=True)
+    c.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=linha, start_column=2, end_row=linha + 2, end_column=6)
+    return ws
+
+
+COLUNAS_CASOS = [
+    ("Prioridade", "prioridade", "texto", 11),
+    ("Tipo", "tipo", "texto", 38),
+    ("RPPS", "rpps", "texto", 30),
+    ("RPPS_CNPJ", "rpps_cnpj", "cnpj", 19),
+    ("Declarado_no_DAIR", "declarado_no_dair", "texto", 40),
+    ("Valor_RS", "valor", "din", 18),
+    ("Perc_da_Carteira", "perc_da_carteira", "pct2", 12),
+    ("Perc_da_Carteira_em_LF_Direta", "perc_em_lf_direta", "pct2", 14),
+    ("Teto_da_Classe", "teto_da_classe", "pct2", 11),
+    ("Excede_o_Teto", "excede_o_teto", "texto", 11),
+    ("O_Que_Chama_Atencao", "o_que_chama_atencao", "texto", 62),
+    ("O_Que_Verificar", "o_que_verificar", "texto", 62),
+    ("Competencia_DAIR", "competencia", "texto", 13),
+]
+
+
+def aba_casos(wb, casos, relatorio):
+    """Os casos que justificariam uma pergunta — nunca uma afirmação."""
+    ws = wb.create_sheet("Casos para verificacao")
+    c = ws.cell(row=1, column=1, value=relatorio.NOTA_CASOS)
+    c.font = Font(name=FONTE, size=9, bold=True, color="7F4F00")
+    c.fill = NOTA
+    c.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=1, start_column=1, end_row=4, end_column=8)
+
+    for i, t in enumerate([x[0] for x in COLUNAS_CASOS], start=1):
+        c = ws.cell(row=6, column=i, value=t)
+        c.font = Font(name=FONTE, size=9, bold=True, color="FFFFFF")
+        c.fill = CAB
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = COLUNAS_CASOS[i - 1][3]
+    ws.row_dimensions[6].height = 30
+    ws.freeze_panes = "A7"
+    ws.auto_filter.ref = "A6:%s6" % get_column_letter(len(COLUNAS_CASOS))
+
+    formatos = {"din": DIN, "pct2": PCT2}
+    for n, r in enumerate(casos, start=7):
+        for i, (_t, campo, tipo, _l) in enumerate(COLUNAS_CASOS, start=1):
+            v = r.get(campo)
+            if v is None or v == "":
+                continue
+            if tipo == "cnpj":
+                v = cnpj(v)
+            c = ws.cell(row=n, column=i, value=v)
+            c.alignment = Alignment(wrap_text=True, vertical="top")
+            if tipo in formatos:
+                c.number_format = formatos[tipo]
+            if campo == "prioridade" and v == "Alta":
+                c.font = Font(name=FONTE, size=9, bold=True)
+                c.fill = NOTA
+        ws.row_dimensions[n].height = 28
+    return ws
+
+
+# Este bloco fica no fim do arquivo, e não logo depois de main(): main()
+# chama funções definidas abaixo dela, e com a chamada no meio elas ainda
+# não existem na hora de rodar. Já quebrou três vezes ao acrescentar uma
+# aba nova — quem acrescentar a próxima, acrescente antes daqui.
 if __name__ == "__main__":
     main()
