@@ -11,6 +11,10 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 BASE, SAIDA = sys.argv[1], sys.argv[3]
+#: A competência da CDA. Vem do quarto argumento para a ferramenta servir a
+#: qualquer mês; sem ele, maio de 2024, que é o da planilha publicada.
+MES = sys.argv[4] if len(sys.argv) > 4 else "202405"
+COMPETENCIA = "%s-%s" % (MES[:4], MES[4:])
 
 FONTE = "Arial"
 TINTA = "1F3864"
@@ -249,6 +253,29 @@ LIMITES = [
      "então mesmo com as taxas em mãos o casamento possível seria por classe e "
      "faixa de prazo, nunca papel a papel. A coluna fica como está, pronta para "
      "receber uma exportação do ANBIMA Feed se houver assinatura."),
+    ("— aba RPPS: Via", "Derivado · CDA blocos 5 e 2 + painel CADPREV",
+     "Três caminhos, nesta ordem de alcance. \"Dois fundos\" (RPPS → FIC → fundo "
+     "com LF) responde por R$ 43,8 bi na competência casada, contra R$ 26,0 bi "
+     "de \"Um fundo\" — sem o salto duplo, metade da exposição fica invisível, "
+     "porque RPPS compram FIC e a LF mora um nível abaixo. \"Direta\" é a LF que "
+     "o próprio RPPS declarou no DAIR."),
+    ("— aba RPPS: datas", "Bases de competências diferentes",
+     "A LF é da CDA de maio/2024; a carteira dos RPPS é do último DAIR de cada "
+     "um, competência 2026-06 — a API do CADPREV está fora do ar desde 22/09/2026 "
+     "e essa é a safra mais recente que o painel tem. São dois anos de distância. "
+     "A aba mede por qual fundo um RPPS alcança uma LF, não que ele a tenha "
+     "comprado naquele mês. Para um cruzamento de datas casadas, rodar a "
+     "ferramenta com a CDA de 2026-06."),
+    ("— aba RPPS: Exposicao_RPPS_RS", "Derivado · rateio pelo patrimônio",
+     "Não é o valor da LF no fundo: é a parte dela que cabe ao RPPS. Fundo com "
+     "R$ 100 de PL, R$ 10 de LF, RPPS com R$ 5 de cotas → exposição R$ 0,50. Com "
+     "dois saltos o rateio encadeia os dois patrimônios. Somar o valor da LF no "
+     "fundo contaria o fundo inteiro como se fosse do RPPS."),
+    ("— aba RPPS: Emissor nas diretas", "Não existe no DAIR",
+     "O DAIR traz o texto que o RPPS escreveu — \"LF BRADESCO IPCA\", \"Letra "
+     "Financeira Banco Safra\" — e nenhum CNPJ de emissor. As linhas diretas "
+     "ficam com o texto em Declarado_no_DAIR e sem CNPJ; deduzir o emissor do "
+     "nome seria inventar uma identificação que a fonte não dá."),
     ("Oferta_Publica_Reg", "Não existe — verificado",
      "Letra Financeira não aparece em nenhum dos dois arquivos de ofertas da CVM "
      "(oferta_distribuicao.csv, 48.944 linhas, e oferta_resolucao_160.csv, 14.772). "
@@ -351,6 +378,29 @@ def main():
 
     aba_emissores(wb, regs_ord, "Posicoes 31-05-2024")
 
+    # O cruzamento com os RPPS é opcional: depende de baixar o bloco 2 e o
+    # patrimônio líquido, e de três arquivos do painel. Sem eles a planilha
+    # continua saindo, com uma aba a menos, em vez de falhar inteira.
+    try:
+        from rpps import carregar, conferir, cruzar, diretas, por_letra
+        dados = carregar(BASE, MES)
+        import montar as _m
+        nomes = _m.nomes_de_emissor(_m.letras(MES))
+        indiretas = cruzar(dados, nomes, _m.taxa)
+        diretas_ = diretas(dados)
+        quantos_rpps = len({l["rpps_cnpj"] for l in indiretas + diretas_})
+        # Levanta se algum RPPS ficar com exposição acima da própria carteira,
+        # que é o sintoma de rateio errado. Deixar passar daria uma planilha
+        # que parece certa.
+        conferir(indiretas + diretas_, dados)
+        agregado = por_letra(indiretas, diretas_,
+                             dados["lf_por_fundo"], nomes, _m.taxa)
+        aba_rpps(wb, agregado, COMPETENCIA, (dados["nacional"]["competencias"] or ["?"])[-1])
+        print("  exposição de RPPS: %d LF, R$ %.0f, %d RPPS alcançados" % (
+            len(agregado), sum(r["exposicao"] for r in agregado), quantos_rpps))
+    except Exception as erro:
+        print("  aba de RPPS não gerada: %s" % erro)
+
     aq = sum(1 for r in regs if r["evidencia"] == "Aquisição declarada pelo fundo")
     novas = sum(1 for r in regs if r["evidencia"] == "Posição nova (não existia em 30/04)")
     aum = sum(1 for r in regs if r["evidencia"] == "Posição aumentada em maio")
@@ -368,10 +418,107 @@ def main():
         ("Posição total em 31/05/2024",
          "R$ {:,.2f}".format(sum(r["vl_mercado"] or 0 for r in regs)).replace(",", "X").replace(".", ",").replace("X", ".")),
     ])
-    wb.move_sheet("Fontes e limites", offset=-3)
+    # Primeira aba, sempre: quem abre o arquivo lê os limites antes dos
+    # números. O deslocamento tem de ser calculado, não fixo — ele quebrou
+    # em silêncio quando a quinta aba entrou.
+    wb.move_sheet("Fontes e limites",
+                  offset=-wb.sheetnames.index("Fontes e limites"))
     wb.save(SAIDA)
     print("gravado:", SAIDA)
     print("  movimento:", len(mov), "· posições:", len(regs))
+
+
+
+
+COLUNAS_RPPS = [
+    ("Via", "via", "texto", 20),
+    ("Emissor_Razao_Social", "emissor", "texto", 34),
+    ("Emissor_CNPJ", "emissor_cnpj", "cnpj", 19),
+    ("Data_Vencimento", "vencimento", "data", 13),
+    ("Indexador_Descricao", "indexador", "texto", 26),
+    ("Taxa_Contratada", "taxa", "texto", 24),
+    ("Declarado_no_DAIR", "declarado_no_dair", "texto", 42),
+    ("Valor_da_LF_nos_Fundos_RS", "valor_no_mercado", "din", 20),
+    ("Exposicao_RPPS_RS", "exposicao", "din", 19),
+    ("Perc_da_LF_em_Maos_de_RPPS", "perc_rpps", "pct", 14),
+    ("RPPS_Alcancados", "rpps_alcancados", "int", 12),
+    ("Fundos_que_Carregam", "fundos", "int", 12),
+    ("Principal_Veiculo", "veiculo", "texto", 46),
+    ("Principal_Veiculo_CNPJ", "veiculo_cnpj", "cnpj", 19),
+    ("Exposicao_pelo_Principal_Veiculo_RS", "exposicao_pelo_veiculo", "din", 20),
+    ("Maior_RPPS", "maior_rpps", "texto", 30),
+    ("Maior_RPPS_Exposicao_RS", "maior_exposicao", "din", 19),
+]
+
+
+def aba_rpps(wb, agregado, competencia_cda, competencia_dair):
+    """Que LF cada RPPS alcança, direta ou indiretamente.
+
+    Vem depois das outras porque depende de todas: a LF sai da CDA, o RPPS sai
+    do painel, e o elo é o CNPJ do fundo.
+    """
+    ws = wb.create_sheet("RPPS - exposicao a LF")
+    aviso = ws.cell(row=1, column=1, value=(
+        "ATENÇÃO ÀS DATAS: as Letras Financeiras são da CDA de %s; as carteiras "
+        "dos RPPS são do último DAIR de cada um, competência %s. São bases de "
+        "datas diferentes, e o que a aba mede é por qual fundo um RPPS alcança "
+        "uma LF — não que ele a tenha comprado naquele mês. A exposição é "
+        "rateada pelo patrimônio do fundo, nunca somada: se o fundo tem R$ 100 "
+        "de PL, R$ 10 de LF e o RPPS tem R$ 5 de cotas, a exposição é R$ 0,50."
+        % (competencia_cda, competencia_dair)))
+    aviso.font = Font(name=FONTE, size=9, bold=True, color="7F4F00")
+    aviso.fill = NOTA
+    aviso.alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells(start_row=1, start_column=1, end_row=3, end_column=9)
+
+    titulos = [c[0] for c in COLUNAS_RPPS]
+    for i, t in enumerate(titulos, start=1):
+        c = ws.cell(row=5, column=i, value=t)
+        c.font = Font(name=FONTE, size=9, bold=True, color="FFFFFF")
+        c.fill = CAB
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = COLUNAS_RPPS[i - 1][3]
+    ws.row_dimensions[5].height = 30
+    ws.freeze_panes = "A6"
+    ws.auto_filter.ref = "A5:%s5" % get_column_letter(len(titulos))
+
+    formatos = {"din": DIN, "pct": PCT, "int": "#,##0"}
+    for n, r in enumerate(agregado, start=6):
+        for i, (_t, campo, tipo, _l) in enumerate(COLUNAS_RPPS, start=1):
+            v = r.get(campo)
+            if v is None or v == "":
+                continue
+            if tipo == "cnpj":
+                v = cnpj(v)
+            c = ws.cell(row=n, column=i, value=v)
+            if tipo in formatos:
+                c.number_format = formatos[tipo]
+    fim = len(agregado) + 5
+
+    linha = fim + 1
+    ws.cell(row=linha, column=1, value="TOTAL").font = Font(name=FONTE, size=9, bold=True)
+    for titulo in ("Exposicao_RPPS_RS",):
+        i = titulos.index(titulo) + 1
+        L = get_column_letter(i)
+        c = ws.cell(row=linha, column=i, value="=SUM(%s6:%s%d)" % (L, L, fim))
+        c.font = Font(name=FONTE, size=9, bold=True)
+        c.number_format = DIN
+
+    ws.cell(row=linha + 2, column=1, value=(
+        "Três caminhos. \"Direta\": o RPPS declarou a LF na própria carteira do "
+        "DAIR — o texto que ele escreveu está em Declarado_no_DAIR, e não há "
+        "CNPJ de emissor porque a fonte não o traz. \"Um fundo\": o RPPS tem "
+        "cotas de um fundo que tem a LF. \"Dois fundos\": o RPPS tem cotas de um "
+        "FIC, o FIC tem cotas de outro fundo, e esse fundo tem a LF — sem este "
+        "salto, metade da exposição ficaria invisível.")
+    ).font = Font(name=FONTE, size=8, italic=True)
+    ws.cell(row=linha + 3, column=1, value=(
+        "Fontes: CVM, CDA %s, blocos 5 (letras financeiras), 2 (cotas de fundos) "
+        "e o arquivo de patrimônio líquido. Carteiras dos RPPS: painel CADPREV, "
+        "ativos-nacional.json e ativos-cotistas.json, DAIR %s."
+        % (competencia_cda, competencia_dair))
+    ).font = Font(name=FONTE, size=8, italic=True)
+    return ws
 
 
 if __name__ == "__main__":

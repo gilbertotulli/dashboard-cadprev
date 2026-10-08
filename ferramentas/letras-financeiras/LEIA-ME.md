@@ -11,12 +11,15 @@ do pipeline do CADPREV e nada no painel depende dela.
 
 ```sh
 sh baixar.sh /tmp/lf 202405 202404          # ~50 MB
-python3 planilha.py /tmp/lf . /tmp/lf/letras_financeiras.xlsx
+python3 planilha.py /tmp/lf . /tmp/lf/letras_financeiras.xlsx 202405
 python3 conferir.py /tmp/lf/letras_financeiras.xlsx
 ```
 
-Dois meses: a evidência de compra depende da comparação com o anterior.
-`planilha.py` precisa de `openpyxl`.
+Dois meses: a evidência de compra depende da comparação com o anterior. O
+quarto argumento de `planilha.py` é a competência da CDA; sem ele, 202405.
+`planilha.py` precisa de `openpyxl`, e a aba de RPPS baixa três arquivos do
+painel publicado na primeira execução. Sem rede ou sem eles, a planilha sai
+com uma aba a menos em vez de falhar.
 
 ## A fonte, e onde ela para
 
@@ -37,6 +40,44 @@ fundos, as aquisições e vendas **do próprio mês**.
 
 As duas medidas concordam onde ambas existem: das 497 aquisições declaradas
 comparáveis, 474 (95%) também aparecem como posição nova.
+
+## Que LF cada RPPS alcança
+
+A aba "RPPS - exposicao a LF" cruza a CDA com o painel do CADPREV pelo CNPJ do
+fundo. Três caminhos:
+
+| Via | O que é | Maio/2024 |
+| --- | --- | --- |
+| Direta | o RPPS declarou a LF na própria carteira do DAIR | 84 declarações, R$ 1,37 bi |
+| Um fundo | o RPPS tem cotas de um fundo que tem a LF | — |
+| Dois fundos | o RPPS tem cotas de um FIC, o FIC tem cotas do fundo que tem a LF | — |
+
+As duas indiretas somam 2.585 LF e R$ 16,17 bi. **Sem o salto duplo metade da
+exposição fica invisível**: RPPS compram FIC, e a LF mora um nível abaixo. Na
+competência casada (2026-06) o salto duplo dá R$ 43,8 bi contra R$ 26,0 bi do
+simples.
+
+A exposição é **rateada pelo patrimônio**, nunca somada. Fundo com R$ 100 de PL,
+R$ 10 de LF, RPPS com R$ 5 de cotas → exposição R$ 0,50. Com dois saltos o
+rateio encadeia os dois patrimônios. `rpps.conferir` levanta se algum RPPS ficar
+com exposição acima da própria carteira, que é o sintoma de rateio errado.
+
+**O que isto não é.** Não é "o RPPS comprou esta LF": o RPPS comprou cotas de um
+fundo que, na data da declaração, tinha aquela LF. A decisão foi do gestor do
+fundo. A aba mede exposição, não autoria.
+
+**As datas não casam.** A LF é da CDA de maio/2024; a carteira dos RPPS é do
+último DAIR de cada um, competência 2026-06, porque a API do CADPREV está fora
+do ar desde 22/09/2026. Para um cruzamento de datas casadas, rodar com a CDA da
+mesma competência do DAIR.
+
+## Uma aspa solta no bloco 2
+
+O `cda_fi_BLC_2_202405.csv` tem uma aspa que o parser padrão do `csv` lê como
+abertura de campo: as 171.142 linhas viram uma só, de 10 MB. Os arquivos da CVM
+não usam aspas para delimitar campo, então todos os blocos são lidos com
+`quoting=csv.QUOTE_NONE`. O bloco 5 não é afetado — as duas leituras dão as
+mesmas 63.690 linhas —, mas a regra vale para todos.
 
 ## O que não existe publicamente
 
