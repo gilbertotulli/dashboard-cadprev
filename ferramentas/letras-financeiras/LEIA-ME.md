@@ -103,9 +103,9 @@ partir de ruído — e o alvo seriam municípios nomeados.
 | Sinal | Base |
 | --- | --- |
 | Classe acima do teto | a própria fonte marca; nesta safra, **nenhum RPPS** |
-| Um papel com 5%+ da carteira | concentração; a norma limita a classe, não o papel |
-| Declaração truncada | o nome começa no meio da palavra |
-| Texto não nomeia o emissor | 44 das 95 declarações, R$ 235 milhões |
+| Um papel com 5%+ da carteira | concentração; a norma limita a classe, não o papel — 10 declarações, 9 RPPS |
+| Declaração truncada | o nome começa no meio da palavra — 6 declarações, 3 RPPS |
+| Texto não nomeia o emissor | 44 das 95 declarações, 21 RPPS, R$ 235 milhões |
 
 O último é o achado que mais importa para fiscalização: **não se confere o que
 não se identifica**. Onde o emissor aparece, são instituições grandes — BTG,

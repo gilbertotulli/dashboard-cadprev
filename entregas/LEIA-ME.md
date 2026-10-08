@@ -56,9 +56,11 @@ O que a triagem encontrou nas 95 declarações diretas:
 | | |
 | --- | --- |
 | RPPS acima do teto da classe | **nenhum** |
-| Com um papel somando 5%+ da carteira | 12 |
-| Com declaração truncada | 9 |
-| Sem nomear o emissor | 44 declarações, R$ 235 milhões |
+| Declarações com um papel somando 5%+ da carteira | 10, em 9 RPPS |
+| Declarações truncadas | 6, em 3 RPPS |
+| Declarações que não nomeiam o emissor | 44, em 21 RPPS — R$ 235 milhões |
+
+São 95 declarações ao todo, de 43 RPPS; 54 têm algum ponto a verificar.
 
 Refazer para outro mês:
 
