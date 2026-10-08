@@ -73,7 +73,7 @@ mesma competência do DAIR.
 
 ## Triagem das compras diretas, e o que ela não pode fazer
 
-A aba "Triagem - LF direta" nasceu de uma pergunta de fiscalização: alguma LF
+A aba "Triagem - LF direta" responde a uma pergunta direta: alguma LF
 foi comprada a preço ou taxa fora do mercado? **Não dá para responder**, por
 dois motivos medidos, e a ferramenta diz isso em vez de entregar um palpite.
 
@@ -107,27 +107,32 @@ partir de ruído — e o alvo seriam municípios nomeados.
 | Declaração truncada | o nome começa no meio da palavra — 6 declarações, 3 RPPS |
 | Texto não nomeia o emissor | 44 das 95 declarações, 21 RPPS, R$ 235 milhões |
 
-O último é o achado que mais importa para fiscalização: **não se confere o que
-não se identifica**. Onde o emissor aparece, são instituições grandes — BTG,
+O último é o achado que mais importa: **não se confere o que não se
+identifica** — ao menos não de fora, porque a APR coleta o emissor. Onde o emissor aparece, são instituições grandes — BTG,
 Caixa, Bradesco, Daycoval, Santander, Safra, Itaú, XP. O caminho para destravar
 a análise de preço não é estatístico, é cadastral: exigir o CNPJ do emissor no
 DAIR, ou buscar o APR (`DAIR_APLICACOES_RESGATE`), que registra operação a
 operação e pode trazer o que a posição não traz.
 
-## As abas que vão para a SPREV
+## As abas de leitura
 
-`relatorio.py` guarda o texto do resumo, as doze sugestões de campo e a regra
-que monta os casos. É texto, não cálculo — mas os casos são calculados a partir
-da triagem, então rodar noutra competência refaz a lista sozinho. Os números
-citados no resumo, esses sim, estão transcritos e precisam de revisão quando a
-competência mudar; cada bloco nomeia a competência de que fala.
+`relatorio.py` guarda o texto do resumo, a comparação de campos e a regra que
+monta os casos. É texto, não cálculo — mas os casos são calculados a partir da
+triagem, então rodar noutra competência refaz a lista sozinho. Os números
+citados no resumo estão transcritos e precisam de revisão quando a competência
+mudar; cada bloco nomeia a competência de que fala. As contagens da aba de
+campos (`JA_COLETADOS`, `LACUNAS`) são derivadas da própria lista, não escritas
+à mão — já errei uma contagem dessas num texto que ia para fora.
 
-A aba "Melhorias no DAIR" é a parte com mais valor prático. Sete dos doze
-campos sugeridos já são coletados pela CVM dos fundos, com nome de campo
-definido, sobre o mesmo ativo — o pedido é de paridade, não de exigência nova.
-Os cinco restantes não existem em fonte pública nenhuma, e três deles
-(contraparte da operação, mercado primário/secundário e a publicação da APR)
-são os que decidiriam uma apuração de direcionamento.
+A aba "Dados da APR" compara a tela de cadastro de Aplicações e Resgates do
+CADPREV com o que a análise alcança. A premissa da versão anterior estava
+errada: supunha que faltava coletar. A tela tem 49 campos e já coleta 11 dos 14
+itens — instituição emissora, intermediária e custodiante com validade de
+credenciamento, taxa de juros de emissão, indexador e percentual, três datas,
+rating com agência, e quatro blocos de texto sobre o processo de investimento e
+o parecer dos colegiados. O que falta é publicação. Só dois itens são lacuna
+real de cadastro: a espécie da LF (sênior, subordinada, complementar) e o
+mercado da operação (primário ou secundário).
 
 ## Uma aspa solta no bloco 2
 

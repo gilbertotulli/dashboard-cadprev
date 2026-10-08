@@ -46,21 +46,28 @@ Dois avisos que mudam a leitura, e que a própria aba repete no topo:
 
 ## Para quem recebe este arquivo
 
-As cinco primeiras abas são o estudo; as quatro últimas, os dados que o
-sustentam. A ordem é a da leitura:
+Levantamento informal. As cinco primeiras abas são a leitura; as quatro
+últimas, os dados que a sustentam:
 
 | Aba | O quê |
 | --- | --- |
-| **Resumo para a SPREV** | o que é, o que foi medido, o que não deu para verificar e por quê |
-| **Melhorias no DAIR** | doze campos que destravariam a análise — sete já coletados pela CVM dos fundos |
+| **Leia primeiro** | o que é, o que foi medido, o que não deu para verificar e por quê |
+| **Dados da APR** | 14 campos comparados entre a tela de cadastro e o dado aberto |
 | **Casos para verificacao** | 29 casos que justificariam uma pergunta, por prioridade |
 | Triagem - LF direta | as 95 declarações diretas, com os sinais objetivos |
 | Fontes e limites | coluna a coluna: fonte ou razão da ausência |
 
-**Nenhum achado representa, por si, irregularidade.** O estudo é preliminar, e
-sua conclusão principal é negativa: a pergunta que o motivou — se alguma LF foi
-comprada a taxa fora do mercado — não pode ser respondida com os dados públicos
-de hoje, por falta de campos de coleta, não por falta de método.
+**Nenhum achado representa, por si, irregularidade.** A conclusão principal é
+negativa: se alguma LF foi comprada a taxa fora do mercado não dá para dizer com
+o dado aberto de hoje — e a razão é de publicação, não de método. A tela de
+cadastro da APR no CADPREV tem 49 campos e já coleta 11 dos 14 itens que
+fariam falta, inclusive instituição emissora, intermediária e custodiante, taxa
+de juros de emissão e rating. Nada disso chega ao dado aberto, e a posição
+publicada (DAIR_CARTEIRA, 16 campos) não carrega nem o emissor do papel.
+
+Para quem trabalha dentro do CADPREV isso é melhor do que parece: boa parte do
+que falta aqui pode ser consultada hoje, operação a operação, sem depender de
+mudança nenhuma.
 
 ## Triagem das compras diretas
 

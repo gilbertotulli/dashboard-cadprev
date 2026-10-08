@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""O conteúdo das abas que vão para a SPREV.
+"""O conteúdo das abas de leitura do levantamento.
 
 Texto, não cálculo: os números abaixo saem das abas de dados e estão aqui
 transcritos para quem lê o resumo sem abrir o resto. Quando a ferramenta rodar
@@ -12,11 +12,11 @@ COMPETENCIA_DAIR = "2026-06"
 
 ABERTURA = [
     ("O que é este documento", (
-        "Estudo preliminar, feito com dados públicos, sobre Letras Financeiras "
-        "e a exposição dos RPPS a elas. NENHUM ACHADO AQUI REPRESENTA, POR SI, "
-        "IRREGULARIDADE. São medidas objetivas que podem justificar — ou "
-        "dispensar — um pedido de auditoria mais detalhada.")),
-    ("Quem fez e com o quê", (
+        "Levantamento informal sobre Letras Financeiras e a exposição dos RPPS "
+        "a elas, feito com dados públicos. NENHUM ACHADO AQUI REPRESENTA, POR "
+        "SI, IRREGULARIDADE. São medidas objetivas, reproduzíveis, que servem "
+        "para separar o que merece uma pergunta do que não merece.")),
+    ("De onde vêm os números", (
         "Dados abertos da CVM (CDA — Composição e Diversificação das Aplicações, "
         "competências 2024-04 e 2024-05; registro de fundos e classes) e o painel "
         "público do CADPREV, que agrega o DAIR de cada RPPS. Nada aqui usa dado "
@@ -25,8 +25,9 @@ ABERTURA = [
         "As Letras Financeiras são da CDA de maio/2024. As carteiras dos RPPS "
         "são do último DAIR de cada um, competência 2026-06 — a API do CADPREV "
         "está indisponível desde 22/09/2026 e essa é a safra mais recente "
-        "disponível. São dois anos de distância: o estudo mede por qual fundo um "
-        "RPPS alcança uma LF, não que ele a tenha comprado naquele mês.")),
+        "disponível. São dois anos de distância: o levantamento mede por qual "
+        "fundo um RPPS alcança uma LF, não que ele a tenha comprado naquele "
+        "mês.")),
 ]
 
 NUMEROS = [
@@ -66,9 +67,9 @@ NAO_DA = [
     ("Por que o viés é perverso", (
         "LF subordinada paga legitimamente muito mais que sênior. Como a fonte "
         "não as separa, qualquer teste de \"taxa alta demais\" se encheria de "
-        "falsos positivos legítimos. O lado \"taxa baixa demais\" — que é o que "
-        "interessaria a uma denúncia de prejuízo — fica sem referência confiável "
-        "pelo mesmo motivo.")),
+        "falsos positivos legítimos. E o lado \"taxa baixa demais\" — que é o "
+        "que interessaria a quem procura prejuízo na carteira — fica sem "
+        "referência confiável pelo mesmo motivo.")),
 ]
 
 NEGATIVOS = [
@@ -92,10 +93,14 @@ NEGATIVOS = [
 ATENCAO = [
     ("R$ 235 milhões sem emissor identificado", (
         "44 das 95 declarações diretas, em 21 RPPS, não dizem de que banco é o "
-        "papel — e o DAIR não tem campo de CNPJ do emissor. Exemplos reais: "
+        "papel. O DAIR_CARTEIRA não tem campo de emissor — e a APR tem, "
+        "escolhido de uma lista de instituições credenciadas, só que não chega "
+        "ao dado aberto. Exemplos reais: "
         "\"LF\", \"Letra Financeira - 14/08/2025\", \"quisiçao LF SENIOR 10 "
-        "anos\". Este é o principal obstáculo a qualquer verificação, e é "
-        "cadastral, não analítico: não se confere o que não se identifica.")),
+        "anos\". Este é o principal obstáculo a qualquer verificação feita de "
+        "fora, e é de publicação, não de método: o dado existe no sistema. "
+        "Quem tem acesso ao CADPREV identifica o emissor de cada uma dessas "
+        "operações hoje.")),
     ("Seis declarações truncadas no meio da palavra", (
         "Em 3 RPPS, o nome do ativo começa no meio: \"nvest em Letra Financeira "
         "da CEF IPCA + 6 31%\", \"tivos Finan Emit por Inst Finan LF 2034\", "
@@ -117,125 +122,151 @@ ATENCAO = [
 ]
 
 CONCLUSAO = (
-    "A denúncia que motivou este estudo — RPPS influenciados a comprar LF que "
-    "geraram prejuízo — não pode ser confirmada nem afastada com os dados "
-    "públicos de hoje, e a razão é de coleta, não de análise. Falta ao DAIR o "
-    "que identificaria o papel e o preço pago. As abas seguintes propõem os "
-    "campos que destravariam a verificação e listam os casos que, pelos "
-    "critérios objetivos disponíveis, justificariam um olhar detalhado.")
+    "A pergunta que puxou este levantamento — alguma LF foi comprada a preço ou "
+    "taxa fora do mercado? — não pode ser respondida com os dados públicos "
+    "disponíveis hoje, e a razão é de publicação, não de análise. O CADPREV já "
+    "coleta, na tela da APR, quase tudo que faria falta: emissora, "
+    "intermediária, custodiante, taxa de juros de emissão, indexador e "
+    "percentual, datas de emissão, operação e liquidação, rating e agência, e "
+    "até uma descrição do processo de investimento desde a distribuição "
+    "inicial. Nada disso chega ao dado aberto. A aba \"Dados da APR\" compara "
+    "o que a tela pede com o que a análise alcança.")
 
 
-#: Campos sugeridos. A coluna "já existe em" é o argumento: quase tudo que
-#: falta ao DAIR a CVM já exige dos fundos na CDA há anos, com nome de campo e
-#: tudo. Não se está pedindo que a SPREV invente coisa nova — se está pedindo
-#: paridade com o que o outro regulador já coleta sobre o mesmo ativo.
+#: O que a tela de cadastro da APR pede, e o que chega ao dado aberto.
+#:
+#: A lista anterior partia de premissa errada — supunha que a SPREV não
+#: coletava. Coleta: a tela de Aplicações e Resgates do CADPREV tem 49 campos,
+#: entre eles emissora, intermediária e custodiante, taxa de juros de emissão,
+#: indexador e percentual, três datas, rating com agência, e quatro blocos de
+#: texto de 2.000 caracteres sobre o processo de investimento e o parecer dos
+#: colegiados. A recomendação muda de "coletar" para "publicar".
+#:
+#: Ressalva de método: não foi possível inspecionar o endpoint
+#: DAIR_APLICACOES_RESGATE — a API está fora do ar desde 22/09/2026 e o projeto
+#: nunca o ingeriu. A coluna "chega ao dado aberto?" afirma com segurança só
+#: sobre o DAIR_CARTEIRA, cujos dezesseis campos foram observados em resposta
+#: real. Para a APR ela diz "não verificável", que é o que se sabe.
 MELHORIAS = [
-    ("1", "CNPJ do emissor", "DAIR_CARTEIRA e APR",
-     "CDA, bloco 5: CNPJ_EMISSOR",
-     "O campo que falta e trava tudo o mais. Hoje o emissor só existe como "
-     "texto livre, e em 44 das 95 declarações de LF o texto não o nomeia. Com o "
-     "CNPJ: confronto com os limites por emissor, cruzamento com a lista de "
-     "regimes especiais do Banco Central, e casamento direto com a carteira dos "
-     "fundos publicada pela CVM.",
+    ("1", "Instituição Emissora", "Instituições",
+     "Sim, com credenciamento e validade", "Não verificável",
+     "O que falta a toda análise de posição: o DAIR_CARTEIRA não tem emissor, e "
+     "em 44 das 95 declarações de LF o texto livre do nome não o nomeia. Na APR "
+     "o emissor sai de uma lista de instituições credenciadas — é entidade, não "
+     "texto. Publicado com CNPJ, destrava limite por emissor, cruzamento com os "
+     "regimes especiais do Banco Central e casamento com a carteira dos fundos "
+     "publicada pela CVM.", "Alta"),
+    ("2", "Instituição Intermediária", "Instituições",
+     "Sim, com credenciamento e validade", "Não verificável",
+     "QUEM COLOCOU O PAPEL NO RPPS. Permitiria ver se um mesmo intermediário se "
+     "repete em muitos RPPS que compraram o mesmo ativo em condições parecidas. "
+     "Nenhuma fonte pública tem isso, e nada neste levantamento pôde olhar "
+     "nessa direção. É o item de maior valor da lista.", "Alta"),
+    ("3", "Instituição Custodiante", "Instituições",
+     "Sim, com credenciamento e validade", "Não verificável",
+     "Fecha o trio da operação e permite conferir se a custódia é de "
+     "instituição credenciada e com credenciamento vigente na data — a tela já "
+     "guarda a validade ao lado de cada uma.", "Média"),
+    ("4", "Taxa de Juros de Emissão, Indexador e Perc. do Indexador",
+     "Detalhes da Operação", "Sim, três campos separados", "Não verificável",
+     "A remuneração contratada, que é exatamente o que falta para comparar uma "
+     "compra com o mercado. A tela já separa os três — a mesma estrutura que a "
+     "CVM usa nos fundos. Publicados, tornam possível a comparação que este "
+     "levantamento não pôde fazer.", "Alta"),
+    ("5", "Código de Registro", "Identificação do Ativo",
+     "Sim", "Não verificável",
+     "Identifica o papel, não só o emissor. Sem ele, duas LF do mesmo banco com "
+     "o mesmo vencimento são indistinguíveis — foi essa indistinção que "
+     "inviabilizou a comparação de taxa aqui.", "Alta"),
+    ("6", "Data da Operação, da Liquidação e da Emissão",
+     "Detalhes da Operação", "Sim, as três", "Não verificável",
+     "Permite comparar a taxa contratada com o mercado NA DATA DA COMPRA, que é "
+     "a única comparação válida. Hoje, mesmo que houvesse taxa na posição, não "
+     "se saberia contra que dia compará-la.", "Alta"),
+    ("7", "Valor da Operação, Quantidade, Quantidade antes e após",
+     "Dados da operação", "Sim", "Não verificável",
+     "Preço unitário sai da divisão. As quantidades antes e depois permitem "
+     "reconstruir a posição operação a operação e conferi-la contra a carteira "
+     "declarada — uma checagem de consistência que hoje não existe.", "Alta"),
+    ("8", "Nota de Classificação de Risco e Agência",
+     "Detalhes da Operação", "Sim, obrigatório, com lista de agências",
+     "Não verificável",
+     "Separa prêmio por risco de preço ruim. O contraste vale ser dito: na CDA "
+     "da CVM o campo equivalente existe e só 4,2% das linhas o trazem; aqui a "
+     "tela o marca como obrigatório. É dado de qualidade melhor que o do outro "
+     "regulador, e mesmo assim não sai.", "Média"),
+    ("9", "\"Descreva como foi o processo de investimento do ativo desde a "
+     "distribuição inicial até a aplicação dos recursos\"",
+     "Dados da Operação", "Sim, texto de até 2.000 caracteres",
+     "Não verificável",
+     "A PERGUNTA CERTA JÁ É FEITA. O campo descreve o caminho pelo qual o papel "
+     "chegou ao RPPS. Texto livre não cabe em dado aberto como está, mas cabe "
+     "em triagem interna — e é onde um padrão de colocação apareceria antes de "
+     "qualquer estatística. Para quem trabalha dentro do CADPREV, está "
+     "disponível hoje, sem depender de mudança nenhuma.", "Alta"),
+    ("10", "Análise/Parecer do Conselho Deliberativo e Comitê de Investimentos",
+     "Dados da Operação", "Sim, texto de até 2.000 caracteres",
+     "Não verificável",
+     "Permite ver se a operação foi ao colegiado e o que ele disse. Com as "
+     "assinaturas ao lado — representante legal, proponente e liquidante, cada "
+     "uma com data —, dá a cadeia de decisão da operação. Também coletado, "
+     "também não publicado.", "Média"),
+    ("11", "Espécie da LF: sênior, subordinada ou complementar",
+     "Subtipo de Ativo", "NÃO — a tela só tem \"LF - Letra Financeira\"",
+     "Não existe",
+     "LACUNA REAL, de cadastro e não de publicação. LF subordinada paga "
+     "legitimamente muito mais que sênior, e nenhuma fonte as separa — nem a "
+     "CVM. Foi uma das duas causas de o teste de taxa não ser possível. A "
+     "ANBIMA já divulga taxas por classe (LF, LFSN5-, LFSN5+, LFSC): a "
+     "segmentação existe no mercado e falta no cadastro.", "Alta"),
+    ("12", "Mercado da operação: primário ou secundário",
+     "Detalhes da Operação",
+     "NÃO — há intermediária e sistema de registro, não o tipo de mercado",
+     "Não existe",
+     "LACUNA REAL. Subscrever uma emissão e comprar de terceiro no secundário "
+     "são atos diferentes, com preços e riscos diferentes. Separá-los muda a "
+     "leitura de qualquer desvio de taxa, e o preenchimento é trivial para quem "
+     "registra a operação.", "Média"),
+    ("13", "Publicar o endpoint DAIR_APLICACOES_RESGATE com os campos acima",
+     "API do CADPREV", "—", "Endpoint existe; conteúdo não verificável",
+     "O encaminhamento que resume os doze anteriores. A APR registra operação a "
+     "operação e alimenta o DAIR; é onde um desvio de preço efetivamente "
+     "acontece, e o único nível em que ele seria auditável em dados. Sem isso, "
+     "cada campo acima segue existindo no sistema e invisível fora dele.",
      "Alta"),
-    ("2", "Código do ativo e ISIN", "DAIR_CARTEIRA e APR",
-     "CDA, bloco 4: CD_ATIVO, CD_ISIN (a CVM não os publica no bloco 5)",
-     "Identifica o papel, não só o emissor. Sem isso, duas LF do mesmo banco "
-     "com o mesmo vencimento são indistinguíveis, e foi exatamente o que "
-     "impediu a comparação de taxa neste estudo. Com o ISIN, o mesmo papel pode "
-     "ser comparado entre RPPS, contra fundos e contra as taxas da ANBIMA.",
-     "Alta"),
-    ("3", "Remuneração contratada, em quatro campos",
-     "DAIR_CARTEIRA e APR",
-     "CDA, bloco 5: CD_INDEXADOR_POSFX, PR_INDEXADOR_POSFX, PR_CUPOM_POSFX, "
-     "PR_TAXA_PREFX",
-     "Indexador, percentual do indexador, cupom e taxa prefixada — quatro "
-     "campos, exatamente como a CVM já coleta dos fundos. É o que permite "
-     "perguntar se o RPPS recebeu o que o mercado pagava. Um campo único de "
-     "\"taxa\" não serve: \"100% do DI\" e \"DI + 1,15%\" são remunerações "
-     "diferentes e caberiam no mesmo campo.",
-     "Alta"),
-    ("4", "Data de aquisição e preço unitário pago", "APR",
-     "CDA, bloco 5: VL_AQUIS_NEGOC, QT_AQUIS_NEGOC (valor, não preço unitário)",
-     "A APR já registra operação a operação; faltam a data exata e o preço "
-     "unitário da operação. Com eles, a taxa pode ser comparada contra o "
-     "mercado na data da compra, que é a única comparação válida — hoje, "
-     "mesmo que houvesse taxa, não se saberia contra que dia compará-la.",
-     "Alta"),
-    ("5", "Espécie do papel: sênior, subordinada, complementar",
-     "DAIR_CARTEIRA e APR",
-     "Nenhuma fonte pública separa — nem a CVM",
-     "LF subordinada paga legitimamente muito mais que sênior. Sem esse campo, "
-     "qualquer teste estatístico de taxa mistura as duas e produz falso "
-     "positivo. Foi a segunda causa de o teste de preço não ser possível aqui. "
-     "A ANBIMA já divulga taxas separadas por classe (LF, LFSN5-, LFSN5+, "
-     "LFSC), então a segmentação existe no mercado — falta na coleta.",
-     "Alta"),
-    ("6", "Contraparte e intermediário da operação", "APR",
-     "Não existe em fonte pública",
-     "Quem vendeu o papel ao RPPS, e por meio de quem. É O CAMPO QUE DETECTA "
-     "DIRECIONAMENTO: um mesmo distribuidor aparecendo em muitos RPPS que "
-     "compraram o mesmo papel em condições piores que o mercado é um padrão "
-     "que nenhum outro dado revela. Nada neste estudo pôde testar essa hipótese "
-     "por falta deste campo.",
-     "Alta"),
-    ("7", "Mercado da operação: primário ou secundário", "APR",
-     "Não existe em fonte pública",
-     "Subscrever uma emissão e comprar de um terceiro no secundário são atos "
-     "diferentes, com riscos e preços diferentes. Separá-los muda a leitura de "
-     "qualquer desvio de taxa.",
-     "Média"),
-    ("8", "Data de emissão e data de vencimento em campo próprio",
-     "DAIR_CARTEIRA",
-     "CDA, bloco 5: DT_VENC",
-     "Hoje o vencimento, quando aparece, vem dentro do texto livre do nome "
-     "(\"Letra Financeira - 14/08/2025\"). Em campo próprio, permite medir prazo "
-     "e montar curva por emissor.",
-     "Média"),
-    ("9", "Valor de aquisição ao lado do valor de mercado",
-     "DAIR_CARTEIRA",
-     "CDA, bloco 5: VL_CUSTO_POS_FINAL (a CVM coleta, mas vem vazio nas LF)",
-     "Com custo e mercado lado a lado, o resultado acumulado do papel fica "
-     "visível na própria posição — que é a pergunta direta de uma denúncia de "
-     "prejuízo. Observação: na CDA este campo existe e vem vazio em 100% das "
-     "linhas de LF, o que sugere que coletar não basta: é preciso validar.",
-     "Alta"),
-    ("10", "Rating e agência, com data", "DAIR_CARTEIRA",
-     "CDA, bloco 5: AG_RISCO, GRAU_RISCO, DT_RISCO (preenchidos em 4,2%)",
-     "Permite separar o que é prêmio por risco do que é preço ruim. O exemplo "
-     "da CDA mostra o cuidado necessário: o campo existe e só 4,2% das linhas o "
-     "trazem — campo opcional é campo vazio.",
-     "Média"),
-    ("11", "Validação de preenchimento do nome do ativo",
-     "DAIR_CARTEIRA (sistema CADPREV)",
-     "—",
-     "Seis declarações começam no meio da palavra — \"nvest em Letra "
-     "Financeira\", \"quisiçao LF SENIOR\", \"tivos Finan Emit por Inst\". "
-     "Sugere limite de caracteres cortando o início. Com os campos estruturados "
-     "acima, o nome livre deixa de ser a única identificação e o problema perde "
-     "gravidade; enquanto isso, uma validação simples já evitaria o pior.",
-     "Média"),
-    ("12", "Publicar a APR na API, com os campos acima",
-     "API do CADPREV",
-     "—",
-     "A APR alimenta o DAIR no CADPREV e registra operação a operação, mas não "
-     "é explorável hoje. Publicada com emissor, ISIN, taxa, preço, data, "
-     "contraparte e mercado, ela permitiria auditoria no nível da operação — "
-     "que é onde uma irregularidade de preço efetivamente acontece. Nenhum dos "
-     "outros campos, sozinho, substitui isto.",
-     "Alta"),
+    ("14", "Levar emissor, código de registro, taxa e vencimento também para a "
+     "posição (DAIR_CARTEIRA)", "API do CADPREV", "Coletado na APR",
+     "Não — verificado: 16 campos",
+     "A carteira foi observada em resposta real e tem dezesseis campos: ano, "
+     "mês, identificador, ente, nome do ativo em texto livre, segmento, tipo, "
+     "CNPJ do ente, UF, quantidade, valor unitário, valor total, patrimônio, "
+     "dois percentuais e o teto da classe. A posição não sabe de que emissor é "
+     "o papel que carrega. Herdar da APR o que já foi digitado resolveria sem "
+     "pedir nada novo ao RPPS.", "Alta"),
 ]
 
+def _contar(prefixo):
+    return sum(1 for x in MELHORIAS if x[3].startswith(prefixo))
+
+
+#: Contado sobre a lista, não escrito à mão: já errei esse número uma vez
+#: afirmando "oito dos doze" onde eram sete, num texto que ia para fora.
+JA_COLETADOS = _contar("Sim") + _contar("Coletado")
+LACUNAS = _contar("NÃO")
+
 NOTA_MELHORIAS = (
-    "A coluna \"já existe em\" é o ponto central desta aba: sete dos doze itens "
-    "têm campo equivalente já coletado pela CVM dos fundos de investimento, com "
-    "nome definido, sobre o mesmo ativo — os itens 1, 2, 3, 4, 8, 9 e 10. Não se "
-    "trata de criar exigência nova, e sim de alinhar a coleta do DAIR ao que "
-    "outro regulador já pratica. Os cinco restantes — espécie do papel, "
-    "contraparte, mercado da operação, validação de preenchimento e a publicação "
-    "da APR — não existem em fonte pública nenhuma, e três deles (contraparte, "
-    "mercado e a APR publicada) são justamente os que decidiriam uma apuração de "
-    "direcionamento.")
+    "A tela de cadastro da APR no CADPREV tem 49 campos, e {0} dos {1} "
+    "itens desta lista JÁ SÃO COLETADOS por ela — emissora, intermediária e "
+    "custodiante com validade de credenciamento, taxa de juros de emissão, "
+    "indexador e percentual, as três datas, rating com agência, e quatro blocos "
+    "de texto sobre o processo de investimento e o parecer dos colegiados. O "
+    "problema não é de coleta: é que nada disso chega ao dado aberto, e a "
+    "posição publicada (DAIR_CARTEIRA, dezesseis campos observados) não carrega "
+    "nem o emissor do papel. Só {2} itens são lacuna real de cadastro: a "
+    "espécie da LF e o mercado da operação. Para quem trabalha dentro do "
+    "CADPREV a consequência é melhor do que parece — boa parte do que falta a "
+    "este levantamento pode ser consultada hoje, operação a operação, sem "
+    "depender de mudança nenhuma.").format(JA_COLETADOS, len(MELHORIAS), LACUNAS)
 
 
 #: Acima disto, um único papel pesa o bastante para justificar conferência.

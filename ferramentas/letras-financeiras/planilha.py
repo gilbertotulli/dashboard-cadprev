@@ -438,7 +438,7 @@ def main():
     # em silêncio quando a quinta aba entrou.
     # A ordem é a da leitura: resumo, encaminhamento, depois os dados e, no
     # fim, os limites das fontes. Quem recebe isto abre na primeira aba.
-    for nome in reversed(["Resumo para a SPREV", "Melhorias no DAIR",
+    for nome in reversed(["Leia primeiro", "Dados da APR",
                           "Casos para verificacao", "Triagem - LF direta",
                           "Fontes e limites"]):
         if nome in wb.sheetnames:
@@ -576,8 +576,9 @@ def aba_triagem(wb, linhas):
     texto = (
         "ESTA ABA NÃO APONTA IRREGULARIDADE. Ela lista o que, nos dados "
         "públicos, justifica olhar um papel de perto — e só isso.\n\n"
-        "O que NÃO dá para verificar, e por quê: (1) a taxa da compra, porque o "
-        "DAIR tem dezesseis campos e nenhum é remuneração; (2) se a taxa fugiu "
+        "O que NÃO dá para verificar nos dados abertos, e por quê: (1) a taxa da "
+        "compra, porque o DAIR_CARTEIRA tem dezesseis campos e nenhum é "
+        "remuneração — a APR coleta a taxa, mas não a publica; (2) se a taxa fugiu "
         "do mercado, porque a CDA não publica ISIN das LF nem separa sênior de "
         "subordinada — agrupando por emissor e vencimento, em 30% dos grupos o "
         "maior cupom é o dobro do menor, então \"fora da média\" ali seria "
@@ -655,15 +656,16 @@ def _paragrafo(ws, linha, texto, largura=4, destaque=False, altura=14):
 
 
 def aba_resumo(wb, relatorio, casos_n):
-    """O sumário que vai para a SPREV, antes de qualquer tabela."""
-    ws = wb.create_sheet("Resumo para a SPREV")
+    """O sumário de leitura, antes de qualquer tabela."""
+    ws = wb.create_sheet("Leia primeiro")
     ws.column_dimensions["A"].width = 2
     ws.column_dimensions["B"].width = 34
     for col in ("C", "D", "E"):
         ws.column_dimensions[col].width = 30
 
     n = 2
-    c = ws.cell(row=n, column=2, value="Letras Financeiras e os RPPS — estudo preliminar")
+    c = ws.cell(row=n, column=2,
+                value="Letras Financeiras e os RPPS — levantamento informal")
     c.font = Font(name=FONTE, size=16, bold=True, color=TINTA)
     n += 1
     c = ws.cell(row=n, column=2, value=(
@@ -703,31 +705,35 @@ def aba_resumo(wb, relatorio, casos_n):
     n = _titulo(ws, n, "Conclusão", 11)
     n = _paragrafo(ws, n, relatorio.CONCLUSAO, destaque=True)
     n = _paragrafo(ws, n, (
-        "As abas \"Melhorias no DAIR\" e \"Casos para verificacao\" dão o "
-        "encaminhamento: doze campos que destravariam a análise, e %d casos "
-        "que, pelos critérios objetivos disponíveis, justificariam uma "
-        "pergunta." % casos_n))
+        "As abas \"Dados da APR\" e \"Casos para verificacao\" dão o "
+        "encaminhamento: %d campos comparados entre a tela de cadastro e o dado "
+        "aberto — %d deles já coletados e não publicados, %d que são lacuna real "
+        "de cadastro — e %d casos que, pelos critérios objetivos disponíveis, "
+        "justificariam uma pergunta."
+        % (len(relatorio.MELHORIAS), relatorio.JA_COLETADOS,
+           relatorio.LACUNAS, casos_n)))
     return ws
 
 
 def aba_melhorias(wb, relatorio):
     """Os campos que destravariam a verificação — a parte em destaque."""
-    ws = wb.create_sheet("Melhorias no DAIR")
-    larguras = (2, 4, 34, 22, 36, 72, 11)
+    ws = wb.create_sheet("Dados da APR")
+    larguras = (2, 4, 32, 20, 30, 24, 70, 11)
     for i, w in enumerate(larguras, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
 
-    c = ws.cell(row=2, column=2, value="Campos a acrescentar ao DAIR e à APR")
+    c = ws.cell(row=2, column=2,
+                value="O que a APR já coleta, e o que chega ao dado aberto")
     c.font = Font(name=FONTE, size=16, bold=True, color=TINTA)
     c = ws.cell(row=3, column=2, value=(
-        "O que falta coletar para que indícios de irregularidade possam ser "
-        "verificados em dados"))
+        "Comparação entre a tela de cadastro de Aplicações e Resgates do "
+        "CADPREV e o que a análise alcança"))
     c.font = Font(name=FONTE, size=10, italic=True, color="595959")
 
-    linha = _paragrafo(ws, 5, relatorio.NOTA_MELHORIAS, largura=5, destaque=True)
+    linha = _paragrafo(ws, 5, relatorio.NOTA_MELHORIAS, largura=6, destaque=True)
 
-    titulos = ("#", "Campo sugerido", "Onde", "Já existe em",
-               "O que destrava", "Prioridade")
+    titulos = ("#", "Campo", "Onde fica na tela", "Já é coletado?",
+               "Chega ao dado aberto?", "O que destrava", "Prioridade")
     for i, t in enumerate(titulos, start=2):
         c = ws.cell(row=linha, column=i, value=t)
         c.font = Font(name=FONTE, size=9, bold=True, color="FFFFFF")
@@ -737,29 +743,37 @@ def aba_melhorias(wb, relatorio):
     ws.freeze_panes = ws.cell(row=linha + 1, column=1)
     linha += 1
 
-    for num, campo, onde, existe, destrava, prioridade in relatorio.MELHORIAS:
-        for i, v in enumerate((num, campo, onde, existe, destrava, prioridade),
-                              start=2):
+    for num, campo, onde, coletado, aberto, destrava, prioridade in \
+            relatorio.MELHORIAS:
+        celulas = (num, campo, onde, coletado, aberto, destrava, prioridade)
+        for i, v in enumerate(celulas, start=2):
             c = ws.cell(row=linha, column=i, value=v)
             c.font = Font(name=FONTE, size=9,
-                          bold=(i == 3 or (i == 7 and v == "Alta")))
+                          bold=(i == 3 or (i == 8 and v == "Alta")))
             c.alignment = Alignment(wrap_text=True, vertical="top")
             c.border = BORDA
-            if i == 7 and v == "Alta":
+            # Só o que é lacuna de cadastro ganha realce: é o que exige mudança
+            # de formulário, e não apenas de publicação.
+            if i == 5 and str(v).startswith("NÃO"):
                 c.fill = NOTA
-        ws.row_dimensions[linha].height = 14 * max(3, 1 + len(destrava) // 70)
+                c.font = Font(name=FONTE, size=9, bold=True, color="7F4F00")
+            if i == 8 and v == "Alta":
+                c.fill = NOTA
+        ws.row_dimensions[linha].height = 14 * max(3, 1 + len(destrava) // 66)
         linha += 1
 
     linha += 1
     c = ws.cell(row=linha, column=2, value=(
-        "Referências de campo citadas: CDA — Composição e Diversificação das "
-        "Aplicações, da CVM, arquivo cda_fi_BLC_5_AAAAMM.csv (ativos de renda "
-        "fixa de instituição financeira, onde a Letra Financeira é declarada) e "
-        "cda_fi_BLC_4_AAAAMM.csv (títulos privados, onde estão CD_ATIVO e "
-        "CD_ISIN). Disponíveis em dados.cvm.gov.br/dados/FI/DOC/CDA/."))
+        "Fonte dos campos: tela de cadastro de Aplicações e Resgates (APR) do "
+        "CADPREV, DAIR 09/2026, com 49 campos de formulário. Os campos do "
+        "DAIR_CARTEIRA citados na coluna da direita foram observados em "
+        "resposta real da API. Não foi possível inspecionar o endpoint "
+        "DAIR_APLICACOES_RESGATE: a API está fora do ar desde 22/09/2026 — por "
+        "isso a coluna \"chega ao dado aberto?\" diz \"não verificável\" "
+        "nessas linhas, em vez de afirmar que não chega."))
     c.font = Font(name=FONTE, size=8, italic=True)
     c.alignment = Alignment(wrap_text=True, vertical="top")
-    ws.merge_cells(start_row=linha, start_column=2, end_row=linha + 2, end_column=6)
+    ws.merge_cells(start_row=linha, start_column=2, end_row=linha + 2, end_column=8)
     return ws
 
 

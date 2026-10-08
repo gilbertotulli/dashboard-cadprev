@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """Pontos a verificar nas LF que os RPPS compraram direto.
 
+Levantamento informal: nada aqui afirma irregularidade.
+
 **O que esta ferramenta não faz, e por quê.** A pergunta natural — "esta LF foi
-comprada a uma taxa fora do mercado?" — não tem resposta nos dados públicos, e
-a razão é dupla:
+comprada a uma taxa fora do mercado?" — não tem resposta nos dados públicos
+abertos, e a razão é dupla:
 
 1. **O DAIR não traz taxa.** São dezesseis campos, e nenhum é remuneração:
    nome do ativo em texto livre, quantidade, valor unitário de hoje, valor
@@ -31,7 +33,7 @@ LF_NO_TEXTO = re.compile(r"letra\s*financeira|\bLFs?\b|\bLFSN|\bLFSC", re.I)
 
 #: Um nome que começa no meio da palavra é declaração truncada: "nvest em
 #: Letra Financeira da CEF", "quisiçao LF SENIOR", "tivos Finan Emit por Inst".
-#: Importa para fiscalização: não se confere o que não se identifica.
+#: Importa para qualquer verificação: não se confere o que não se identifica.
 TRUNCADO = re.compile(r"^[a-z]{1,4}(?=[a-z]*\s)", re.U)
 
 #: Bancos que os RPPS nomeiam nas declarações. Serve só para dizer se o texto
