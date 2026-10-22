@@ -3620,8 +3620,163 @@
     ];
   }
 
-  function cartaoDosAtivos(escolhida) {
+  /* A mesma decisão de filtro, ordem e agrupamento que a tabela usa para
+   * desenhar, só que devolvida como dados em vez de DOM — é o que a
+   * exportação (CSV/XLSX, mais abaixo) e a tabela desenham a partir da mesma
+   * fonte, em vez de duas lógicas que podem discordar com o tempo.
+   *
+   * Cada linha é `{ grupo: true, classe, quantos }` (um subtotal de classe)
+   * ou `{ grupo: false, item }` (um ativo). A exportação nunca pula um grupo
+   * recolhido — "recolhido" é um estado da tela, não um filtro dos dados. */
+  function linhasDaCarteira(escolhida) {
     var ordem = estado.ordemAtivos;
+    var visiveis = filtrarAtivos(escolhida.itens, estado.buscaAtivoEnte);
+    var linhas = [];
+    if (estado.agruparAtivos) {
+      escolhida.classes.forEach(function (c) {
+        var doGrupo = visiveis.filter(function (i) {
+          return (i.classe || "Não informada") === c.rotulo &&
+                 (i.segmento || "Não informado") === c.segmento;
+        });
+        if (!doGrupo.length) return;
+        linhas.push({ grupo: true, classe: c, quantos: doGrupo.length,
+                      chave: c.segmento + "·" + c.rotulo });
+        ordenarAtivos(doGrupo, ordem.campo, ordem.desc).forEach(function (i) {
+          linhas.push({ grupo: false, item: i });
+        });
+      });
+    } else {
+      ordenarAtivos(visiveis, ordem.campo, ordem.desc).forEach(function (i) {
+        linhas.push({ grupo: false, item: i });
+      });
+    }
+    return { visiveis: visiveis, linhas: linhas };
+  }
+
+  /* As colunas da carteira exportada. O teto só existe por classe — numa
+   * linha de ativo ele não significaria nada —, então as duas últimas
+   * colunas só entram quando a exportação está agrupada. É a mesma regra
+   * que "agrupado por tipo de ativo (com o teto) ou como lista" pede: a
+   * lista não tem teto porque teto não é propriedade de um ativo. */
+  function colunasDaCarteira(agrupado) {
+    var base = ["Segmento", "Classe", "Ativo", "Descrição declarada", "Vencimento",
+               "Quantidade", "Valor unitário (R$)", "Valor total (R$)",
+               "% dos recursos", "PL do fundo (R$)", "% do PL do fundo"];
+    return agrupado ? base.concat(["Teto da classe (%)", "Dentro do teto"]) : base;
+  }
+
+  /* Uma linha lógica (grupo ou ativo) virada em valores crus, na ordem de
+   * `colunasDaCarteira`. `tipo` escolhe o formato de cada célula na
+   * exportação XLSX; o CSV ignora e só usa `v`. */
+  function celulasDaCarteira(linha, agrupado) {
+    var tipos = ["geral", "geral", "geral", "geral", "geral", "qtd", "dinheiro",
+                "dinheiro", "pct", "dinheiro", "pct"].concat(agrupado ? ["pct", "geral"] : []);
+    var valores;
+    if (linha.grupo) {
+      var c = linha.classe;
+      valores = [c.segmento, c.rotulo,
+                "Subtotal da classe — " + num(linha.quantos, 0) + " ativos",
+                null, null, null, null, c.valor, c.perc, null, null];
+      if (agrupado) {
+        valores.push(c.limite === null || c.limite === undefined ? null : c.limite,
+                     c.limite === null || c.limite === undefined ? "sem teto"
+                       : (c.excede ? "Não" : "Sim"));
+      }
+    } else {
+      var i = linha.item;
+      /* O mesmo par que a tabela mostra: para título público, o ativo é a
+       * sigla e o vencimento que `ativos.py` derivou, com o texto que o RPPS
+       * escreveu ao lado — não embaixo, como na tela, porque uma planilha
+       * não tem "embaixo". Para quem não é título, i.nome já é a única
+       * afirmação que existe, e repeti-la na coluna ao lado não diria nada
+       * novo: a coluna fica vazia. */
+      var t = i.titulo || null;
+      valores = [i.segmento || "Não informado", i.classe || "Não informada",
+                t ? t.rotulo : i.nome, t ? i.nome : null,
+                t && t.vencimento ? data(t.vencimento) : null,
+                i.cotas, i.valor_unitario, i.valor, i.perc, i.pl_fundo, i.perc_pl_fundo];
+      if (agrupado) valores.push(null, null);
+    }
+    return valores.map(function (v, idx) { return { v: v, s: tipos[idx] }; });
+  }
+
+  /* Nome de arquivo estável: sem acento, sem barra (um ente chamado "Embu
+   * das Artes" ou com "/" na grafia não pode virar dois níveis de pasta no
+   * download), e com a competência para quem baixa mais de uma vez não
+   * sobrescrever sem perceber. */
+  function nomeDoArquivo(ente, escolhida, extensao) {
+    var base = semAcento((ente && ente.ente) || estado.cnpj || "carteira")
+      .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return "carteira-" + base + "-" + (escolhida.competencia || "sem-competencia") +
+      "." + extensao;
+  }
+
+  function exportarCarteira(escolhida, ente, formato) {
+    var agrupado = !!estado.agruparAtivos;
+    var dados = linhasDaCarteira(escolhida);
+    var colunas = colunasDaCarteira(agrupado);
+    var arquivo = nomeDoArquivo(ente, escolhida, formato);
+
+    var cabecalho = [
+      ["Carteira do RPPS — " + ((ente && ente.ente) || estado.cnpj) +
+       (ente && ente.uf ? "/" + ente.uf : "")],
+      ["Competência: " + (competencia(escolhida.competencia) || escolhida.competencia || "—") +
+       " · " + num(escolhida.ativos, 0) + " ativos" +
+       (agrupado ? " · agrupados por classe, com o teto da norma"
+                 : " · lista única, sem agrupamento")],
+      ["Fonte: DAIR_CARTEIRA, painel CADPREV" +
+       (estado.meta && estado.meta.gerado_em
+          ? " · dados de " + (data(estado.meta.gerado_em) || estado.meta.gerado_em) : "")],
+      []
+    ];
+
+    var somaVisivel = dados.visiveis.reduce(function (a, i) { return a + i.valor; }, 0);
+    var somaPerc = dados.visiveis.reduce(function (a, i) { return a + i.perc; }, 0);
+    var rotuloTotal = dados.visiveis.length === escolhida.itens.length
+      ? "Total da carteira"
+      : num(dados.visiveis.length, 0) + " de " + num(escolhida.itens.length, 0) + " ativos (filtro aplicado)";
+    var linhaTotalCsv = ["", "", rotuloTotal, "", "", "", "", somaVisivel, somaPerc, "", ""]
+      .concat(agrupado ? ["", ""] : []);
+
+    if (formato === "csv") {
+      var corpoCsv = dados.linhas.map(function (l) {
+        return celulasDaCarteira(l, agrupado).map(function (c) { return c.v; });
+      });
+      Planilha.baixarCsv(arquivo, cabecalho.concat([colunas], corpoCsv, [linhaTotalCsv]));
+      return;
+    }
+
+    var linhaCab = colunas.map(function (t) { return { v: t, s: "cabecalho" }; });
+    var corpoXlsx = dados.linhas.map(function (l) { return celulasDaCarteira(l, agrupado); });
+    var linhaTotalXlsx = linhaTotalCsv.map(function (v, idx) {
+      return { v: v, s: (idx === 7 || idx === 8) ? "dinheiro" : "geral" };
+    });
+    Planilha.baixarXlsx(arquivo, [{
+      nome: "Todos os ativos",
+      larguras: [14, 34, 40, 34, 12, 16, 14, 16, 12, 16, 12, 12, 12],
+      // A última linha do bloco de título, mais a própria linha de cabeçalho
+      // da tabela — é até onde rolar verticalmente não deve mexer.
+      linhaCongelada: cabecalho.length + 1,
+      linhas: cabecalho.concat([linhaCab], corpoXlsx, [linhaTotalXlsx])
+    }]);
+  }
+
+  function botoesDeExportar(escolhida, ente) {
+    return h("span", { class: "exportar" }, [
+      h("button", {
+        class: "link limpar", texto: "baixar CSV",
+        title: "Baixa exatamente o que esta tabela mostra agora",
+        onclick: function () { exportarCarteira(escolhida, ente, "csv"); }
+      }),
+      h("button", {
+        class: "link limpar", texto: "baixar XLSX",
+        title: "Baixa exatamente o que esta tabela mostra agora",
+        onclick: function () { exportarCarteira(escolhida, ente, "xlsx"); }
+      })
+    ]);
+  }
+
+  function cartaoDosAtivos(escolhida, ente) {
     var colunas = [
       colunaOrdenavel("Ativo", "nome", false),
       colunaOrdenavel("Classe", "classe", false),
@@ -3631,28 +3786,25 @@
       colunaOrdenavel("PL do fundo", "plfundo", true),
       colunaOrdenavel("% do PL do fundo", "pl", true)
     ];
-    var visiveis = filtrarAtivos(escolhida.itens, estado.buscaAtivoEnte);
-
+    /* `linhasDaCarteira` é a mesma fonte que a exportação usa — recalcular o
+     * filtro/ordem/agrupamento aqui abriria a porta para a tabela e o
+     * arquivo baixado discordarem. O que só vale para a tela, como o grupo
+     * recolhido, fica fora dela e é tratado aqui. */
+    var dados = linhasDaCarteira(escolhida);
+    var visiveis = dados.visiveis;
     var linhas = [];
-    if (estado.agruparAtivos) {
-      /* Agrupado, a ordem vale dentro de cada classe e os grupos vêm pelo
-       * valor: é assim que a soma de cada classe fica ao lado do teto dela.
-       * `escolhida.classes` já traz os totais que o painel publica — recalcular
-       * aqui abriria a porta para a tabela e o cartão acima discordarem. */
-      escolhida.classes.forEach(function (c) {
-        var doGrupo = visiveis.filter(function (i) {
-          return (i.classe || "Não informada") === c.rotulo &&
-                 (i.segmento || "Não informado") === c.segmento;
-        });
-        if (!doGrupo.length) return;
-        var chave = c.segmento + "·" + c.rotulo;
-        var recolhida = !!estado.recolhidasEnte[chave];
+    var pularAteProximoGrupo = false;
+    dados.linhas.forEach(function (l) {
+      if (l.grupo) {
+        var c = l.classe;
+        var recolhida = !!estado.recolhidasEnte[l.chave];
+        pularAteProximoGrupo = recolhida;
         linhas.push(linhaDeGrupo([
           h("td", { colspan: 2 }, [
             marcaDeRecolher(recolhida),
             h("b", { texto: classeCurta(c.rotulo) }),
             h("span", { class: "nota", texto: " " + c.segmento + " · " +
-                        num(doGrupo.length, 0) + " ativos" })
+                        num(l.quantos, 0) + " ativos" })
           ]),
           h("td", {}),
           h("td", { class: "n", texto: reais(c.valor) }),
@@ -3660,17 +3812,13 @@
           h("td", {}),
           h("td", { class: "n", texto: c.limite === null || c.limite === undefined
                     ? "sem teto" : "teto " + pct(c.limite, 0) })
-        ], chave, estado.recolhidasEnte, doGrupo.length));
-        if (recolhida) return;
-        ordenarAtivos(doGrupo, ordem.campo, ordem.desc).forEach(function (i) {
-          linhas.push(h("tr", { class: "do-grupo" }, celulasDoAtivo(i)));
-        });
-      });
-    } else {
-      ordenarAtivos(visiveis, ordem.campo, ordem.desc).forEach(function (i) {
-        linhas.push(h("tr", {}, celulasDoAtivo(i)));
-      });
-    }
+        ], l.chave, estado.recolhidasEnte, l.quantos));
+        return;
+      }
+      if (pularAteProximoGrupo) return;
+      linhas.push(h("tr", estado.agruparAtivos ? { class: "do-grupo" } : {},
+                    celulasDoAtivo(l.item)));
+    });
     var somaVisivel = visiveis.reduce(function (a, i) { return a + i.valor; }, 0);
     linhas.push(linhaTotal(
       visiveis.length === escolhida.itens.length
@@ -3705,7 +3853,8 @@
         estado.buscaAtivoEnte ? h("button", {
           class: "link limpar", texto: "limpar o filtro",
           onclick: function () { estado.buscaAtivoEnte = ""; render(true); }
-        }) : null
+        }) : null,
+        botoesDeExportar(escolhida, ente)
       ].filter(Boolean)),
        tabela(colunas, linhas, "extra")]);
   }
@@ -3831,7 +3980,7 @@
             ])))
       ]));
 
-      nos.push(cartaoDosAtivos(escolhida));
+      nos.push(cartaoDosAtivos(escolhida, e));
       return nos;
     });
   }

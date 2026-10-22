@@ -605,6 +605,33 @@ distante — um título vence depois de ter sido comprado, sempre. Sobram seis
 descrições em 761 nas quais o próprio declarante inverteu os campos. Não há
 regra que as recupere; por isso a descrição original fica na tela.
 
+## Baixar a carteira em CSV ou XLSX
+
+A ficha de cada RPPS tem dois botões ao lado da tabela "Todos os ativos":
+`baixar CSV` e `baixar XLSX`. Os dois exportam exatamente o que a tela mostra
+naquele instante — mesmo filtro, mesma ordem, agrupado por classe (com o teto
+de cada uma) ou como lista única, conforme o botão "agrupar por classe de
+ativo" estiver marcado. Tabela e arquivo saem da mesma função,
+`linhasDaCarteira`, para que não haja como discordarem entre si.
+
+**Sem biblioteca externa**, pela mesma regra que vale para os gráficos: o
+painel não tem etapa de build, e uma dependência nova precisa de justificativa
+forte (ver Regras da casa, abaixo). Um `.xlsx` é um `.zip` com alguns XML
+dentro, e o formato ZIP aceita entradas sem compressão — o que dispensa
+qualquer algoritmo de deflate. `web/planilha.js` escreve esse ZIP à mão: um
+CRC-32 de vinte linhas, cabeçalhos local e central na medida da especificação,
+e uma pasta de trabalho OOXML mínima (uma aba, texto inline, meia dúzia de
+estilos fixos). Testado lendo de volta com dois leitores independentes —
+`openpyxl` e o LibreOffice headless — porque "não deu erro ao escrever" não
+prova que o arquivo abre; um offset errado no diretório central do ZIP não
+levanta exceção em lugar nenhum, só aparece como "não é possível abrir" do
+outro lado.
+
+Para título público, a coluna "Ativo" do arquivo é a mesma sigla e vencimento
+derivados que a tela mostra (ver a seção anterior), não o número de contrato
+que a fonte grava — com o texto declarado ao lado, em vez de embaixo como na
+tela, porque uma planilha não tem "embaixo".
+
 ## O que cada fonte conta, e os imóveis
 
 O confronto entre a carteira do CADPREV e o Anexo 04 do SICONFI levanta a
@@ -1083,11 +1110,20 @@ dele é informação sobre o cadastro.
 
 ```bash
 python -m unittest discover -s tests
+node tests/estatistica-do-navegador.mjs   # depois de `python -m cadprev demo`
+node tests/planilha.node.mjs
 ```
 
-Cobrem a resolução de campos nas duas convenções, a conversão de tipos no formato
-brasileiro, os dois níveis de decomposição por fundo, a classificação por grupos e o
-pipeline inteiro sobre as amostras sintéticas.
+Os testes em Python cobrem a resolução de campos nas duas convenções, a conversão
+de tipos no formato brasileiro, os dois níveis de decomposição por fundo, a
+classificação por grupos e o pipeline inteiro sobre as amostras sintéticas.
+
+Os dois testes em Node extraem funções do próprio `web/app.js` e `web/planilha.js`
+— nunca cópias — e existem porque há aritmética e formato de arquivo que só o
+navegador faz: `estatistica-do-navegador.mjs` confere a mediana calculada no
+cliente contra o que o Python pré-computou; `planilha.node.mjs` grava um `.xlsx`
+de teste e o lê de volta com `openpyxl`, um leitor independente da lógica que
+escreveu.
 
 ## Documentação
 

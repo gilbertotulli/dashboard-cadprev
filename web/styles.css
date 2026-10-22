@@ -129,6 +129,11 @@ main{padding-block:26px 64px;min-height:60vh}
 .pilula.aviso{border-color:var(--warn);color:var(--ink-2)}
 .pilula.nivel b{color:var(--accent-ink)}
 .contexto .limpar{margin-left:auto}
+/* Os dois links de download ficam juntos, à direita, como um grupo —
+   não cada um brigando pelo próprio margin-left:auto dentro do
+   .contexto, que os espalharia. */
+.contexto .exportar{display:flex;gap:10px;margin-left:auto}
+.contexto .limpar + .exportar{margin-left:0}
 button.link{
   font:inherit;font-size:.79rem;background:none;border:0;color:var(--accent-ink);
   cursor:pointer;padding:6px 2px;text-decoration:underline;text-underline-offset:2px;
