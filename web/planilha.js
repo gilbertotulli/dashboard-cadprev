@@ -200,6 +200,12 @@
       return '<col min="' + (i + 1) + '" max="' + (i + 1) + '" width="' + w + '" customWidth="1"/>';
     }).join("") + "</cols>") : "";
 
+    var maxColunas = aba.linhas.reduce(function (n, linha) {
+      return Math.max(n, linha.length);
+    }, 0);
+    var dimensao = maxColunas && aba.linhas.length ?
+      '<dimension ref="A1:' + letraDaColuna(maxColunas - 1) + aba.linhas.length + '"/>' : "";
+
     var linhasXml = aba.linhas.map(function (linha, r) {
       var celulas = linha.map(function (c, i) {
         return construirCelulaXml(letraDaColuna(i) + (r + 1), c);
@@ -207,16 +213,22 @@
       return '<row r="' + (r + 1) + '">' + celulas + "</row>";
     }).join("");
 
+    /* `linhaCongelada` é a última linha fixa (1-indexado) — não precisa ser
+     * a primeira: esta planilha tem um bloco de título antes do cabeçalho
+     * de verdade, e congelar a linha 1 prenderia só o título na tela. */
+    var sheetViews = aba.linhaCongelada ? '<sheetViews><sheetView workbookViewId="0">' +
+      '<pane ySplit="' + aba.linhaCongelada + '" topLeftCell="A' +
+      (aba.linhaCongelada + 1) + '" activePane="bottomLeft" state="frozen"/>' +
+      "</sheetView></sheetViews>" : "";
+
+    // Ordem exigida pelo schema do OOXML para <worksheet> (CT_Worksheet):
+    // sheetPr?, dimension?, sheetViews?, sheetFormatPr?, cols*, sheetData, ...
+    // O Excel de verdade valida essa ordem na abertura; leitores tolerantes
+    // como openpyxl e LibreOffice não — por isso um arquivo com a ordem
+    // errada passava nos testes e ainda assim chegava "com erro" no Excel.
     return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
       '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
-      cols + "<sheetData>" + linhasXml + "</sheetData>" +
-      /* `linhaCongelada` é a última linha fixa (1-indexado) — não precisa ser
-       * a primeira: esta planilha tem um bloco de título antes do cabeçalho
-       * de verdade, e congelar a linha 1 prenderia só o título na tela. */
-      (aba.linhaCongelada ? '<sheetViews><sheetView workbookViewId="0">' +
-        '<pane ySplit="' + aba.linhaCongelada + '" topLeftCell="A' +
-        (aba.linhaCongelada + 1) + '" activePane="bottomLeft" state="frozen"/>' +
-        "</sheetView></sheetViews>" : "") +
+      dimensao + sheetViews + cols + "<sheetData>" + linhasXml + "</sheetData>" +
       "</worksheet>";
   }
 

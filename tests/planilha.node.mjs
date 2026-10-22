@@ -30,6 +30,22 @@ const src = fs.readFileSync(R + "web/planilha.js", "utf8");
 (0, eval)(src);
 const P = global.Planilha;
 
+// O nome do interpretador com openpyxl varia por máquina (o CI expõe pela
+// versão da matrix via "python3"; localmente pode ser só "python3.13") —
+// tenta cada candidato em vez de fixar um.
+function pythonComOpenpyxl() {
+  const candidatos = [process.env.PLANILHA_PYTHON, "python3", "python3.13", "python"]
+    .filter(Boolean);
+  for (const bin of candidatos) {
+    try {
+      execFileSync(bin, ["-I", "-c", "import openpyxl"], { stdio: "ignore" });
+      return bin;
+    } catch (e) { /* tenta o próximo candidato */ }
+  }
+  throw new Error("nenhum python com openpyxl encontrado (tentei: " + candidatos.join(", ") + ")");
+}
+const PYTHON = pythonComOpenpyxl();
+
 let falhas = 0;
 function afirmar(cond, mensagem) {
   if (!cond) { falhas++; console.error("FALHOU: " + mensagem); }
@@ -92,7 +108,7 @@ print(json.dumps({"titulo": wb.sheetnames, "linhas": linhas,
 `;
   let saida;
   try {
-    saida = execFileSync("python3.13", ["-I", "-c", script, arquivo], { encoding: "utf8" });
+    saida = execFileSync(PYTHON, ["-I", "-c", script, arquivo], { encoding: "utf8" });
   } catch (e) {
     falhas++;
     console.error("FALHOU: openpyxl não conseguiu abrir o .xlsx gerado");
@@ -117,6 +133,41 @@ print(json.dumps({"titulo": wb.sheetnames, "linhas": linhas,
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+// --- XLSX: a ordem dos elementos de <worksheet> bate com o schema OOXML --
+//
+// openpyxl e LibreOffice (os dois leitores usados nos testes acima) montam
+// um modelo de objeto tolerante à ordem dos elementos — por isso um arquivo
+// com <cols> antes de <sheetViews>, antes de <sheetData> (ordem errada:
+// o schema CT_Worksheet exige sheetPr?, dimension?, sheetViews?,
+// sheetFormatPr?, cols*, sheetData) passava limpo nos dois e ainda assim
+// chegava "com erro" no Excel de verdade, que valida essa ordem na abertura.
+// Este teste olha o XML bruto, sem depender de nenhum leitor.
+{
+  const abas = [{
+    nome: "Ordem",
+    larguras: [10, 10],
+    linhaCongelada: 1,
+    linhas: [["a", "b"], ["c", "d"]]
+  }];
+  const bytes = P.xlsxDeAbas(abas);
+  // Sem compressão (STORED) — o XML aparece verbatim nos bytes do .zip;
+  // "latin1" preserva cada byte como um char code, então procurar pelas
+  // tags ASCII funciona mesmo com o cabeçalho binário do ZIP ao redor.
+  const texto = Buffer.from(bytes).toString("latin1");
+  const corpo = texto.slice(texto.indexOf("<worksheet "), texto.indexOf("</worksheet>"));
+  const pos = {
+    dimension: corpo.indexOf("<dimension"),
+    sheetViews: corpo.indexOf("<sheetViews"),
+    cols: corpo.indexOf("<cols"),
+    sheetData: corpo.indexOf("<sheetData")
+  };
+  afirmar(pos.dimension !== -1 && pos.sheetViews !== -1 && pos.cols !== -1 && pos.sheetData !== -1,
+    "dimension, sheetViews, cols e sheetData têm de estar todos presentes: " + JSON.stringify(pos));
+  afirmar(pos.dimension < pos.sheetViews && pos.sheetViews < pos.cols && pos.cols < pos.sheetData,
+    "ordem exigida pelo schema CT_Worksheet (dimension, sheetViews, cols, sheetData): " +
+    JSON.stringify(pos));
+}
+
 // --- XLSX: várias abas, cada uma com seu próprio r:id ----------------------
 {
   const abas = [
@@ -128,7 +179,7 @@ print(json.dumps({"titulo": wb.sheetnames, "linhas": linhas,
   const arquivo = path.join(tmp, "duas-abas.xlsx");
   fs.writeFileSync(arquivo, Buffer.from(bytes));
   try {
-    const saida = execFileSync("python3.13", ["-I", "-c",
+    const saida = execFileSync(PYTHON, ["-I", "-c",
       "import openpyxl,sys; print(openpyxl.load_workbook(sys.argv[1]).sheetnames)",
       arquivo], { encoding: "utf8" });
     afirmar(saida.trim() === "['Agrupado', 'Lista']", "duas abas na ordem certa: " + saida);

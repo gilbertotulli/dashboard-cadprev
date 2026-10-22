@@ -39,3 +39,11 @@ jobs:
       # exige que a seleção reproduza o grupo equivalente até o centésimo.
       - name: A estatística do navegador bate com a do Python
         run: node tests/estatistica-do-navegador.mjs
+
+      # openpyxl só entra aqui, não no pacote: é um leitor independente para
+      # validar o .xlsx que web/planilha.js escreve à mão, não uma dependência
+      # do painel.
+      - name: A planilha exportada abre de verdade
+        run: |
+          pip install openpyxl
+          node tests/planilha.node.mjs
