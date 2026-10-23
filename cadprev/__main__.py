@@ -85,8 +85,15 @@ def cmd_ingest(args) -> int:
         ("dt_ano", args.ano), ("dt_mes", args.mes),
         ("dt_mes_bimestre", args.mes), ("dt_exercicio", args.exercicio),
     ) if v}
-    escopo = {k: v for k, v in (("ano", args.ano), ("exercicio", args.exercicio))
-              if v} or None
+    # `mes` entra no escopo: sem ele, três chamadas sucessivas com o mesmo
+    # --ano e --mes diferentes (a janela de três competências da carteira, no
+    # workflow de publicação) apagavam o ano inteiro a cada chamada — só a
+    # última a rodar sobrevivia. `_escopo_aplicavel` descarta a chave sozinho
+    # nos endpoints sem coluna "mes", então não afeta quem ingere o ano
+    # inteiro numa chamada só (DAIR_IDENTIFICACAO, DAIR_GOVERNANCA).
+    escopo = {k: v for k, v in (
+        ("ano", args.ano), ("mes", args.mes), ("exercicio", args.exercicio),
+    ) if v} or None
 
     with store_mod.Store(args.banco) as store:
         resultado = ingest.ingerir_varios(_cliente(args), store, nomes,

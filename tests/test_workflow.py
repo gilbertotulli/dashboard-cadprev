@@ -68,6 +68,62 @@ class TestOrdemDaCarga(unittest.TestCase):
         self.assertIn("M + 12", passo)
         self.assertIn("ANO - 1", passo)
 
+    def test_as_tres_chamadas_da_janela_nao_se_apagam(self):
+        """O texto do passo acima prova que o loop existe — não que ele
+        preserva as três competências depois de rodar.
+
+        Achado num RPPS real: a carteira publicada tinha só duas competências
+        (abril e junho), nunca as três que `for VOLTA in 0 1 2` deveria trazer,
+        e nunca a do meio. `cmd_ingest` montava o escopo da substituição só com
+        `{"ano": ano}` — sem o mês —, então cada uma das três chamadas da
+        janela (mesmo --ano, --mes diferente) apagava a tabela inteira daquele
+        ano antes de inserir só o mês da vez. Sobrevivia apenas a última
+        chamada a rodar; como a janela pede o mês mais recente primeiro, era
+        sempre o mês *mais antigo* da janela que restava — o oposto do que o
+        comentário do workflow afirma ("a mais recente... sem as anteriores,
+        em vez do contrário").
+
+        Este teste reproduz as três chamadas de `cmd_ingest` na mesma ordem do
+        workflow (mês mais recente primeiro) contra um Cliente de mentira que
+        devolve uma linha diferente por mês, e confere que as três ficam na
+        base — não só a última.
+        """
+        import argparse
+        from unittest import mock
+        import tempfile
+        from cadprev import __main__ as cli
+        from cadprev.store import Store
+
+        class ClienteFalso:
+            fixtures = None
+
+            def registros(self, nome, limite_paginas=None, **filtros):
+                mes = filtros["dt_mes_bimestre"]
+                yield {
+                    "nr_cnpj_entidade": "11111111000100", "no_ente": "Teste",
+                    "sg_uf": "ES", "dt_ano": 2026, "dt_mes_bimestre": mes,
+                    "no_segmento": "Renda Fixa", "vl_total_atual": 1000.0 + mes,
+                }
+
+        parser = cli.construir_parser()
+        with tempfile.TemporaryDirectory() as tmp:
+            banco = os.path.join(tmp, "teste.sqlite3")
+            with mock.patch.object(cli, "_cliente", return_value=ClienteFalso()):
+                # A mesma ordem do workflow: mês mais recente primeiro.
+                for mes in (6, 5, 4):
+                    args = parser.parse_args([
+                        "--banco", banco, "ingest", "DAIR_CARTEIRA",
+                        "--uf", "ES", "--ano", "2026", "--mes", str(mes)])
+                    self.assertEqual(cli.cmd_ingest(args), 0)
+
+            with Store(banco) as store:
+                linhas = store.consultar(
+                    "SELECT mes FROM dair_carteira ORDER BY mes")
+            meses = [l["mes"] for l in linhas]
+        self.assertEqual(meses, [4, 5, 6],
+                         "as três chamadas da janela têm de conviver na base, "
+                         "não só a última a rodar: " + repr(meses))
+
     def test_api_fora_do_ar_nao_derruba_o_agendamento(self):
         """A execução nº 29 morreu aqui: a API respondeu 404 na descoberta da
         competência e o job inteiro abortou, sem sequer chegar à publicação.
