@@ -2898,6 +2898,9 @@ def _identificar(linha: Mapping[str, Any]) -> Dict[str, Any]:
         "nome": escolha["rotulo"],
         "nome_de": escolha["campo"],
         "identificacao": linha.get("identificacao_ativo"),
+        # Só os fundos têm — é o mesmo corte que o agregado nacional usa em
+        # ativos.identidade() para separar fundo de título de nome livre.
+        "cnpj": ativos.cnpj_do_fundo(linha.get("identificacao_ativo")),
     }
     # Só para quem a fonte descreve como título: num fundo, "NTN-B" no nome é
     # a estratégia do fundo, não o papel que o RPPS tem em carteira.

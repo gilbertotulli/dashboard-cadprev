@@ -696,6 +696,43 @@ class TestPipeline(unittest.TestCase):
         self.assertTrue(com_venc, "o demo precisa de título com vencimento escrito")
         self.assertTrue(sem_venc, "o demo precisa de título sem vencimento escrito")
 
+    def test_cnpj_do_fundo_so_quando_o_ativo_e_fundo(self):
+        """O CNPJ identifica o fundo — e só o fundo, nunca um título público.
+
+        ``identificacao_ativo`` é o CNPJ num fundo e a descrição escrita à mão
+        num título; publicar ``cnpj`` sem o mesmo corte de ``ativos.identidade``
+        faria a coluna "CNPJ do fundo" da exportação mostrar dígitos de uma
+        descrição de título, o que não é CNPJ nenhum.
+        """
+        achou_fundo = False
+        for ente in self._json("entes.json"):
+            caminho = os.path.join("ente", ente["cnpj"] + "-carteira.json")
+            if not os.path.exists(os.path.join(self.saida, caminho)):
+                continue
+            for competencia in self._json(caminho)["competencias"]:
+                for item in competencia["itens"]:
+                    cnpj = item.get("cnpj")
+                    if cnpj:
+                        achou_fundo = True
+                        self.assertEqual(len(cnpj), 14, repr(cnpj))
+                        self.assertTrue(cnpj.isdigit(), repr(cnpj))
+                        # Fundo e título público são identidades diferentes —
+                        # nunca as duas no mesmo ativo.
+                        self.assertIsNone(item.get("titulo"), item["nome"])
+                    elif item.get("titulo"):
+                        self.assertIsNone(cnpj, item["nome"])
+        self.assertTrue(achou_fundo, "o demo precisa de ativo identificado por CNPJ")
+
+    def test_ficha_tambem_publica_o_cnpj_nas_maiores_posicoes(self):
+        """A ficha e a tela detalhada usam a mesma derivação — não duas."""
+        for ente in self._json("entes.json"):
+            ficha = self._json(os.path.join("ente", ente["cnpj"] + ".json"))
+            carteira = ficha.get("carteira") or {}
+            for posicao in carteira.get("posicoes") or []:
+                self.assertIn("cnpj", posicao, ente["ente"])
+                if posicao["cnpj"]:
+                    self.assertIsNone(posicao.get("titulo"), ente["ente"])
+
     # -------------------------------------------- consolidados nacionais
 
     def _consolidado(self, qual):

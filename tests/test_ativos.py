@@ -76,6 +76,24 @@ class TestVencimento(unittest.TestCase):
         self.assertIsNone(ativos.vencimento("NTNB 32132040"))
 
 
+class TestCnpjDoFundo(unittest.TestCase):
+    """O mesmo corte que ``identidade`` usa para separar fundo de título."""
+
+    def test_catorze_digitos_e_cnpj(self):
+        self.assertEqual(ativos.cnpj_do_fundo("30.068.135/0001-50"),
+                         "30068135000150")
+        self.assertEqual(ativos.cnpj_do_fundo("30068135000150"), "30068135000150")
+
+    def test_descricao_de_titulo_nao_e_cnpj(self):
+        """Sobra dígito de data e de taxa, mas nunca catorze certinhos."""
+        self.assertIsNone(
+            ativos.cnpj_do_fundo("NTNB 15082040 (Compra em 06122024 Tx 67643)"))
+
+    def test_vazio_nao_e_cnpj(self):
+        self.assertIsNone(ativos.cnpj_do_fundo(None))
+        self.assertIsNone(ativos.cnpj_do_fundo(""))
+
+
 class TestTitulo(unittest.TestCase):
 
     def test_sigla_normalizada(self):

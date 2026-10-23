@@ -630,7 +630,11 @@ outro lado.
 Para título público, a coluna "Ativo" do arquivo é a mesma sigla e vencimento
 derivados que a tela mostra (ver a seção anterior), não o número de contrato
 que a fonte grava — com o texto declarado ao lado, em vez de embaixo como na
-tela, porque uma planilha não tem "embaixo".
+tela, porque uma planilha não tem "embaixo". No fundo, a coluna "CNPJ do
+fundo" traz o mesmo CNPJ que identifica esse ativo entre todos os RPPS no
+agregado nacional — `cadprev.ativos.cnpj_do_fundo`, catorze dígitos exatos em
+`identificacao_ativo`, nunca os dígitos de uma data ou taxa que aparecem
+soltos numa descrição de título.
 
 ## O que cada fonte conta, e os imóveis
 

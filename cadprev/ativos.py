@@ -180,6 +180,24 @@ DIGITOS_DO_CNPJ = 14
 _SO_DIGITO = re.compile(r"\D")
 
 
+def cnpj_do_fundo(identificacao_ativo: Optional[str]) -> Optional[str]:
+    """O CNPJ do fundo, só os dígitos — quando ``identificacao_ativo`` traz
+    exatamente catorze deles.
+
+    ``None`` nos títulos públicos, onde o campo é a descrição que o RPPS
+    escreveu à mão, e nos ativos sem essa identidade (CDB, poupança, imóvel).
+
+    >>> cnpj_do_fundo("30.068.135/0001-50")
+    '30068135000150'
+    >>> cnpj_do_fundo("NTNB 15082040 (Compra em 06122024 Tx 67643)") is None
+    True
+    >>> cnpj_do_fundo(None) is None
+    True
+    """
+    digitos = _SO_DIGITO.sub("", str(identificacao_ativo or ""))
+    return digitos if len(digitos) == DIGITOS_DO_CNPJ else None
+
+
 def identidade(linha: Mapping[str, Any]) -> Tuple[Tuple[str, str], Dict[str, Any]]:
     """A chave que diz quando dois RPPS estão no mesmo ativo.
 
@@ -213,9 +231,8 @@ def identidade(linha: Mapping[str, Any]) -> Tuple[Tuple[str, str], Dict[str, Any
     escolha = nome(linha.get("nome_ativo"), linha.get("identificacao_ativo"), classe)
     rotulo = escolha["rotulo"]
 
-    bruto = str(linha.get("identificacao_ativo") or "")
-    digitos = _SO_DIGITO.sub("", bruto)
-    if len(digitos) == DIGITOS_DO_CNPJ:
+    digitos = cnpj_do_fundo(linha.get("identificacao_ativo"))
+    if digitos:
         return ("cnpj", digitos), {
             "nome": rotulo, "identificacao": digitos,
             "tipo_de_identidade": "cnpj",

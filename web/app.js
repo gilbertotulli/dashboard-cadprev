@@ -1322,8 +1322,17 @@
           tabela([{ t: "Ativo" }, { t: "Segmento" }, { t: "Valor", n: true },
             { t: "% da carteira", n: true }, { t: "% do PL do fundo", n: true }],
             c.posicoes.map(function (p) {
+              // A mesma derivação da tela detalhada: sigla e vencimento para
+              // título público, CNPJ para fundo — nunca o número de contrato
+              // ou a descrição crua que a fonte grava em `nome`.
+              var principal = p.titulo ? p.titulo.rotulo : p.nome;
+              var abaixo = p.titulo ? p.nome
+                : (p.cnpj ? "CNPJ " + formatarCnpj(p.cnpj) : "");
               return h("tr", {}, [
-                h("td", { texto: p.nome }),
+                h("td", {}, [
+                  h("div", { texto: principal }),
+                  abaixo ? h("div", { class: "nota", texto: abaixo }) : null
+                ].filter(Boolean)),
                 h("td", { texto: p.segmento || "—" }),
                 h("td", { class: "n", texto: reais(p.valor) }),
                 h("td", { class: "n", texto: pct(p.perc_carteira) }),
@@ -3589,7 +3598,12 @@
      * casos em que o declarante trocou os campos de lugar. */
     var t = i.titulo || null;
     var principal = t ? t.rotulo : i.nome;
-    var abaixo = t ? i.nome : (i.segmento || "");
+    // No fundo, o segmento continua (não aparece em coluna nenhuma desta
+    // tabela) e o CNPJ entra ao lado — é a mesma identidade que agrupa esse
+    // ativo entre todos os RPPS no agregado nacional.
+    var abaixo = t ? i.nome
+      : [i.segmento, i.cnpj ? "CNPJ " + formatarCnpj(i.cnpj) : null]
+          .filter(Boolean).join(" · ");
     return [
       h("td", { class: "nome-ativo" }, [
         h("div", { texto: principal }),
@@ -3659,8 +3673,8 @@
    * que "agrupado por tipo de ativo (com o teto) ou como lista" pede: a
    * lista não tem teto porque teto não é propriedade de um ativo. */
   function colunasDaCarteira(agrupado) {
-    var base = ["Segmento", "Classe", "Ativo", "Descrição declarada", "Vencimento",
-               "Quantidade", "Valor unitário (R$)", "Valor total (R$)",
+    var base = ["Segmento", "Classe", "Ativo", "CNPJ do fundo", "Descrição declarada",
+               "Vencimento", "Quantidade", "Valor unitário (R$)", "Valor total (R$)",
                "% dos recursos", "PL do fundo (R$)", "% do PL do fundo"];
     return agrupado ? base.concat(["Teto da classe (%)", "Dentro do teto"]) : base;
   }
@@ -3669,14 +3683,15 @@
    * `colunasDaCarteira`. `tipo` escolhe o formato de cada célula na
    * exportação XLSX; o CSV ignora e só usa `v`. */
   function celulasDaCarteira(linha, agrupado) {
-    var tipos = ["geral", "geral", "geral", "geral", "geral", "qtd", "dinheiro",
-                "dinheiro", "pct", "dinheiro", "pct"].concat(agrupado ? ["pct", "geral"] : []);
+    var tipos = ["geral", "geral", "geral", "geral", "geral", "geral", "qtd",
+                "dinheiro", "dinheiro", "pct", "dinheiro", "pct"]
+                .concat(agrupado ? ["pct", "geral"] : []);
     var valores;
     if (linha.grupo) {
       var c = linha.classe;
       valores = [c.segmento, c.rotulo,
                 "Subtotal da classe — " + num(linha.quantos, 0) + " ativos",
-                null, null, null, null, c.valor, c.perc, null, null];
+                null, null, null, null, null, c.valor, c.perc, null, null];
       if (agrupado) {
         valores.push(c.limite === null || c.limite === undefined ? null : c.limite,
                      c.limite === null || c.limite === undefined ? "sem teto"
@@ -3689,10 +3704,13 @@
        * escreveu ao lado — não embaixo, como na tela, porque uma planilha
        * não tem "embaixo". Para quem não é título, i.nome já é a única
        * afirmação que existe, e repeti-la na coluna ao lado não diria nada
-       * novo: a coluna fica vazia. */
+       * novo: a coluna fica vazia. O CNPJ só existe no fundo — é a mesma
+       * identidade que agrupa esse ativo entre todos os RPPS no agregado
+       * nacional, não um dado novo inventado aqui. */
       var t = i.titulo || null;
       valores = [i.segmento || "Não informado", i.classe || "Não informada",
-                t ? t.rotulo : i.nome, t ? i.nome : null,
+                t ? t.rotulo : i.nome, i.cnpj ? formatarCnpj(i.cnpj) : null,
+                t ? i.nome : null,
                 t && t.vencimento ? data(t.vencimento) : null,
                 i.cotas, i.valor_unitario, i.valor, i.perc, i.pl_fundo, i.perc_pl_fundo];
       if (agrupado) valores.push(null, null);
@@ -3735,7 +3753,7 @@
     var rotuloTotal = dados.visiveis.length === escolhida.itens.length
       ? "Total da carteira"
       : num(dados.visiveis.length, 0) + " de " + num(escolhida.itens.length, 0) + " ativos (filtro aplicado)";
-    var linhaTotalCsv = ["", "", rotuloTotal, "", "", "", "", somaVisivel, somaPerc, "", ""]
+    var linhaTotalCsv = ["", "", rotuloTotal, "", "", "", "", "", somaVisivel, somaPerc, "", ""]
       .concat(agrupado ? ["", ""] : []);
 
     if (formato === "csv") {
@@ -3749,11 +3767,11 @@
     var linhaCab = colunas.map(function (t) { return { v: t, s: "cabecalho" }; });
     var corpoXlsx = dados.linhas.map(function (l) { return celulasDaCarteira(l, agrupado); });
     var linhaTotalXlsx = linhaTotalCsv.map(function (v, idx) {
-      return { v: v, s: (idx === 7 || idx === 8) ? "dinheiro" : "geral" };
+      return { v: v, s: (idx === 8 || idx === 9) ? "dinheiro" : "geral" };
     });
     Planilha.baixarXlsx(arquivo, [{
       nome: "Todos os ativos",
-      larguras: [14, 34, 40, 34, 12, 16, 14, 16, 12, 16, 12, 12, 12],
+      larguras: [14, 34, 40, 20, 34, 12, 16, 14, 16, 12, 16, 12, 12, 12],
       // A última linha do bloco de título, mais a própria linha de cabeçalho
       // da tabela — é até onde rolar verticalmente não deve mexer.
       linhaCongelada: cabecalho.length + 1,
