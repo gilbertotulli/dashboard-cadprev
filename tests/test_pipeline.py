@@ -1369,6 +1369,45 @@ class TestPipeline(unittest.TestCase):
         for pessoa in g["pessoas"]:
             self.assertIn("colegiado", pessoa)
 
+    def test_certificacao_e_da_pessoa_nao_do_colegiado(self):
+        """Quem responde por dois colegiados não vira duas pessoas.
+
+        Encontrado num caso real: alguém é dirigente e também o responsável
+        pela gestão dos recursos — dois papéis, duas linhas na API. Se a
+        certificação vigente estiver anexada só à linha de um papel e a outra
+        linha trouxer uma certificação antiga (ou nenhuma), chavear por
+        (pessoa, colegiado) separava os dois papéis em "fichas" diferentes: uma
+        regular, outra acusada de "sem nenhuma certificação dentro da
+        validade" — da mesma pessoa, que nunca deixou de estar em dia. E cada
+        papel contava como uma pessoa em `total`, inflando a contagem.
+        """
+        from cadprev import build as b
+        from cadprev.store import Store as _Store
+        with _Store(":memory:") as store:
+            store.gravar("DAIR_GOVERNANCA", [
+                {"cnpj_ente": "11111111000100", "ente": "Teste", "uf": "ES",
+                 "ano": 2026, "mes": 6, "pessoa": "FULANO DE TAL",
+                 "cargo": "Membro da Diretoria", "colegiado": "Diretoria",
+                 "tipo_certificacao": "CPA 10",
+                 "validade_certificacao": "2027-01-01"},
+                {"cnpj_ente": "11111111000100", "ente": "Teste", "uf": "ES",
+                 "ano": 2026, "mes": 6, "pessoa": "FULANO DE TAL",
+                 "cargo": "Responsável pela Gestão das Aplicações dos Recursos",
+                 "colegiado": "Gestor de Recursos",
+                 "tipo_certificacao": "CPA 10",
+                 "validade_certificacao": "2025-01-01"},
+            ])
+            g = b._montar_governanca(store, "11111111000100", hoje="2026-06-30")
+        self.assertTrue(g["disponivel"])
+        self.assertEqual(g["total"], 1, "um papel a mais não é uma pessoa a mais")
+        self.assertEqual(len(g["pessoas"]), 1)
+        pessoa = g["pessoas"][0]
+        self.assertTrue(pessoa["regular"], "a certificação vigente de um "
+                        "papel cobre a pessoa, não só aquele papel")
+        self.assertFalse(pessoa["so_vencidas"])
+        self.assertEqual(g["so_vencidas"], 0)
+        self.assertEqual(g["regulares"], 1)
+
     def test_ativos_fora_do_rol_tem_agregado_nacional(self):
         """Ativo que a fonte marca como não enquadrado não é teto estourado."""
         nacional = self._nacional("carteira-nacional.json")

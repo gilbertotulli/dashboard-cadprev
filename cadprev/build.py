@@ -3302,14 +3302,21 @@ def _montar_governanca(store: Store, cnpj: str,
     else:
         recente = (None, None)
 
-    pessoas: Dict[tuple, Dict[str, Any]] = {}
+    # A chave é só a pessoa — nunca (pessoa, colegiado). A mesma pessoa pode
+    # responder por mais de um colegiado ao mesmo tempo (um dirigente que
+    # também é o gestor de recursos, por exemplo), e a API traz uma linha por
+    # papel; se a certificação vier anexada só a uma dessas linhas, chavear
+    # por colegiado também fragmentava uma pessoa em duas "fichas" — uma com
+    # a certificação, outra sem — e a segunda acusava "sem nenhuma
+    # certificação" de alguém que, como pessoa, sempre esteve em dia. A
+    # certificação é da pessoa, não do papel que ela ocupa num instante.
+    pessoas: Dict[str, Dict[str, Any]] = {}
     for linha in linhas:
         # Quem já deixou o colegiado não responde pela gestão de hoje.
         fim = linha.get("fim_atuacao")
         if fim and str(fim)[:10] < hoje:
             continue
-        chave = ((linha.get("pessoa") or "").strip().upper(),
-                 (linha.get("colegiado") or "").strip())
+        chave = (linha.get("pessoa") or "").strip().upper()
         ficha = pessoas.setdefault(chave, {
             "pessoa": (linha.get("pessoa") or "").strip(),
             "colegiado": (linha.get("colegiado") or "").strip(),
